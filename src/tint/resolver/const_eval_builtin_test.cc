@@ -1150,6 +1150,26 @@ std::vector<Case> InsertBitsCases() {
               T(0b1010'0101'1010'0101'1010'0111'1111'1101))),
     };
 
+    const char* error_msg =
+        "12:34 error: 'offset + 'count' must be less than or equal to the bit width of 'e'";
+    ConcatInto(  //
+        r, std::vector<Case>{
+               E({T(1), T(1), UT(33), UT(0)}, error_msg),         //
+               E({T(1), T(1), UT(34), UT(0)}, error_msg),         //
+               E({T(1), T(1), UT(1000), UT(0)}, error_msg),       //
+               E({T(1), T(1), UT::Highest(), UT()}, error_msg),   //
+               E({T(1), T(1), UT(0), UT(33)}, error_msg),         //
+               E({T(1), T(1), UT(0), UT(34)}, error_msg),         //
+               E({T(1), T(1), UT(0), UT(1000)}, error_msg),       //
+               E({T(1), T(1), UT(0), UT::Highest()}, error_msg),  //
+               E({T(1), T(1), UT(33), UT(33)}, error_msg),        //
+               E({T(1), T(1), UT(34), UT(34)}, error_msg),        //
+               E({T(1), T(1), UT(1000), UT(1000)}, error_msg),    //
+               E({T(1), T(1), UT::Highest(), UT(1)}, error_msg),
+               E({T(1), T(1), UT(1), UT::Highest()}, error_msg),
+               E({T(1), T(1), UT::Highest(), u32::Highest()}, error_msg),
+           });
+
     return r;
 }
 INSTANTIATE_TEST_SUITE_P(  //
@@ -1158,33 +1178,6 @@ INSTANTIATE_TEST_SUITE_P(  //
     testing::Combine(testing::Values(sem::BuiltinType::kInsertBits),
                      testing::ValuesIn(Concat(InsertBitsCases<i32>(),  //
                                               InsertBitsCases<u32>()))));
-
-using ResolverConstEvalBuiltinTest_InsertBits_InvalidOffsetAndCount =
-    ResolverTestWithParam<std::tuple<size_t, size_t>>;
-TEST_P(ResolverConstEvalBuiltinTest_InsertBits_InvalidOffsetAndCount, Test) {
-    auto& p = GetParam();
-    auto* expr = Call(Source{{12, 34}}, sem::str(sem::BuiltinType::kInsertBits), Expr(1_u),
-                      Expr(1_u), Expr(u32(std::get<0>(p))), Expr(u32(std::get<1>(p))));
-    GlobalConst("C", expr);
-    EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: 'offset + 'count' must be less than or equal to the bit width of 'e'");
-}
-INSTANTIATE_TEST_SUITE_P(InsertBits,
-                         ResolverConstEvalBuiltinTest_InsertBits_InvalidOffsetAndCount,
-                         testing::Values(                         //
-                             std::make_tuple(33, 0),              //
-                             std::make_tuple(34, 0),              //
-                             std::make_tuple(1000, 0),            //
-                             std::make_tuple(u32::Highest(), 0),  //
-                             std::make_tuple(0, 33),              //
-                             std::make_tuple(0, 34),              //
-                             std::make_tuple(0, 1000),            //
-                             std::make_tuple(0, u32::Highest()),  //
-                             std::make_tuple(33, 33),             //
-                             std::make_tuple(34, 34),             //
-                             std::make_tuple(1000, 1000),         //
-                             std::make_tuple(u32::Highest(), u32::Highest())));
 
 template <typename T>
 std::vector<Case> ExtractBitsCases() {
@@ -1253,6 +1246,26 @@ std::vector<Case> ExtractBitsCases() {
               set_msbs_if_signed(T(0b11010001)))),
     };
 
+    const char* error_msg =
+        "12:34 error: 'offset + 'count' must be less than or equal to the bit width of 'e'";
+    ConcatInto(  //
+        r, std::vector<Case>{
+               E({T(1), UT(33), UT(0)}, error_msg),
+               E({T(1), UT(34), UT(0)}, error_msg),
+               E({T(1), UT(1000), UT(0)}, error_msg),
+               E({T(1), UT::Highest(), UT(0)}, error_msg),
+               E({T(1), UT(0), UT(33)}, error_msg),
+               E({T(1), UT(0), UT(34)}, error_msg),
+               E({T(1), UT(0), UT(1000)}, error_msg),
+               E({T(1), UT(0), UT::Highest()}, error_msg),
+               E({T(1), UT(33), UT(33)}, error_msg),
+               E({T(1), UT(34), UT(34)}, error_msg),
+               E({T(1), UT(1000), UT(1000)}, error_msg),
+               E({T(1), UT::Highest(), UT(1)}, error_msg),
+               E({T(1), UT(1), UT::Highest()}, error_msg),
+               E({T(1), UT::Highest(), UT::Highest()}, error_msg),
+           });
+
     return r;
 }
 INSTANTIATE_TEST_SUITE_P(  //
@@ -1261,35 +1274,6 @@ INSTANTIATE_TEST_SUITE_P(  //
     testing::Combine(testing::Values(sem::BuiltinType::kExtractBits),
                      testing::ValuesIn(Concat(ExtractBitsCases<i32>(),  //
                                               ExtractBitsCases<u32>()))));
-
-using ResolverConstEvalBuiltinTest_ExtractBits_InvalidOffsetAndCount =
-    ResolverTestWithParam<std::tuple<size_t, size_t>>;
-TEST_P(ResolverConstEvalBuiltinTest_ExtractBits_InvalidOffsetAndCount, Test) {
-    auto& p = GetParam();
-    auto* expr = Call(Source{{12, 34}}, sem::str(sem::BuiltinType::kExtractBits), Expr(1_u),
-                      Expr(u32(std::get<0>(p))), Expr(u32(std::get<1>(p))));
-    GlobalConst("C", expr);
-    EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: 'offset + 'count' must be less than or equal to the bit width of 'e'");
-}
-INSTANTIATE_TEST_SUITE_P(ExtractBits,
-                         ResolverConstEvalBuiltinTest_ExtractBits_InvalidOffsetAndCount,
-                         testing::Values(                         //
-                             std::make_tuple(33, 0),              //
-                             std::make_tuple(34, 0),              //
-                             std::make_tuple(1000, 0),            //
-                             std::make_tuple(u32::Highest(), 0),  //
-                             std::make_tuple(0, 33),              //
-                             std::make_tuple(0, 34),              //
-                             std::make_tuple(0, 1000),            //
-                             std::make_tuple(0, u32::Highest()),  //
-                             std::make_tuple(33, 33),             //
-                             std::make_tuple(34, 34),             //
-                             std::make_tuple(1000, 1000),         //
-                             std::make_tuple(u32::Highest(), 1),  //
-                             std::make_tuple(1, u32::Highest()),  //
-                             std::make_tuple(u32::Highest(), u32::Highest())));
 
 template <typename T>
 std::vector<Case> MaxCases() {
@@ -1478,6 +1462,36 @@ INSTANTIATE_TEST_SUITE_P(  //
                                               ReverseBitsCases<u32>()))));
 
 template <typename T>
+std::vector<Case> RoundCases() {
+    std::vector<Case> cases = {
+        C({T(0.0)}, T(0.0)),      //
+        C({-T(0.0)}, -T(0.0)),    //
+        C({T(1.5)}, T(2.0)),      //
+        C({T(2.5)}, T(2.0)),      //
+        C({T(2.4)}, T(2.0)),      //
+        C({T(2.6)}, T(3.0)),      //
+        C({T(1.49999)}, T(1.0)),  //
+        C({T(1.50001)}, T(2.0)),  //
+        C({-T(1.5)}, -T(2.0)),    //
+        C({-T(2.5)}, -T(2.0)),    //
+        C({-T(2.6)}, -T(3.0)),    //
+        C({-T(2.4)}, -T(2.0)),    //
+
+        // Vector tests
+        C({Vec(T(0.0), T(1.5), T(2.5))}, Vec(T(0.0), T(2.0), T(2.0))),
+    };
+
+    return cases;
+}
+INSTANTIATE_TEST_SUITE_P(  //
+    Round,
+    ResolverConstEvalBuiltinTest,
+    testing::Combine(testing::Values(sem::BuiltinType::kRound),
+                     testing::ValuesIn(Concat(RoundCases<AFloat>(),  //
+                                              RoundCases<f32>(),
+                                              RoundCases<f16>()))));
+
+template <typename T>
 std::vector<Case> SaturateCases() {
     return {
         C({T(0)}, T(0)),
@@ -1619,6 +1633,90 @@ INSTANTIATE_TEST_SUITE_P(  //
                                               SinhCases<f16>()))));
 
 template <typename T>
+std::vector<Case> SmoothstepCases() {
+    return {
+        // t == 0
+        C({T(4), T(6), T(2)}, T(0)),
+        // t == 1
+        C({T(4), T(6), T(8)}, T(1)),
+        // t == .5
+        C({T(4), T(6), T(5)}, T(.5)),
+
+        // Vector tests
+        C({Vec(T(4), T(4)), Vec(T(6), T(6)), Vec(T(2), T(8))}, Vec(T(0), T(1))),
+    };
+}
+INSTANTIATE_TEST_SUITE_P(  //
+    Smoothstep,
+    ResolverConstEvalBuiltinTest,
+    testing::Combine(testing::Values(sem::BuiltinType::kSmoothstep),
+                     testing::ValuesIn(Concat(SmoothstepCases<AFloat>(),  //
+                                              SmoothstepCases<f32>(),
+                                              SmoothstepCases<f16>()))));
+
+template <typename T>
+std::vector<Case> SmoothstepAFloatErrorCases() {
+    auto error_msg = [](auto a, const char* op, auto b) {
+        return "12:34 error: " + OverflowErrorMessage(a, op, b) + R"(
+12:34 note: when calculating smoothstep)";
+    };
+
+    return {// `x - low` underflows
+            E({T::Highest(), T(1), T::Lowest()}, error_msg(T::Lowest(), "-", T::Highest())),
+            // `high - low` underflows
+            E({T::Highest(), T::Lowest(), T(0)}, error_msg(T::Lowest(), "-", T::Highest())),
+            // Divid by zero on `(x - low) / (high - low)`
+            E({T(0), T(0), T(0)}, error_msg(T(0), "/", T(0)))};
+}
+INSTANTIATE_TEST_SUITE_P(  //
+    SmoothstepAFloatError,
+    ResolverConstEvalBuiltinTest,
+    testing::Combine(testing::Values(sem::BuiltinType::kSmoothstep),
+                     testing::ValuesIn(SmoothstepAFloatErrorCases<AFloat>())));
+
+template <typename T>
+std::vector<Case> SmoothstepF16ErrorCases() {
+    auto error_msg = [](auto a, const char* op, auto b) {
+        return "12:34 error: " + OverflowErrorMessage(a, op, b) + R"(
+12:34 note: when calculating smoothstep)";
+    };
+
+    return {// `x - low` underflows
+            E({T::Highest(), T(1), T::Lowest()}, error_msg(T::Lowest(), "-", T::Highest())),
+            // `high - low` underflows
+            E({T::Highest(), T::Lowest(), T(0)}, error_msg(T::Lowest(), "-", T::Highest())),
+            // Divid by zero on `(x - low) / (high - low)`
+            E({T(0), T(0), T(0)}, error_msg(T(0), "/", T(0)))};
+}
+// TODO(crbug.com/tint/1581): Enable when non-abstract math is checked.
+INSTANTIATE_TEST_SUITE_P(  //
+    DISABLED_SmoothstepF16Error,
+    ResolverConstEvalBuiltinTest,
+    testing::Combine(testing::Values(sem::BuiltinType::kSmoothstep),
+                     testing::ValuesIn(SmoothstepF16ErrorCases<f16>())));
+
+template <typename T>
+std::vector<Case> SmoothstepF32ErrorCases() {
+    auto error_msg = [](auto a, const char* op, auto b) {
+        return "12:34 error: " + OverflowErrorMessage(a, op, b) + R"(
+12:34 note: when calculating smoothstep)";
+    };
+
+    return {// `x - low` underflows
+            E({T::Highest(), T(1), T::Lowest()}, error_msg(T::Lowest(), "-", T::Highest())),
+            // `high - low` underflows
+            E({T::Highest(), T::Lowest(), T(0)}, error_msg(T::Lowest(), "-", T::Highest())),
+            // Divid by zero on `(x - low) / (high - low)`
+            E({T(0), T(0), T(0)}, error_msg(T(0), "/", T(0)))};
+}
+// TODO(crbug.com/tint/1581): Enable when non-abstract math is checked.
+INSTANTIATE_TEST_SUITE_P(  //
+    DISABLED_SmoothstepF32Error,
+    ResolverConstEvalBuiltinTest,
+    testing::Combine(testing::Values(sem::BuiltinType::kSmoothstep),
+                     testing::ValuesIn(SmoothstepF32ErrorCases<f32>())));
+
+template <typename T>
 std::vector<Case> StepCases() {
     return {
         C({T(0), T(0)}, T(1.0)),
@@ -1649,6 +1747,28 @@ INSTANTIATE_TEST_SUITE_P(  //
                      testing::ValuesIn(Concat(StepCases<AFloat>(),  //
                                               StepCases<f32>(),
                                               StepCases<f16>()))));
+
+template <typename T>
+std::vector<Case> SqrtCases() {
+    std::vector<Case> cases = {
+        C({-T(0)}, -T(0)),  //
+        C({T(0)}, T(0)),    //
+        C({T(25)}, T(5)),
+
+        // Vector tests
+        C({Vec(T(25), T(100))}, Vec(T(5), T(10))),
+
+        E({-T(25)}, "12:34 error: sqrt must be called with a value >= 0"),
+    };
+    return cases;
+}
+INSTANTIATE_TEST_SUITE_P(  //
+    Sqrt,
+    ResolverConstEvalBuiltinTest,
+    testing::Combine(testing::Values(sem::BuiltinType::kSqrt),
+                     testing::ValuesIn(Concat(SqrtCases<AFloat>(),  //
+                                              SqrtCases<f32>(),
+                                              SqrtCases<f16>()))));
 
 template <typename T>
 std::vector<Case> TanCases() {
@@ -1692,6 +1812,26 @@ INSTANTIATE_TEST_SUITE_P(  //
                      testing::ValuesIn(Concat(TanhCases<AFloat>(),  //
                                               TanhCases<f32>(),
                                               TanhCases<f16>()))));
+
+template <typename T>
+std::vector<Case> TruncCases() {
+    std::vector<Case> cases = {C({T(0)}, T(0)),    //
+                               C({-T(0)}, -T(0)),  //
+                               C({T(1.5)}, T(1)),  //
+                               C({-T(1.5)}, -T(1)),
+
+                               // Vector tests
+                               C({Vec(T(0.0), T(1.5), -T(2.2))}, Vec(T(0), T(1), -T(2)))};
+
+    return cases;
+}
+INSTANTIATE_TEST_SUITE_P(  //
+    Trunc,
+    ResolverConstEvalBuiltinTest,
+    testing::Combine(testing::Values(sem::BuiltinType::kTrunc),
+                     testing::ValuesIn(Concat(TruncCases<AFloat>(),  //
+                                              TruncCases<f32>(),
+                                              TruncCases<f16>()))));
 
 std::vector<Case> Unpack4x8snormCases() {
     return {
@@ -1776,7 +1916,6 @@ INSTANTIATE_TEST_SUITE_P(  //
                      testing::ValuesIn(Unpack2x16unormCases())));
 
 std::vector<Case> QuantizeToF16Cases() {
-    (void)E({Vec(0_f, 0_f)}, "");  // Currently unused, but will be soon.
     return {
         C({0_f}, 0_f),    //
         C({-0_f}, -0_f),  //
@@ -1805,12 +1944,6 @@ std::vector<Case> QuantizeToF16Cases() {
         C({0x0.06b7p-14_f}, 0x0.068p-14_f),    //
         C({-0x0.06b7p-14_f}, -0x0.068p-14_f),  //
 
-        // Value out of f16 range
-        C({65504.003_f}, 65504_f),     //
-        C({-65504.003_f}, -65504_f),   //
-        C({0x1.234p56_f}, 65504_f),    //
-        C({-0x4.321p65_f}, -65504_f),  //
-
         // Vector tests
         C({Vec(0_f, -0_f)}, Vec(0_f, -0_f)),  //
         C({Vec(1_f, -1_f)}, Vec(1_f, -1_f)),  //
@@ -1823,8 +1956,16 @@ std::vector<Case> QuantizeToF16Cases() {
         C({Vec(0x0.034p-14_f, -0x0.034p-14_f, 0x0.068p-14_f, -0x0.068p-14_f)},
           Vec(0x0.034p-14_f, -0x0.034p-14_f, 0x0.068p-14_f, -0x0.068p-14_f)),
 
-        C({Vec(65504.003_f, 0x1.234p56_f)}, Vec(65504_f, 65504_f)),
-        C({Vec(-0x1.234p56_f, -65504.003_f)}, Vec(-65504_f, -65504_f)),
+        // Value out of f16 range
+        E({65504.003_f}, "12:34 error: value 65504.00390625 cannot be represented as 'f16'"),
+        E({-65504.003_f}, "12:34 error: value -65504.00390625 cannot be represented as 'f16'"),
+        E({0x1.234p56_f}, "12:34 error: value 81979586966978560 cannot be represented as 'f16'"),
+        E({0x4.321p65_f},
+          "12:34 error: value 1.5478871919272394752e+20 cannot be represented as 'f16'"),
+        E({Vec(65504.003_f, 0_f)},
+          "12:34 error: value 65504.00390625 cannot be represented as 'f16'"),
+        E({Vec(0_f, -0x4.321p65_f)},
+          "12:34 error: value -1.5478871919272394752e+20 cannot be represented as 'f16'"),
     };
 }
 INSTANTIATE_TEST_SUITE_P(  //

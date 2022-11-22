@@ -27,9 +27,6 @@
 namespace tint::resolver {
 
 template <typename T>
-inline const auto kPi = T(UnwrapNumber<T>(3.14159265358979323846));
-
-template <typename T>
 inline const auto kPiOver2 = T(UnwrapNumber<T>(1.57079632679489661923));
 
 template <typename T>
@@ -142,6 +139,16 @@ inline std::string OverflowErrorMessage(NumberT lhs, const char* op, NumberT rhs
     ss << std::setprecision(20);
     ss << "'" << lhs.value << " " << op << " " << rhs.value << "' cannot be represented as '"
        << FriendlyName<NumberT>() << "'";
+    return ss.str();
+}
+
+/// Returns the overflow error message for converions
+template <typename VALUE_TY>
+std::string OverflowErrorMessage(VALUE_TY value, std::string_view target_ty) {
+    std::stringstream ss;
+    ss << std::setprecision(20);
+    ss << "value " << value << " cannot be represented as "
+       << "'" << target_ty << "'";
     return ss.str();
 }
 

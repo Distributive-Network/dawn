@@ -523,6 +523,7 @@ function(tint_default_compile_options TARGET)
     -Wall
     -Werror
     -Wextra
+    -Wno-documentation-unknown-command
     -Wno-padded
     -Wno-switch-enum
     -Wno-unknown-pragmas

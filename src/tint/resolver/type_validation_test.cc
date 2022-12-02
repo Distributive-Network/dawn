@@ -321,12 +321,11 @@ TEST_F(ResolverTypeValidationTest, ArraySize_UnderElementCountLimit) {
 
 TEST_F(ResolverTypeValidationTest, ArraySize_OverElementCountLimit) {
     // var<private> a : array<f32, 65536>;
-    GlobalVar(Source{{1, 2}}, "a",
-              ty.array(Source{{12, 34}}, ty.f32(), Expr(Source{{12, 34}}, 65536_a)),
+    GlobalVar(Source{{56, 78}}, "a", ty.array(Source{{12, 34}}, ty.f32(), Expr(65536_a)),
               ast::AddressSpace::kPrivate);
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), R"(1:2 error: array count (65536) must be less than 65536
-1:2 note: while instantiating 'var' a)");
+    EXPECT_EQ(r()->error(), R"(12:34 error: array count (65536) must be less than 65536
+56:78 note: while instantiating 'var' a)");
 }
 
 TEST_F(ResolverTypeValidationTest, ArraySize_StorageBufferLargeArray) {
@@ -569,7 +568,7 @@ TEST_F(ResolverTypeValidationTest, RuntimeArrayInFunction_Fail) {
     /// @vertex
     // fn func() { var a : array<i32>; }
 
-    auto* var = Var(Source{{12, 34}}, "a", ty.array<i32>());
+    auto* var = Var(Source{{56, 78}}, "a", ty.array(Source{{12, 34}}, ty.i32()));
 
     Func("func", utils::Empty, ty.void_(),
          utils::Vector{
@@ -582,7 +581,7 @@ TEST_F(ResolverTypeValidationTest, RuntimeArrayInFunction_Fail) {
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
               R"(12:34 error: runtime-sized arrays can only be used in the <storage> address space
-12:34 note: while instantiating 'var' a)");
+56:78 note: while instantiating 'var' a)");
 }
 
 TEST_F(ResolverTypeValidationTest, Struct_Member_VectorNoType) {
@@ -731,23 +730,24 @@ TEST_F(ResolverTypeValidationTest, RuntimeArrayIsNotLast_Fail) {
 }
 
 TEST_F(ResolverTypeValidationTest, RuntimeArrayAsGlobalVariable) {
-    GlobalVar(Source{{56, 78}}, "g", ty.array<i32>(), ast::AddressSpace::kPrivate);
+    GlobalVar(Source{{56, 78}}, "g", ty.array(Source{{12, 34}}, ty.i32()),
+              ast::AddressSpace::kPrivate);
 
     ASSERT_FALSE(r()->Resolve());
 
     EXPECT_EQ(r()->error(),
-              R"(56:78 error: runtime-sized arrays can only be used in the <storage> address space
+              R"(12:34 error: runtime-sized arrays can only be used in the <storage> address space
 56:78 note: while instantiating 'var' g)");
 }
 
 TEST_F(ResolverTypeValidationTest, RuntimeArrayAsLocalVariable) {
-    auto* v = Var(Source{{56, 78}}, "g", ty.array<i32>());
+    auto* v = Var(Source{{56, 78}}, "g", ty.array(Source{{12, 34}}, ty.i32()));
     WrapInFunction(v);
 
     ASSERT_FALSE(r()->Resolve());
 
     EXPECT_EQ(r()->error(),
-              R"(56:78 error: runtime-sized arrays can only be used in the <storage> address space
+              R"(12:34 error: runtime-sized arrays can only be used in the <storage> address space
 56:78 note: while instantiating 'var' g)");
 }
 
@@ -755,7 +755,7 @@ TEST_F(ResolverTypeValidationTest, RuntimeArrayAsParameter_Fail) {
     // fn func(a : array<u32>) {}
     // @vertex fn main() {}
 
-    auto* param = Param(Source{{12, 34}}, "a", ty.array<i32>());
+    auto* param = Param(Source{{56, 78}}, "a", ty.array(Source{{12, 34}}, ty.i32()));
 
     Func("func", utils::Vector{param}, ty.void_(),
          utils::Vector{
@@ -773,14 +773,14 @@ TEST_F(ResolverTypeValidationTest, RuntimeArrayAsParameter_Fail) {
     EXPECT_FALSE(r()->Resolve()) << r()->error();
     EXPECT_EQ(r()->error(),
               R"(12:34 error: runtime-sized arrays can only be used in the <storage> address space
-12:34 note: while instantiating parameter a)");
+56:78 note: while instantiating parameter a)");
 }
 
-TEST_F(ResolverTypeValidationTest, PtrToRuntimeArrayAsParameter_Fail) {
+TEST_F(ResolverTypeValidationTest, PtrToRuntimeArrayAsPointerParameter_Fail) {
     // fn func(a : ptr<workgroup, array<u32>>) {}
 
-    auto* param =
-        Param(Source{{12, 34}}, "a", ty.pointer(ty.array<i32>(), ast::AddressSpace::kWorkgroup));
+    auto* param = Param("a", ty.pointer(Source{{56, 78}}, ty.array(Source{{12, 34}}, ty.i32()),
+                                        ast::AddressSpace::kWorkgroup));
 
     Func("func", utils::Vector{param}, ty.void_(),
          utils::Vector{
@@ -790,7 +790,23 @@ TEST_F(ResolverTypeValidationTest, PtrToRuntimeArrayAsParameter_Fail) {
     EXPECT_FALSE(r()->Resolve()) << r()->error();
     EXPECT_EQ(r()->error(),
               R"(12:34 error: runtime-sized arrays can only be used in the <storage> address space
-12:34 note: while instantiating parameter a)");
+56:78 note: while instantiating ptr<workgroup, array<i32>, read_write>)");
+}
+
+TEST_F(ResolverTypeValidationTest, PtrToRuntimeArrayAsParameter_Fail) {
+    // fn func(a : ptr<workgroup, array<u32>>) {}
+
+    auto* param = Param(Source{{56, 78}}, "a", ty.array(Source{{12, 34}}, ty.i32()));
+
+    Func("func", utils::Vector{param}, ty.void_(),
+         utils::Vector{
+             Return(),
+         });
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(),
+              R"(12:34 error: runtime-sized arrays can only be used in the <storage> address space
+56:78 note: while instantiating parameter a)");
 }
 
 TEST_F(ResolverTypeValidationTest, AliasRuntimeArrayIsNotLast_Fail) {
@@ -1378,6 +1394,57 @@ INSTANTIATE_TEST_SUITE_P(ResolverTypeValidationTest,
                                          ParamsFor<mat4x4<f32>>(2),
                                          ParamsFor<array<2, f32>>(2)));
 }  // namespace VectorTests
+
+namespace BuiltinTypeAliasTests {
+struct Params {
+    const char* alias;
+    builder::ast_type_func_ptr type;
+};
+
+template <typename T>
+constexpr Params Case(const char* alias) {
+    return Params{alias, DataType<T>::AST};
+}
+
+using BuiltinTypeAliasTest = ResolverTestWithParam<Params>;
+TEST_P(BuiltinTypeAliasTest, CheckEquivalent) {
+    // var aliased : vecTN;
+    // var explicit : vecN<T>;
+    // explicit = aliased;
+    auto& params = GetParam();
+
+    Enable(ast::Extension::kF16);
+
+    WrapInFunction(Decl(Var("aliased", ty.type_name(params.alias))),
+                   Decl(Var("explicit", params.type(*this))),  //
+                   Assign("explicit", "aliased"));
+    EXPECT_TRUE(r()->Resolve()) << r()->error();
+}
+TEST_P(BuiltinTypeAliasTest, Construct) {
+    // var v : vecN<T> = vecTN();
+    auto& params = GetParam();
+
+    Enable(ast::Extension::kF16);
+
+    WrapInFunction(Decl(Var("v", params.type(*this), Construct(ty.type_name(params.alias)))));
+    EXPECT_TRUE(r()->Resolve()) << r()->error();
+}
+INSTANTIATE_TEST_SUITE_P(ResolverTypeValidationTest,
+                         BuiltinTypeAliasTest,
+                         testing::Values(Case<vec2<f32>>("vec2f"),
+                                         Case<vec3<f32>>("vec3f"),
+                                         Case<vec4<f32>>("vec4f"),
+                                         Case<vec2<f16>>("vec2h"),
+                                         Case<vec3<f16>>("vec3h"),
+                                         Case<vec4<f16>>("vec4h"),
+                                         Case<vec2<i32>>("vec2i"),
+                                         Case<vec3<i32>>("vec3i"),
+                                         Case<vec4<i32>>("vec4i"),
+                                         Case<vec2<u32>>("vec2u"),
+                                         Case<vec3<u32>>("vec3u"),
+                                         Case<vec4<u32>>("vec4u")));
+
+}  // namespace BuiltinTypeAliasTests
 
 }  // namespace
 }  // namespace tint::resolver

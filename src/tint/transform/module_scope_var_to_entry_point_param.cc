@@ -139,14 +139,15 @@ struct ModuleScopeVarToEntryPointParam::State {
             }
             case ast::AddressSpace::kStorage:
             case ast::AddressSpace::kUniform: {
-                // Variables into the Storage and Uniform address spacees are redeclared as entry
+                // Variables into the Storage and Uniform address spaces are redeclared as entry
                 // point parameters with a pointer type.
                 auto attributes = ctx.Clone(var->Declaration()->attributes);
                 attributes.Push(ctx.dst->Disable(ast::DisabledValidation::kEntryPointParameter));
                 attributes.Push(ctx.dst->Disable(ast::DisabledValidation::kIgnoreAddressSpace));
 
                 auto* param_type = store_type();
-                if (auto* arr = ty->As<sem::Array>(); arr && arr->IsRuntimeSized()) {
+                if (auto* arr = ty->As<sem::Array>();
+                    arr && arr->Count()->Is<sem::RuntimeArrayCount>()) {
                     // Wrap runtime-sized arrays in structures, so that we can declare pointers to
                     // them. Ideally we'd just emit the array itself as a pointer, but this is not
                     // representable in Tint's AST.
@@ -192,7 +193,7 @@ struct ModuleScopeVarToEntryPointParam::State {
                 [[fallthrough]];
             }
             case ast::AddressSpace::kPrivate: {
-                // Variables in the Private and Workgroup address spacees are redeclared at function
+                // Variables in the Private and Workgroup address spaces are redeclared at function
                 // scope. Disable address space validation on this variable.
                 auto* disable_validation =
                     ctx.dst->Disable(ast::DisabledValidation::kIgnoreAddressSpace);
@@ -497,7 +498,7 @@ struct ModuleScopeVarToEntryPointParam::State {
             }
         }
 
-        // Now remove all module-scope variables with these address spacees.
+        // Now remove all module-scope variables with these address spaces.
         for (auto* var_ast : ctx.src->AST().GlobalVariables()) {
             auto* var_sem = ctx.src->Sem().Get(var_ast);
             if (var_sem->AddressSpace() != ast::AddressSpace::kNone) {

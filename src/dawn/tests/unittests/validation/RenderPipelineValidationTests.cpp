@@ -710,11 +710,7 @@ TEST_F(RenderPipelineValidationTest, VertexOnlyPipelineRequireDepthStencilAttach
         utils::ComboRenderPassDescriptor renderPassDescriptor({});
 
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-        wgpu::RenderPassEncoder renderPass = encoder.BeginRenderPass(&renderPassDescriptor);
-        renderPass.SetPipeline(vertexOnlyPipeline);
-        renderPass.End();
-
-        ASSERT_DEVICE_ERROR(encoder.Finish());
+        ASSERT_DEVICE_ERROR(encoder.BeginRenderPass(&renderPassDescriptor));
     }
 
     // Vertex-only render pipeline can not work with color target
@@ -1390,8 +1386,7 @@ class InterStageVariableMatchingValidationTest : public RenderPipelineValidation
     }
 };
 
-// Tests that creating render pipeline should fail when there is a vertex output that doesn't have
-// its corresponding fragment input at the same location, and there is a fragment input that
+// Tests that creating render pipeline should fail when there is a fragment input that
 // doesn't have its corresponding vertex output at the same location.
 TEST_F(InterStageVariableMatchingValidationTest, MissingDeclarationAtSameLocation) {
     wgpu::ShaderModule vertexModuleOutputAtLocation0 = utils::CreateShaderModule(device, R"(
@@ -1430,7 +1425,10 @@ TEST_F(InterStageVariableMatchingValidationTest, MissingDeclarationAtSameLocatio
             })");
 
     {
-        CheckCreatingRenderPipeline(vertexModuleOutputAtLocation0, fsModule, false);
+        // It is okay if the fragment output is a subset of the vertex input.
+        CheckCreatingRenderPipeline(vertexModuleOutputAtLocation0, fsModule, true);
+    }
+    {
         CheckCreatingRenderPipeline(vsModule, fragmentModuleAtLocation0, false);
         CheckCreatingRenderPipeline(vertexModuleOutputAtLocation0, fragmentModuleInputAtLocation1,
                                     false);

@@ -153,8 +153,18 @@ void TraverseCallChain(diag::List& diagnostics,
 
 }  // namespace
 
-Validator::Validator(ProgramBuilder* builder, SemHelper& sem)
-    : symbols_(builder->Symbols()), diagnostics_(builder->Diagnostics()), sem_(sem) {}
+Validator::Validator(
+    ProgramBuilder* builder,
+    SemHelper& sem,
+    const ast::Extensions& enabled_extensions,
+    const utils::Hashmap<const sem::Type*, const Source*, 8>& atomic_composite_info,
+    utils::Hashset<TypeAndAddressSpace, 8>& valid_type_storage_layouts)
+    : symbols_(builder->Symbols()),
+      diagnostics_(builder->Diagnostics()),
+      sem_(sem),
+      enabled_extensions_(enabled_extensions),
+      atomic_composite_info_(atomic_composite_info),
+      valid_type_storage_layouts_(valid_type_storage_layouts) {}
 
 Validator::~Validator() = default;
 
@@ -184,7 +194,7 @@ bool Validator::IsFixedFootprint(const sem::Type* type) const {
         [&](const sem::Matrix*) { return true; },  //
         [&](const sem::Atomic*) { return true; },
         [&](const sem::Array* arr) {
-            return !arr->IsRuntimeSized() && IsFixedFootprint(arr->ElemType());
+            return !arr->Count()->Is<sem::RuntimeArrayCount>() && IsFixedFootprint(arr->ElemType());
         },
         [&](const sem::Struct* str) {
             for (auto* member : str->Members()) {
@@ -257,6 +267,28 @@ bool Validator::Atomic(const ast::Atomic* a, const sem::Atomic* s) const {
         return false;
     }
     return true;
+}
+
+bool Validator::Pointer(const ast::Pointer* a, const sem::Pointer* s) const {
+    if (s->AddressSpace() == ast::AddressSpace::kUndefined) {
+        AddError("ptr missing address space", a->source);
+        return false;
+    }
+
+    if (a->access != ast::Access::kUndefined) {
+        // https://www.w3.org/TR/WGSL/#access-mode-defaults
+        // When writing a variable declaration or a pointer type in WGSL source:
+        // * For the storage address space, the access mode is optional, and defaults to read.
+        // * For other address spaces, the access mode must not be written.
+        if (a->address_space != ast::AddressSpace::kStorage) {
+            AddError("only pointers in <storage> address space may declare an access mode",
+                     a->source);
+            return false;
+        }
+    }
+
+    return CheckTypeAccessAddressSpace(s->StoreType(), s->Access(), s->AddressSpace(), utils::Empty,
+                                       a->source);
 }
 
 bool Validator::StorageTexture(const ast::StorageTexture* t) const {
@@ -345,11 +377,10 @@ bool Validator::VariableInitializer(const ast::Variable* v,
             default:
                 // https://gpuweb.github.io/gpuweb/wgsl/#var-and-let
                 // Optionally has an initializer expression, if the variable is in the private or
-                // function address spacees.
+                // function address spaces.
                 AddError("var of address space '" + utils::ToString(address_space) +
-                             "' cannot have an initializer. var initializers are only "
-                             "supported for the address spacees "
-                             "'private' and 'function'",
+                             "' cannot have an initializer. var initializers are only supported "
+                             "for the address spaces 'private' and 'function'",
                          v->source);
                 return false;
         }
@@ -360,8 +391,7 @@ bool Validator::VariableInitializer(const ast::Variable* v,
 
 bool Validator::AddressSpaceLayout(const sem::Type* store_ty,
                                    ast::AddressSpace address_space,
-                                   Source source,
-                                   ValidTypeStorageLayouts& layouts) const {
+                                   Source source) const {
     // https://gpuweb.github.io/gpuweb/wgsl/#storage-class-layout-constraints
 
     auto is_uniform_struct_or_array = [address_space](const sem::Type* ty) {
@@ -383,11 +413,11 @@ bool Validator::AddressSpaceLayout(const sem::Type* store_ty,
     };
 
     auto member_name_of = [this](const sem::StructMember* sm) {
-        return symbols_.NameFor(sm->Declaration()->symbol);
+        return symbols_.NameFor(sm->Name());
     };
 
-    // Cache result of type + address space pair.
-    if (!layouts.emplace(store_ty, address_space).second) {
+    // Only validate the [type + address space] once
+    if (!valid_type_storage_layouts_.Add(TypeAndAddressSpace{store_ty, address_space})) {
         return true;
     }
 
@@ -395,13 +425,17 @@ bool Validator::AddressSpaceLayout(const sem::Type* store_ty,
         return true;
     }
 
-    // Temporally forbid using f16 types in "uniform" and "storage" address space.
-    // TODO(tint:1473, tint:1502): Remove this error after f16 is supported in "uniform" and
-    // "storage" address space but keep for "push_constant" address space.
-    if (Is<sem::F16>(sem::Type::DeepestElementOf(store_ty))) {
-        AddError("using f16 types in '" + utils::ToString(address_space) +
-                     "' address space is not implemented yet",
-                 source);
+    auto note_usage = [&] {
+        AddNote("'" + store_ty->FriendlyName(symbols_) + "' used in address space '" +
+                    utils::ToString(address_space) + "' here",
+                source);
+    };
+
+    // Among three host-shareable address spaces, f16 is supported in "uniform" and
+    // "storage" address space, but not "push_constant" address space yet.
+    if (Is<sem::F16>(sem::Type::DeepestElementOf(store_ty)) &&
+        address_space == ast::AddressSpace::kPushConstant) {
+        AddError("using f16 types in 'push_constant' address space is not implemented yet", source);
         return false;
     }
 
@@ -411,10 +445,9 @@ bool Validator::AddressSpaceLayout(const sem::Type* store_ty,
             uint32_t required_align = required_alignment_of(m->Type());
 
             // Recurse into the member type.
-            if (!AddressSpaceLayout(m->Type(), address_space, m->Declaration()->type->source,
-                                    layouts)) {
-                AddNote("see layout of struct:\n" + str->Layout(symbols_),
-                        str->Declaration()->source);
+            if (!AddressSpaceLayout(m->Type(), address_space, m->Declaration()->type->source)) {
+                AddNote("see layout of struct:\n" + str->Layout(symbols_), str->Source());
+                note_usage();
                 return false;
             }
 
@@ -427,16 +460,16 @@ bool Validator::AddressSpaceLayout(const sem::Type* store_ty,
                              " bytes, but '" + member_name_of(m) + "' is currently at offset " +
                              std::to_string(m->Offset()) + ". Consider setting @align(" +
                              std::to_string(required_align) + ") on this member",
-                         m->Declaration()->source);
+                         m->Source());
 
-                AddNote("see layout of struct:\n" + str->Layout(symbols_),
-                        str->Declaration()->source);
+                AddNote("see layout of struct:\n" + str->Layout(symbols_), str->Source());
 
                 if (auto* member_str = m->Type()->As<sem::Struct>()) {
                     AddNote("and layout of struct member:\n" + member_str->Layout(symbols_),
-                            member_str->Declaration()->source);
+                            member_str->Source());
                 }
 
+                note_usage();
                 return false;
             }
 
@@ -453,15 +486,15 @@ bool Validator::AddressSpaceLayout(const sem::Type* store_ty,
                             std::to_string(prev_to_curr_offset) + " bytes between '" +
                             member_name_of(prev_member) + "' and '" + member_name_of(m) +
                             "'. Consider setting @align(16) on this member",
-                        m->Declaration()->source);
+                        m->Source());
 
-                    AddNote("see layout of struct:\n" + str->Layout(symbols_),
-                            str->Declaration()->source);
+                    AddNote("see layout of struct:\n" + str->Layout(symbols_), str->Source());
 
                     auto* prev_member_str = prev_member->Type()->As<sem::Struct>();
                     AddNote("and layout of previous member struct:\n" +
                                 prev_member_str->Layout(symbols_),
-                            prev_member_str->Declaration()->source);
+                            prev_member_str->Source());
+                    note_usage();
                     return false;
                 }
             }
@@ -474,7 +507,7 @@ bool Validator::AddressSpaceLayout(const sem::Type* store_ty,
         // TODO(crbug.com/tint/1388): Ideally we'd pass the source for nested element type here, but
         // we can't easily get that from the semantic node. We should consider recursing through the
         // AST type nodes instead.
-        if (!AddressSpaceLayout(arr->ElemType(), address_space, source, layouts)) {
+        if (!AddressSpaceLayout(arr->ElemType(), address_space, source)) {
             return false;
         }
 
@@ -486,21 +519,16 @@ bool Validator::AddressSpaceLayout(const sem::Type* store_ty,
                 // shader author can resolve the issue.
                 std::string hint;
                 if (arr->ElemType()->is_scalar()) {
-                    hint =
-                        "Consider using a vector or struct as the element type "
-                        "instead.";
+                    hint = "Consider using a vector or struct as the element type instead.";
                 } else if (auto* vec = arr->ElemType()->As<sem::Vector>();
                            vec && vec->type()->Size() == 4) {
                     hint = "Consider using a vec4 instead.";
                 } else if (arr->ElemType()->Is<sem::Struct>()) {
-                    hint =
-                        "Consider using the @size attribute on the last struct "
-                        "member.";
+                    hint = "Consider using the @size attribute on the last struct member.";
                 } else {
                     hint =
-                        "Consider wrapping the element type in a struct and using "
-                        "the "
-                        "@size attribute.";
+                        "Consider wrapping the element type in a struct and using the @size "
+                        "attribute.";
                 }
                 AddError(
                     "uniform storage requires that array elements be aligned to 16 "
@@ -509,38 +537,6 @@ bool Validator::AddressSpaceLayout(const sem::Type* store_ty,
                     source);
                 return false;
             }
-        }
-    }
-
-    return true;
-}
-
-bool Validator::AddressSpaceLayout(const sem::Variable* var,
-                                   const ast::Extensions& enabled_extensions,
-                                   ValidTypeStorageLayouts& layouts) const {
-    if (var->AddressSpace() == ast::AddressSpace::kPushConstant &&
-        !enabled_extensions.Contains(ast::Extension::kChromiumExperimentalPushConstant) &&
-        IsValidationEnabled(var->Declaration()->attributes,
-                            ast::DisabledValidation::kIgnoreAddressSpace)) {
-        AddError(
-            "use of variable address space 'push_constant' requires enabling extension "
-            "'chromium_experimental_push_constant'",
-            var->Declaration()->source);
-        return false;
-    }
-
-    if (auto* str = var->Type()->UnwrapRef()->As<sem::Struct>()) {
-        if (!AddressSpaceLayout(str, var->AddressSpace(), str->Declaration()->source, layouts)) {
-            AddNote("see declaration of variable", var->Declaration()->source);
-            return false;
-        }
-    } else {
-        Source source = var->Declaration()->source;
-        if (var->Declaration()->type) {
-            source = var->Declaration()->type->source;
-        }
-        if (!AddressSpaceLayout(var->Type()->UnwrapRef(), var->AddressSpace(), source, layouts)) {
-            return false;
         }
     }
 
@@ -579,8 +575,7 @@ bool Validator::LocalVariable(const sem::Variable* local) const {
 
 bool Validator::GlobalVariable(
     const sem::GlobalVariable* global,
-    const utils::Hashmap<OverrideId, const sem::Variable*, 8>& override_ids,
-    const utils::Hashmap<const sem::Type*, const Source*, 8>& atomic_composite_info) const {
+    const utils::Hashmap<OverrideId, const sem::Variable*, 8>& override_ids) const {
     auto* decl = global->Declaration();
     if (global->AddressSpace() != ast::AddressSpace::kWorkgroup &&
         IsArrayWithOverrideCount(global->Type())) {
@@ -590,7 +585,7 @@ bool Validator::GlobalVariable(
     }
     bool ok = Switch(
         decl,  //
-        [&](const ast::Var* var) {
+        [&](const ast::Var*) {
             if (auto* init = global->Initializer();
                 init && init->Stage() > sem::EvaluationStage::kOverride) {
                 AddError("module-scope 'var' initializer must be a constant or override-expression",
@@ -616,29 +611,6 @@ bool Validator::GlobalVariable(
                              attr->source);
                     return false;
                 }
-            }
-
-            // https://gpuweb.github.io/gpuweb/wgsl/#variable-declaration
-            // The access mode always has a default, and except for variables in the storage address
-            // space, must not be written.
-            if (var->declared_access != ast::Access::kUndefined) {
-                if (global->AddressSpace() == ast::AddressSpace::kStorage) {
-                    // The access mode for the storage address space can only be 'read' or
-                    // 'read_write'.
-                    if (var->declared_access == ast::Access::kWrite) {
-                        AddError("access mode 'write' is not valid for the 'storage' address space",
-                                 decl->source);
-                        return false;
-                    }
-                } else {
-                    AddError("only variables in <storage> address space may declare an access mode",
-                             decl->source);
-                    return false;
-                }
-            }
-
-            if (!AtomicVariable(global, atomic_composite_info)) {
-                return false;
             }
 
             return Var(global);
@@ -696,65 +668,41 @@ bool Validator::GlobalVariable(
     return true;
 }
 
-// https://gpuweb.github.io/gpuweb/wgsl/#atomic-types
-// Atomic types may only be instantiated by variables in the workgroup storage class or by storage
-// buffer variables with a read_write access mode.
-bool Validator::AtomicVariable(
-    const sem::Variable* var,
-    const utils::Hashmap<const sem::Type*, const Source*, 8>& atomic_composite_info) const {
-    auto address_space = var->AddressSpace();
-    auto* decl = var->Declaration();
-    auto access = var->Access();
-    auto* type = var->Type()->UnwrapRef();
-    auto source = decl->type ? decl->type->source : decl->source;
-
-    if (type->Is<sem::Atomic>()) {
-        if (address_space != ast::AddressSpace::kWorkgroup &&
-            address_space != ast::AddressSpace::kStorage) {
-            AddError("atomic variables must have <storage> or <workgroup> address space", source);
-            return false;
-        }
-    } else if (type->IsAnyOf<sem::Struct, sem::Array>()) {
-        if (auto* found = atomic_composite_info.Find(type)) {
-            if (address_space != ast::AddressSpace::kStorage &&
-                address_space != ast::AddressSpace::kWorkgroup) {
-                AddError("atomic variables must have <storage> or <workgroup> address space",
-                         source);
-                AddNote("atomic sub-type of '" + sem_.TypeNameOf(type) + "' is declared here",
-                        **found);
-                return false;
-            } else if (address_space == ast::AddressSpace::kStorage &&
-                       access != ast::Access::kReadWrite) {
-                AddError(
-                    "atomic variables in <storage> address space must have read_write "
-                    "access mode",
-                    source);
-                AddNote("atomic sub-type of '" + sem_.TypeNameOf(type) + "' is declared here",
-                        **found);
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
 bool Validator::Var(const sem::Variable* v) const {
     auto* var = v->Declaration()->As<ast::Var>();
-    auto* storage_ty = v->Type()->UnwrapRef();
+    auto* store_ty = v->Type()->UnwrapRef();
 
-    if (!IsStorable(storage_ty)) {
-        AddError(sem_.TypeNameOf(storage_ty) + " cannot be used as the type of a var", var->source);
+    if (!IsStorable(store_ty)) {
+        AddError(sem_.TypeNameOf(store_ty) + " cannot be used as the type of a var", var->source);
         return false;
     }
 
-    if (storage_ty->is_handle() && var->declared_address_space != ast::AddressSpace::kNone) {
-        // https://gpuweb.github.io/gpuweb/wgsl/#module-scope-variables
-        // If the store type is a texture type or a sampler type, then the variable declaration must
-        // not have a address space attribute. The address space will always be handle.
-        AddError(
-            "variables of type '" + sem_.TypeNameOf(storage_ty) + "' must not have a address space",
-            var->source);
+    if (store_ty->is_handle()) {
+        if (var->declared_address_space != ast::AddressSpace::kNone) {
+            // https://gpuweb.github.io/gpuweb/wgsl/#module-scope-variables
+            // If the store type is a texture type or a sampler type, then the variable declaration
+            // must not have a address space attribute. The address space will always be handle.
+            AddError("variables of type '" + sem_.TypeNameOf(store_ty) +
+                         "' must not have a address space",
+                     var->source);
+            return false;
+        }
+    }
+
+    if (var->declared_access != ast::Access::kUndefined) {
+        // https://www.w3.org/TR/WGSL/#access-mode-defaults
+        // When writing a variable declaration or a pointer type in WGSL source:
+        // * For the storage address space, the access mode is optional, and defaults to read.
+        // * For other address spaces, the access mode must not be written.
+        if (var->declared_address_space != ast::AddressSpace::kStorage) {
+            AddError("only variables in <storage> address space may declare an access mode",
+                     var->source);
+            return false;
+        }
+    }
+
+    if (!CheckTypeAccessAddressSpace(v->Type()->UnwrapRef(), v->Access(), v->AddressSpace(),
+                                     var->attributes, var->source)) {
         return false;
     }
 
@@ -794,7 +742,7 @@ bool Validator::Override(
     for (auto* attr : decl->attributes) {
         if (attr->Is<ast::IdAttribute>()) {
             auto id = v->OverrideId();
-            if (auto* var = override_ids.Find(id); var && *var != v) {
+            if (auto var = override_ids.Find(id); var && *var != v) {
                 AddError("@id values must be unique", attr->source);
                 AddNote(
                     "a override with an ID of " + std::to_string(id.value) +
@@ -849,15 +797,31 @@ bool Validator::Parameter(const ast::Function* func, const sem::Variable* var) c
     }
 
     if (auto* ref = var->Type()->As<sem::Pointer>()) {
-        auto address_space = ref->AddressSpace();
-        if (!(address_space == ast::AddressSpace::kFunction ||
-              address_space == ast::AddressSpace::kPrivate) &&
-            IsValidationEnabled(decl->attributes, ast::DisabledValidation::kIgnoreAddressSpace)) {
-            std::stringstream ss;
-            ss << "function parameter of pointer type cannot be in '" << address_space
-               << "' address space";
-            AddError(ss.str(), decl->source);
-            return false;
+        if (IsValidationEnabled(decl->attributes, ast::DisabledValidation::kIgnoreAddressSpace)) {
+            bool ok = false;
+
+            auto sc = ref->AddressSpace();
+            switch (sc) {
+                case ast::AddressSpace::kFunction:
+                case ast::AddressSpace::kPrivate:
+                    ok = true;
+                    break;
+                case ast::AddressSpace::kStorage:
+                case ast::AddressSpace::kUniform:
+                case ast::AddressSpace::kWorkgroup:
+                    ok = enabled_extensions_.Contains(
+                        ast::Extension::kChromiumExperimentalFullPtrParameters);
+                    break;
+                default:
+                    break;
+            }
+            if (!ok) {
+                std::stringstream ss;
+                ss << "function parameter of pointer type cannot be in '" << sc
+                   << "' address space";
+                AddError(ss.str(), decl->source);
+                return false;
+            }
         }
     }
 
@@ -1261,8 +1225,8 @@ bool Validator::EntryPoint(const sem::Function* func, ast::PipelineStage stage) 
         if (auto* str = ty->As<sem::Struct>()) {
             for (auto* member : str->Members()) {
                 if (!validate_entry_point_attributes_inner(
-                        member->Declaration()->attributes, member->Type(),
-                        member->Declaration()->source, param_or_ret,
+                        member->Declaration()->attributes, member->Type(), member->Source(),
+                        param_or_ret,
                         /*is_struct_member*/ true, member->Location())) {
                     AddNote("while analyzing entry point '" + symbols_.NameFor(decl->symbol) + "'",
                             decl->source);
@@ -1434,64 +1398,11 @@ bool Validator::BreakStatement(const sem::Statement* stmt,
         AddError("break statement must be in a loop or switch case", stmt->Declaration()->source);
         return false;
     }
-    if (auto* continuing = ClosestContinuing(/*stop_at_loop*/ true, current_statement)) {
-        AddWarning(
-            "use of deprecated language feature: `break` must not be used to exit from "
-            "a continuing block. Use `break-if` instead.",
+    if (ClosestContinuing(/*stop_at_loop*/ true, current_statement) != nullptr) {
+        AddError(
+            "`break` must not be used to exit from a continuing block. Use `break-if` instead.",
             stmt->Declaration()->source);
-
-        auto fail = [&](const char* note_msg, const Source& note_src) {
-            constexpr const char* kErrorMsg =
-                "break statement in a continuing block must be the single statement of an if "
-                "statement's true or false block, and that if statement must be the last statement "
-                "of the continuing block";
-            AddError(kErrorMsg, stmt->Declaration()->source);
-            AddNote(note_msg, note_src);
-            return false;
-        };
-
-        if (auto* block = stmt->Parent()->As<sem::BlockStatement>()) {
-            auto* block_parent = block->Parent();
-            auto* if_stmt = block_parent->As<sem::IfStatement>();
-            if (!if_stmt) {
-                return fail("break statement is not directly in if statement block",
-                            stmt->Declaration()->source);
-            }
-            if (block->Declaration()->statements.Length() != 1) {
-                return fail("if statement block contains multiple statements",
-                            block->Declaration()->source);
-            }
-
-            if (if_stmt->Parent()->Is<sem::IfStatement>()) {
-                return fail("else has condition", if_stmt->Declaration()->source);
-            }
-
-            bool el_contains_break = block->Declaration() == if_stmt->Declaration()->else_statement;
-            if (el_contains_break) {
-                if (auto* true_block = if_stmt->Declaration()->body; !true_block->Empty()) {
-                    return fail("non-empty true block", true_block->source);
-                }
-            } else {
-                auto* else_stmt = if_stmt->Declaration()->else_statement;
-                if (else_stmt) {
-                    return fail("non-empty false block", else_stmt->source);
-                }
-            }
-
-            if (if_stmt->Parent()->Declaration() != continuing) {
-                return fail(
-                    "if statement containing break statement is not directly in continuing block",
-                    if_stmt->Declaration()->source);
-            }
-            if (auto* cont_block = continuing->As<ast::BlockStatement>()) {
-                if (if_stmt->Declaration() != cont_block->Last()) {
-                    return fail(
-                        "if statement containing break statement is not the last statement of the "
-                        "continuing block",
-                        if_stmt->Declaration()->source);
-                }
-            }
-        }
+        return false;
     }
     return true;
 }
@@ -1592,7 +1503,7 @@ bool Validator::BreakIfStatement(const sem::BreakIfStatement* stmt,
         }
         if (auto* continuing = s->As<sem::LoopContinuingBlockStatement>()) {
             if (continuing->Declaration()->statements.Back() != stmt->Declaration()) {
-                AddError("break-if must be last statement in a continuing block",
+                AddError("break-if must be the last statement in a continuing block",
                          stmt->Declaration()->source);
                 AddNote("see continuing block here", s->Declaration()->source);
                 return false;
@@ -1601,7 +1512,7 @@ bool Validator::BreakIfStatement(const sem::BreakIfStatement* stmt,
         }
     }
 
-    AddError("break-if must in a continuing block", stmt->Declaration()->source);
+    AddError("break-if must be in a continuing block", stmt->Declaration()->source);
     return false;
 }
 
@@ -1693,9 +1604,7 @@ bool Validator::TextureBuiltinFunction(const sem::Call* call) const {
            check_arg_is_constexpr(sem::ParameterUsage::kComponent, 0, 3);
 }
 
-bool Validator::RequiredExtensionForBuiltinFunction(
-    const sem::Call* call,
-    const ast::Extensions& enabled_extensions) const {
+bool Validator::RequiredExtensionForBuiltinFunction(const sem::Call* call) const {
     const auto* builtin = call->Target()->As<sem::Builtin>();
     if (!builtin) {
         return true;
@@ -1706,7 +1615,7 @@ bool Validator::RequiredExtensionForBuiltinFunction(
         return true;
     }
 
-    if (!enabled_extensions.Contains(extension)) {
+    if (!enabled_extensions_.Contains(extension)) {
         AddError("cannot call built-in function '" + std::string(builtin->str()) +
                      "' without extension " + utils::ToString(extension),
                  call->Declaration()->source);
@@ -1758,7 +1667,8 @@ bool Validator::FunctionCall(const sem::Call* call, sem::Statement* current_stat
             return false;
         }
 
-        if (param_type->Is<sem::Pointer>()) {
+        if (param_type->Is<sem::Pointer>() &&
+            !enabled_extensions_.Contains(ast::Extension::kChromiumExperimentalFullPtrParameters)) {
             // https://gpuweb.github.io/gpuweb/wgsl/#function-restriction
             // Each argument of pointer type to a user-defined function must have the same memory
             // view as its root identifier.
@@ -1853,12 +1763,13 @@ bool Validator::ArrayInitializer(const ast::CallExpression* ctor,
         }
     }
 
-    if (array_type->IsRuntimeSized()) {
+    auto* c = array_type->Count();
+    if (c->Is<sem::RuntimeArrayCount>()) {
         AddError("cannot construct a runtime-sized array", ctor->source);
         return false;
     }
 
-    if (array_type->IsOverrideSized()) {
+    if (c->IsAnyOf<sem::NamedOverrideArrayCount, sem::UnnamedOverrideArrayCount>()) {
         AddError("cannot construct an array that has an override-expression count", ctor->source);
         return false;
     }
@@ -1868,7 +1779,12 @@ bool Validator::ArrayInitializer(const ast::CallExpression* ctor,
         return false;
     }
 
-    const auto count = std::get<sem::ConstantArrayCount>(array_type->Count()).value;
+    if (!c->Is<sem::ConstantArrayCount>()) {
+        TINT_ICE(Resolver, diagnostics_) << "Invalid ArrayCount found";
+        return false;
+    }
+
+    const auto count = c->As<sem::ConstantArrayCount>()->value;
     if (!values.IsEmpty() && (values.Length() != count)) {
         std::string fm = values.Length() < count ? "few" : "many";
         AddError("array initializer has too " + fm + " elements: expected " +
@@ -2104,17 +2020,17 @@ bool Validator::Alias(const ast::Alias*) const {
 
 bool Validator::Structure(const sem::Struct* str, ast::PipelineStage stage) const {
     if (str->Members().empty()) {
-        AddError("structures must have at least one member", str->Declaration()->source);
+        AddError("structures must have at least one member", str->Source());
         return false;
     }
 
     utils::Hashset<uint32_t, 8> locations;
     for (auto* member : str->Members()) {
         if (auto* r = member->Type()->As<sem::Array>()) {
-            if (r->IsRuntimeSized()) {
+            if (r->Count()->Is<sem::RuntimeArrayCount>()) {
                 if (member != str->Members().back()) {
                     AddError("runtime arrays may only appear as the last member of a struct",
-                             member->Declaration()->source);
+                             member->Source());
                     return false;
                 }
             }
@@ -2126,7 +2042,7 @@ bool Validator::Structure(const sem::Struct* str, ast::PipelineStage stage) cons
         } else if (!IsFixedFootprint(member->Type())) {
             AddError(
                 "a struct that contains a runtime array cannot be nested inside another struct",
-                member->Declaration()->source);
+                member->Source());
             return false;
         }
 
@@ -2145,7 +2061,7 @@ bool Validator::Structure(const sem::Struct* str, ast::PipelineStage stage) cons
                     has_location = true;
                     TINT_ASSERT(Resolver, member->Location().has_value());
                     if (!LocationAttribute(location, member->Location().value(), member->Type(),
-                                           locations, stage, member->Declaration()->source)) {
+                                           locations, stage, member->Source())) {
                         return false;
                     }
                     return true;
@@ -2483,7 +2399,7 @@ bool Validator::IsValidationEnabled(utils::VectorRef<const ast::Attribute*> attr
 
 bool Validator::IsArrayWithOverrideCount(const sem::Type* ty) const {
     if (auto* arr = ty->UnwrapRef()->As<sem::Array>()) {
-        if (arr->IsOverrideSized()) {
+        if (arr->Count()->IsAnyOf<sem::NamedOverrideArrayCount, sem::UnnamedOverrideArrayCount>()) {
             return true;
         }
     }
@@ -2500,6 +2416,71 @@ void Validator::RaiseArrayWithOverrideCountError(const Source& source) const {
 std::string Validator::VectorPretty(uint32_t size, const sem::Type* element_type) const {
     sem::Vector vec_type(element_type, size);
     return vec_type.FriendlyName(symbols_);
+}
+
+bool Validator::CheckTypeAccessAddressSpace(
+    const sem::Type* store_ty,
+    ast::Access access,
+    ast::AddressSpace address_space,
+    const utils::VectorRef<const tint::ast::Attribute*> attributes,
+    const Source& source) const {
+    if (!AddressSpaceLayout(store_ty, address_space, source)) {
+        return false;
+    }
+
+    if (address_space == ast::AddressSpace::kPushConstant &&
+        !enabled_extensions_.Contains(ast::Extension::kChromiumExperimentalPushConstant) &&
+        IsValidationEnabled(attributes, ast::DisabledValidation::kIgnoreAddressSpace)) {
+        AddError(
+            "use of variable address space 'push_constant' requires enabling extension "
+            "'chromium_experimental_push_constant'",
+            source);
+        return false;
+    }
+
+    if (address_space == ast::AddressSpace::kStorage && access == ast::Access::kWrite) {
+        // The access mode for the storage address space can only be 'read' or
+        // 'read_write'.
+        AddError("access mode 'write' is not valid for the 'storage' address space", source);
+        return false;
+    }
+
+    auto atomic_error = [&]() -> const char* {
+        if (address_space != ast::AddressSpace::kStorage &&
+            address_space != ast::AddressSpace::kWorkgroup) {
+            return "atomic variables must have <storage> or <workgroup> address space";
+        }
+        if (address_space == ast::AddressSpace::kStorage && access != ast::Access::kReadWrite) {
+            return "atomic variables in <storage> address space must have read_write access "
+                   "mode";
+        }
+        return nullptr;
+    };
+
+    auto check_sub_atomics = [&] {
+        if (auto atomic_use = atomic_composite_info_.Get(store_ty)) {
+            if (auto* err = atomic_error()) {
+                AddError(err, source);
+                AddNote("atomic sub-type of '" + sem_.TypeNameOf(store_ty) + "' is declared here",
+                        **atomic_use);
+                return false;
+            }
+        }
+        return true;
+    };
+
+    return Switch(
+        store_ty,  //
+        [&](const sem::Atomic*) {
+            if (auto* err = atomic_error()) {
+                AddError(err, source);
+                return false;
+            }
+            return true;
+        },
+        [&](const sem::Struct*) { return check_sub_atomics(); },  //
+        [&](const sem::Array*) { return check_sub_atomics(); },   //
+        [&](Default) { return true; });
 }
 
 }  // namespace tint::resolver

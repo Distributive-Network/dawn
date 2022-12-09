@@ -69,6 +69,8 @@ using ImplOf = typename ImplOfTraits<T>::type;
 class Converter {
   public:
     explicit Converter(Napi::Env e) : env(e) {}
+    Converter(Napi::Env e, wgpu::Device extensionDevice)
+        : env(e), device(std::move(extensionDevice)) {}
     ~Converter();
 
     // Conversion function. Converts the interop type IN to the Dawn type OUT.
@@ -196,9 +198,21 @@ class Converter {
     [[nodiscard]] bool Convert(wgpu::RenderPassDepthStencilAttachment& out,
                                const interop::GPURenderPassDepthStencilAttachment& in);
 
+    [[nodiscard]] bool Convert(wgpu::RenderPassTimestampWrite& out,
+                               const interop::GPURenderPassTimestampWrite& in);
+
+    [[nodiscard]] bool Convert(wgpu::RenderPassTimestampLocation& out,
+                               const interop::GPURenderPassTimestampLocation& in);
+
     [[nodiscard]] bool Convert(wgpu::LoadOp& out, const interop::GPULoadOp& in);
 
     [[nodiscard]] bool Convert(wgpu::StoreOp& out, const interop::GPUStoreOp& in);
+
+    [[nodiscard]] bool Convert(wgpu::ComputePassTimestampWrite& out,
+                               const interop::GPUComputePassTimestampWrite& in);
+
+    [[nodiscard]] bool Convert(wgpu::ComputePassTimestampLocation& out,
+                               const interop::GPUComputePassTimestampLocation& in);
 
     [[nodiscard]] bool Convert(wgpu::BindGroupEntry& out, const interop::GPUBindGroupEntry& in);
 
@@ -396,6 +410,9 @@ class Converter {
     }
 
     Napi::Env env;
+    wgpu::Device device = nullptr;
+
+    bool HasFeature(wgpu::FeatureName feature);
 
     // Allocate() allocates and constructs an array of 'n' elements, and returns a pointer to
     // the first element. The array is freed when the Converter is destructed.

@@ -416,7 +416,7 @@ struct Composite : ImplConstant {
         conv_els.Reserve(elements.Length());
         std::function<const sem::Type*(size_t idx)> target_el_ty;
         if (auto* str = target_ty->As<sem::Struct>()) {
-            if (str->Members().size() != elements.Length()) {
+            if (str->Members().Length() != elements.Length()) {
                 TINT_ICE(Resolver, builder.Diagnostics())
                     << "const-eval conversion of structure has mismatched element counts";
                 return utils::Failure;
@@ -496,7 +496,7 @@ const ImplConstant* ZeroValue(ProgramBuilder& builder, const sem::Type* type) {
         [&](const sem::Struct* s) -> const ImplConstant* {
             utils::Hashmap<const sem::Type*, const ImplConstant*, 8> zero_by_type;
             utils::Vector<const sem::Constant*, 4> zeros;
-            zeros.Reserve(s->Members().size());
+            zeros.Reserve(s->Members().Length());
             for (auto* member : s->Members()) {
                 auto* zero = zero_by_type.GetOrCreate(
                     member->Type(), [&] { return ZeroValue(builder, member->Type()); });
@@ -507,7 +507,7 @@ const ImplConstant* ZeroValue(ProgramBuilder& builder, const sem::Type* type) {
             }
             if (zero_by_type.Count() == 1) {
                 // All members were of the same type, so the zero value is the same for all members.
-                return builder.create<Splat>(type, zeros[0], s->Members().size());
+                return builder.create<Splat>(type, zeros[0], s->Members().Length());
             }
             return CreateComposite(builder, s, std::move(zeros));
         },
@@ -1936,6 +1936,70 @@ ConstEval::Result ConstEval::OpShiftLeft(const sem::Type* ty,
 
             // Avoid UB by left shifting as unsigned value
             auto result = static_cast<T>(static_cast<UT>(e1) << e2);
+            return CreateElement(builder, source, sem::Type::DeepestElementOf(ty), NumberT{result});
+        };
+        return Dispatch_ia_iu32(create, c0, c1);
+    };
+
+    if (!sem::Type::DeepestElementOf(args[1]->Type())->Is<sem::U32>()) {
+        TINT_ICE(Resolver, builder.Diagnostics())
+            << "Element type of rhs of ShiftLeft must be a u32";
+        return utils::Failure;
+    }
+
+    return TransformElements(builder, ty, transform, args[0], args[1]);
+}
+
+ConstEval::Result ConstEval::OpShiftRight(const sem::Type* ty,
+                                          utils::VectorRef<const sem::Constant*> args,
+                                          const Source& source) {
+    auto transform = [&](const sem::Constant* c0, const sem::Constant* c1) {
+        auto create = [&](auto e1, auto e2) -> ImplResult {
+            using NumberT = decltype(e1);
+            using T = UnwrapNumber<NumberT>;
+            using UT = std::make_unsigned_t<T>;
+            constexpr size_t bit_width = BitWidth<NumberT>;
+            const UT e1u = static_cast<UT>(e1);
+            const UT e2u = static_cast<UT>(e2);
+
+            auto signed_shift_right = [&] {
+                // In C++, right shift of a signed negative number is implementation-defined.
+                // Although most implementations sign-extend, we do it manually to ensure it works
+                // correctly on all implementations.
+                const UT msb = UT{1} << (bit_width - 1);
+                UT sign_ext = 0;
+                if (e1u & msb) {
+                    // Set e2 + 1 bits to 1
+                    UT num_shift_bits_mask = ((UT{1} << e2u) - UT{1});
+                    sign_ext = (num_shift_bits_mask << (bit_width - e2u - UT{1})) | msb;
+                }
+                return static_cast<T>((e1u >> e2u) | sign_ext);
+            };
+
+            T result = 0;
+            if constexpr (IsAbstract<NumberT>) {
+                if (static_cast<size_t>(e2) >= bit_width) {
+                    result = T{0};
+                } else {
+                    result = signed_shift_right();
+                }
+            } else {
+                if (static_cast<size_t>(e2) >= bit_width) {
+                    // At shader/pipeline-creation time, it is an error to shift by the bit width of
+                    // the lhs or greater. NOTE: At runtime, we shift by e2 % (bit width of e1).
+                    AddError(
+                        "shift right value must be less than the bit width of the lhs, which is " +
+                            std::to_string(bit_width),
+                        source);
+                    return utils::Failure;
+                }
+
+                if constexpr (std::is_signed_v<T>) {
+                    result = signed_shift_right();
+                } else {
+                    result = e1 >> e2;
+                }
+            }
             return CreateElement(builder, source, sem::Type::DeepestElementOf(ty), NumberT{result});
         };
         return Dispatch_ia_iu32(create, c0, c1);

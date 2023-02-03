@@ -25,7 +25,7 @@
 #error "NapiSymbols.cpp is not used on Windows"
 #endif
 
-#if 0
+#ifdef __clang__
 #define NAPI_SYMBOL(NAME)                                                              \
     __attribute__((weak)) void NAME() {                                                \
         UNREACHABLE(                                                                   \

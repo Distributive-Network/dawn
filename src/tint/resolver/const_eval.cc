@@ -1962,7 +1962,7 @@ ConstEval::Result ConstEval::OpShiftRight(const sem::Type* ty,
             const UT e1u = static_cast<UT>(e1);
             const UT e2u = static_cast<UT>(e2);
 
-            auto signed_shift_right = [&] {
+            [[maybe_unused]] auto signed_shift_right = [&] {
                 // In C++, right shift of a signed negative number is implementation-defined.
                 // Although most implementations sign-extend, we do it manually to ensure it works
                 // correctly on all implementations.

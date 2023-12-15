@@ -109,7 +109,8 @@ NAPI_MODULE_EXPORT Napi::Object Initialize(Napi::Env env, Napi::Object exports) 
     dawnProcSetProcs(&dawn::native::GetProcs());
 
     // Register all the interop types
-    exports.Set(Napi::String::New(env, "globals"), wgpu::interop::Initialize(env));
+    // exports.Set(Napi::String::New(env, "globals"), wgpu::interop::Initialize(env));
+    wgpu::interop::Initialize(env);
 
     // Export function that creates and returns the wgpu::interop::GPU interface
     exports.Set(Napi::String::New(env, "create"), Napi::Function::New<CreateGPU>(env));

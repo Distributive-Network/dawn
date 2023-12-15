@@ -66,17 +66,22 @@ namespace {
 {{- end}}
 
 
-Napi::Object Initialize(Napi::Env env) {
+// Napi::Object Initialize(Napi::Env env) {
+void Initialize(Napi::Env env) {
   auto* wrapper = Wrappers::Init(env);
-  auto exports = Napi::Object::New(env);
+  
+  // auto exports = Napi::Object::New(env);
+  auto global = env.Global();
+
 {{- range $ := .Declarations}}
 {{-   if IsInterfaceOrNamespace $}}
 {{-     if not (HasAnnotation $ "LegacyNoInterfaceObject")}}
-  exports.Set(Napi::String::New(env, "{{$.Name}}"), wrapper->{{$.Name}}_ctor.Value());
+  // exports.Set(Napi::String::New(env, "{{$.Name}}"), wrapper->{{$.Name}}_ctor.Value());
+  global.Set(Napi::String::New(env, "{{$.Name}}"), wrapper->{{$.Name}}_ctor.Value());
 {{-     end}}
 {{-   end}}
 {{- end}}
-  return exports;
+  // return exports;
 }
 
 }  // namespace interop

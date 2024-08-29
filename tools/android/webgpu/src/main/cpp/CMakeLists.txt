@@ -43,7 +43,7 @@ add_subdirectory(../../../../../.. dawn)
 
 set(C_BINDINGS_PATH ../../../../../../out/Debug/gen/cpp)
 
-add_library(native_dawn ${C_BINDINGS_PATH}/methods.cpp ${C_BINDINGS_PATH}/structures.cpp Util.cpp ${CMAKE_SOURCE_DIR}/gen/include/dawn/webgpu.h)
+add_library(native_dawn ${C_BINDINGS_PATH}/methods.cpp ${C_BINDINGS_PATH}/structures.cpp Util.cpp ${PROJECT_SOURCE_DIR}/gen/include/dawn/webgpu.h)
 
 target_link_libraries(native_dawn webgpu_dawn)
 
@@ -54,8 +54,8 @@ find_library(log-lib log)
 target_link_libraries(webgpu_c_bundled ${log-lib} android)
 
 add_custom_command(DEPENDS webgpu_dawn POST_BUILD
-                   OUTPUT ${CMAKE_SOURCE_DIR}/gen/include/dawn/webgpu.h
-                   COMMAND rm -r "${CMAKE_SOURCE_DIR}/gen" || echo
+                   OUTPUT ${PROJECT_SOURCE_DIR}/gen/include/dawn/webgpu.h
+                   COMMAND rm -r "${PROJECT_SOURCE_DIR}/gen" || echo
                    COMMAND ${CMAKE_COMMAND} -E copy
                            ${CMAKE_CURRENT_BINARY_DIR}/dawn/gen/include/dawn/webgpu.h
-                           ${CMAKE_SOURCE_DIR}/gen/include/dawn/webgpu.h)
+                           ${PROJECT_SOURCE_DIR}/gen/include/dawn/webgpu.h)

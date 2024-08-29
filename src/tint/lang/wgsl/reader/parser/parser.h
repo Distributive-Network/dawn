@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_TINT_LANG_WGSL_READER_PARSER_PARSER_H_
 #define SRC_TINT_LANG_WGSL_READER_PARSER_PARSER_H_
@@ -28,6 +41,7 @@
 #include "src/tint/lang/wgsl/reader/parser/token.h"
 #include "src/tint/lang/wgsl/resolver/resolve.h"
 #include "src/tint/utils/diagnostic/formatter.h"
+#include "src/tint/utils/text/styled_text.h"
 
 namespace tint::ast {
 class BreakStatement;
@@ -90,7 +104,7 @@ class Parser {
     /// Expect is the return type of the parser methods that are expected to
     /// return a parsed value of type T, unless there was an parse error.
     /// In the case of a parse error the called method will have called
-    /// add_error() and #errored will be set to true.
+    /// AddError() and #errored will be set to true.
     template <typename T>
     struct Expect {
         /// An alias to the templated type T.
@@ -141,7 +155,7 @@ class Parser {
     /// In the case of a successful grammar match, the Maybe will have #matched
     /// set to true.
     /// In the case of a parse error the called method will have called
-    /// add_error() and the Maybe will have #errored set to true.
+    /// AddError() and the Maybe will have #errored set to true.
     template <typename T>
     struct Maybe {
         inline Maybe(std::nullptr_t) = delete;  // NOLINT
@@ -310,12 +324,12 @@ class Parser {
     size_t get_max_errors() const { return max_errors_; }
 
     /// @returns true if an error was encountered.
-    bool has_error() const { return builder_.Diagnostics().contains_errors(); }
+    bool has_error() const { return builder_.Diagnostics().ContainsErrors(); }
 
     /// @returns the parser error string
     std::string error() const {
         diag::Formatter formatter{{false, false, false, false}};
-        return formatter.format(builder_.Diagnostics());
+        return formatter.Format(builder_.Diagnostics()).Plain();
     }
 
     /// @returns the Program. The program builder in the parser will be reset
@@ -342,28 +356,34 @@ class Parser {
     /// Appends an error at `t` with the message `msg`
     /// @param t the token to associate the error with
     /// @param msg the error message
-    /// @return `Failure::Errored::kError` so that you can combine an add_error()
+    /// @return `Failure::Errored::kError` so that you can combine an AddError()
     /// call and return on the same line.
-    Failure::Errored add_error(const Token& t, std::string_view msg);
+    Failure::Errored AddError(const Token& t, std::string_view msg);
     /// Appends an error raised when parsing `use` at `t` with the message
     /// `msg`
     /// @param source the source to associate the error with
     /// @param msg the error message
     /// @param use a description of what was being parsed when the error was
     /// raised.
-    /// @return `Failure::Errored::kError` so that you can combine an add_error()
+    /// @return `Failure::Errored::kError` so that you can combine an AddError()
     /// call and return on the same line.
-    Failure::Errored add_error(const Source& source, std::string_view msg, std::string_view use);
+    Failure::Errored AddError(const Source& source, std::string_view msg, std::string_view use);
     /// Appends an error at `source` with the message `msg`
     /// @param source the source to associate the error with
     /// @param msg the error message
-    /// @return `Failure::Errored::kError` so that you can combine an add_error()
+    /// @return `Failure::Errored::kError` so that you can combine an AddError()
     /// call and return on the same line.
-    Failure::Errored add_error(const Source& source, std::string_view msg);
+    Failure::Errored AddError(const Source& source, std::string_view msg);
+    /// Appends an error at `source` with the message `msg`
+    /// @param source the source to associate the error with
+    /// @param msg the error message
+    /// @return `Failure::Errored::kError` so that you can combine an AddError()
+    /// call and return on the same line.
+    Failure::Errored AddError(const Source& source, StyledText&& msg);
     /// Appends a note at `source` with the message `msg`
     /// @param source the source to associate the error with
     /// @param msg the note message
-    void add_note(const Source& source, std::string_view msg);
+    void AddNote(const Source& source, std::string_view msg);
     /// Appends a deprecated-language-feature warning at `source` with the message
     /// `msg`
     /// @param source the source to associate the error with
@@ -573,43 +593,55 @@ class Parser {
                                                           Token::Type terminator);
     /// Parses the `bitwise_expression.post.unary_expression` grammar element
     /// @param lhs the left side of the expression
+    /// @param lhs_source the source span for the left side of the expression
     /// @returns the parsed expression or nullptr
     Maybe<const ast::Expression*> bitwise_expression_post_unary_expression(
-        const ast::Expression* lhs);
+        const ast::Expression* lhs,
+        const Source& lhs_source);
     /// Parse the `multiplicative_operator` grammar element
     /// @returns the parsed operator if successful
     Maybe<core::BinaryOp> multiplicative_operator();
     /// Parses multiplicative elements
     /// @param lhs the left side of the expression
+    /// @param lhs_source the source span for the left side of the expression
     /// @returns the parsed expression or `lhs` if no match
     Expect<const ast::Expression*> expect_multiplicative_expression_post_unary_expression(
-        const ast::Expression* lhs);
+        const ast::Expression* lhs,
+        const Source& lhs_source);
     /// Parses additive elements
     /// @param lhs the left side of the expression
+    /// @param lhs_source the source span for the left side of the expression
     /// @returns the parsed expression or `lhs` if no match
     Expect<const ast::Expression*> expect_additive_expression_post_unary_expression(
-        const ast::Expression* lhs);
+        const ast::Expression* lhs,
+        const Source& lhs_source);
     /// Parses math elements
     /// @param lhs the left side of the expression
+    /// @param lhs_source the source span for the left side of the expression
     /// @returns the parsed expression or `lhs` if no match
     Expect<const ast::Expression*> expect_math_expression_post_unary_expression(
-        const ast::Expression* lhs);
+        const ast::Expression* lhs,
+        const Source& lhs_source);
     /// Parses a `unary_expression shift.post.unary_expression`
     /// @returns the parsed expression or nullptr
     Maybe<const ast::Expression*> shift_expression();
     /// Parses a `shift_expression.post.unary_expression` grammar element
     /// @param lhs the left side of the expression
+    /// @param lhs_source the source span for the left side of the expression
     /// @returns the parsed expression or `lhs` if no match
     Expect<const ast::Expression*> expect_shift_expression_post_unary_expression(
-        const ast::Expression* lhs);
+        const ast::Expression* lhs,
+        const Source& lhs_source);
     /// Parses a `unary_expression relational_expression.post.unary_expression`
     /// @returns the parsed expression or nullptr
     Maybe<const ast::Expression*> relational_expression();
     /// Parses a `relational_expression.post.unary_expression` grammar element
     /// @param lhs the left side of the expression
+    /// @param lhs_source the source span for the left side of the expression
     /// @returns the parsed expression or `lhs` if no match
     Expect<const ast::Expression*> expect_relational_expression_post_unary_expression(
-        const ast::Expression* lhs);
+        const ast::Expression* lhs,
+        const Source& lhs_source);
     /// Parse the `additive_operator` grammar element
     /// @returns the parsed operator if successful
     Maybe<core::BinaryOp> additive_operator();
@@ -644,7 +676,7 @@ class Parser {
     Expect<const ast::Attribute*> expect_attribute();
     /// Parses a severity_control_name grammar element.
     /// @return the parsed severity control name.
-    Expect<core::DiagnosticSeverity> expect_severity_control_name();
+    Expect<wgsl::DiagnosticSeverity> expect_severity_control_name();
     /// Parses a diagnostic_control grammar element.
     /// @return the parsed diagnostic control.
     Expect<ast::DiagnosticControl> expect_diagnostic_control();
@@ -813,7 +845,7 @@ class Parser {
     /// @returns true if #synchronized_ is true and the number of reported errors
     /// is less than #max_errors_.
     bool continue_parsing() {
-        return synchronized_ && builder_.Diagnostics().error_count() < max_errors_;
+        return synchronized_ && builder_.Diagnostics().NumErrors() < max_errors_;
     }
 
     /// without_diag() calls the function `func` muting any diagnostics found while executing the
@@ -855,10 +887,10 @@ class Parser {
     /// @param parse the optimized function used to parse the enum
     /// @param strings the list of possible strings in the enum
     /// @param use an optional description of what was being parsed if an error was raised.
-    template <typename ENUM, size_t N>
+    template <typename ENUM>
     Expect<ENUM> expect_enum(std::string_view name,
                              ENUM (*parse)(std::string_view str),
-                             const char* const (&strings)[N],
+                             Slice<const std::string_view> strings,
                              std::string_view use = "");
 
     Expect<ast::Type> expect_type(std::string_view use);
@@ -868,8 +900,6 @@ class Parser {
     Maybe<const ast::Statement*> for_header_continuing();
 
     class MultiTokenSource;
-    MultiTokenSource make_source_range();
-    MultiTokenSource make_source_range_from(const Source& start);
 
     /// Creates a new `ast::Node` owned by the Module. When the Module is
     /// destructed, the `ast::Node` will also be destructed.

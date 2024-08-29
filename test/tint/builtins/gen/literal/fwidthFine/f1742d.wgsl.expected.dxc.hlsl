@@ -1,11 +1,15 @@
-RWByteAddressBuffer prevent_dce : register(u0, space2);
-
-void fwidthFine_f1742d() {
-  float res = fwidth(1.0f);
-  prevent_dce.Store(0u, asuint(res));
+float tint_fwidth_fine(float v) {
+  return (abs(ddx_fine(v)) + abs(ddy_fine(v)));
 }
 
+float fwidthFine_f1742d() {
+  float res = tint_fwidth_fine(1.0f);
+  return res;
+}
+
+RWByteAddressBuffer prevent_dce : register(u0);
+
 void fragment_main() {
-  fwidthFine_f1742d();
+  prevent_dce.Store(0u, asuint(fwidthFine_f1742d()));
   return;
 }

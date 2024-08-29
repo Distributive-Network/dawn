@@ -1,17 +1,31 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,11 +47,13 @@ struct FakeStorage {
     FakeStorage(Aspect aspects,
                 uint32_t arrayLayerCount,
                 uint32_t mipLevelCount,
-                T initialValue = {})
+                const T& initialValue = {})
         : mAspects(aspects),
           mArrayLayerCount(arrayLayerCount),
           mMipLevelCount(mipLevelCount),
           mData(GetAspectCount(aspects) * arrayLayerCount * mipLevelCount, initialValue) {}
+
+    void Fill(const T& value) { std::fill(mData.begin(), mData.end(), value); }
 
     template <typename F>
     void Update(const SubresourceRange& range, F&& updateFunc) {
@@ -162,7 +178,7 @@ void FakeStorage<T>::CheckSameAs(const SubresourceStorage<T>& real) {
 
 template <typename T>
 void CheckAspectCompressed(const SubresourceStorage<T>& s, Aspect aspect, bool expected) {
-    ASSERT(HasOneBit(aspect));
+    DAWN_ASSERT(HasOneBit(aspect));
 
     uint32_t levelCount = s.GetMipLevelCountForTesting();
     uint32_t layerCount = s.GetArrayLayerCountForTesting();
@@ -193,7 +209,7 @@ void CheckLayerCompressed(const SubresourceStorage<T>& s,
                           Aspect aspect,
                           uint32_t layer,
                           bool expected) {
-    ASSERT(HasOneBit(aspect));
+    DAWN_ASSERT(HasOneBit(aspect));
 
     uint32_t levelCount = s.GetMipLevelCountForTesting();
 
@@ -697,13 +713,51 @@ TEST(SubresourceStorageTest, AspectDecompressionUpdatesLayer0) {
     EXPECT_EQ(3, s.Get(Aspect::Color, 0, 1));
 }
 
+// Check that fill after creation overwrites whatever was passed as initial value.
+TEST(SubresourceStorageTest, FillAfterInitialization) {
+    const uint32_t kLayers = 2;
+    const uint32_t kLevels = 2;
+    SubresourceStorage<int> s(Aspect::Color, kLayers, kLevels, 3);
+    FakeStorage<int> f(Aspect::Color, kLayers, kLevels, 3);
+
+    s.Fill(42);
+    f.Fill(42);
+
+    f.CheckSameAs(s);
+    CheckAspectCompressed(s, Aspect::Color, true);
+}
+
+// Check that fill after some modification overwrites everything and recompresses.
+TEST(SubresourceStorageTest, FillAfterModificationRecompresses) {
+    const uint32_t kLayers = 2;
+    const uint32_t kLevels = 2;
+    SubresourceStorage<int> s(Aspect::Depth | Aspect::Stencil, kLayers, kLevels, 3);
+    FakeStorage<int> f(Aspect::Depth | Aspect::Stencil, kLayers, kLevels, 3);
+
+    // Cause decompression by writing to a single subresource.
+    {
+        SubresourceRange range = SubresourceRange::MakeSingle(Aspect::Stencil, 1, 1);
+        CallUpdateOnBoth(&s, &f, range, [](const SubresourceRange&, int* data) { *data = 0xCAFE; });
+    }
+    CheckAspectCompressed(s, Aspect::Depth, true);
+    CheckAspectCompressed(s, Aspect::Stencil, false);
+
+    // Fill with 42, aspects should be recompressed entirely.
+    s.Fill(42);
+    f.Fill(42);
+
+    f.CheckSameAs(s);
+    CheckAspectCompressed(s, Aspect::Depth, true);
+    CheckAspectCompressed(s, Aspect::Stencil, true);
+}
+
 // Bugs found while testing:
 //  - mLayersCompressed not initialized to true.
 //  - DecompressLayer setting Compressed to true instead of false.
 //  - Get() checking for !compressed instead of compressed for the early exit.
-//  - ASSERT in RecompressLayers was inverted.
+//  - DAWN_ASSERT in RecompressLayers was inverted.
 //  - Two != being converted to == during a rework.
-//  - (with ASSERT) that RecompressAspect didn't check that aspect 0 was compressed.
+//  - (with DAWN_ASSERT) that RecompressAspect didn't check that aspect 0 was compressed.
 //  - Missing decompression of layer 0 after introducing mInlineAspectData.
 
 }  // namespace dawn::native

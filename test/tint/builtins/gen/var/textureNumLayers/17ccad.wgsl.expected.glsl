@@ -25,7 +25,7 @@ void main() {
   gl_Position.z = ((2.0f * gl_Position.z) - gl_Position.w);
   return;
 }
-Error parsing GLSL shader:
+error: Error parsing GLSL shader:
 ERROR: 0:3: 'image load-store format' : not supported with this profile: es
 ERROR: 0:3: '' : compilation terminated 
 ERROR: 2 compilation errors.  No code generated.
@@ -34,6 +34,7 @@ ERROR: 2 compilation errors.  No code generated.
 
 #version 310 es
 precision highp float;
+precision highp int;
 
 layout(rg32f) uniform highp writeonly image2DArray arg_0;
 layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
@@ -53,9 +54,9 @@ void main() {
   fragment_main();
   return;
 }
-Error parsing GLSL shader:
-ERROR: 0:4: 'image load-store format' : not supported with this profile: es
-ERROR: 0:4: '' : compilation terminated 
+error: Error parsing GLSL shader:
+ERROR: 0:5: 'image load-store format' : not supported with this profile: es
+ERROR: 0:5: '' : compilation terminated 
 ERROR: 2 compilation errors.  No code generated.
 
 
@@ -81,7 +82,7 @@ void main() {
   compute_main();
   return;
 }
-Error parsing GLSL shader:
+error: Error parsing GLSL shader:
 ERROR: 0:3: 'image load-store format' : not supported with this profile: es
 ERROR: 0:3: '' : compilation terminated 
 ERROR: 2 compilation errors.  No code generated.

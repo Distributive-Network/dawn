@@ -1,74 +1,80 @@
-SKIP: FAILED
+#version 310 es
+precision highp float;
+precision highp int;
 
-
-enable chromium_experimental_dp4a;
-
-fn dot4I8Packed_881e62() {
-  var res : i32 = dot4I8Packed(1u, 1u);
+int dot4I8Packed_881e62() {
+  int res = 1;
+  return res;
 }
 
-@vertex
-fn vertex_main() -> @builtin(position) vec4<f32> {
-  dot4I8Packed_881e62();
-  return vec4<f32>();
+layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
+  int inner;
+} prevent_dce;
+
+struct VertexOutput {
+  vec4 pos;
+  int prevent_dce;
+};
+
+void fragment_main() {
+  prevent_dce.inner = dot4I8Packed_881e62();
 }
 
-@fragment
-fn fragment_main() {
-  dot4I8Packed_881e62();
+void main() {
+  fragment_main();
+  return;
+}
+#version 310 es
+
+int dot4I8Packed_881e62() {
+  int res = 1;
+  return res;
 }
 
-@compute @workgroup_size(1)
-fn compute_main() {
-  dot4I8Packed_881e62();
+layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
+  int inner;
+} prevent_dce;
+
+struct VertexOutput {
+  vec4 pos;
+  int prevent_dce;
+};
+
+void compute_main() {
+  prevent_dce.inner = dot4I8Packed_881e62();
 }
 
-Failed to generate: error: Unknown builtin method: dot4I8Packed
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+void main() {
+  compute_main();
+  return;
+}
+#version 310 es
 
-enable chromium_experimental_dp4a;
-
-fn dot4I8Packed_881e62() {
-  var res : i32 = dot4I8Packed(1u, 1u);
+layout(location = 0) flat out int prevent_dce_1;
+int dot4I8Packed_881e62() {
+  int res = 1;
+  return res;
 }
 
-@vertex
-fn vertex_main() -> @builtin(position) vec4<f32> {
-  dot4I8Packed_881e62();
-  return vec4<f32>();
+struct VertexOutput {
+  vec4 pos;
+  int prevent_dce;
+};
+
+VertexOutput vertex_main() {
+  VertexOutput tint_symbol = VertexOutput(vec4(0.0f, 0.0f, 0.0f, 0.0f), 0);
+  tint_symbol.pos = vec4(0.0f);
+  tint_symbol.prevent_dce = dot4I8Packed_881e62();
+  return tint_symbol;
 }
 
-@fragment
-fn fragment_main() {
-  dot4I8Packed_881e62();
+void main() {
+  gl_PointSize = 1.0;
+  VertexOutput inner_result = vertex_main();
+  gl_Position = inner_result.pos;
+  prevent_dce_1 = inner_result.prevent_dce;
+  gl_Position.y = -(gl_Position.y);
+  gl_Position.z = ((2.0f * gl_Position.z) - gl_Position.w);
+  return;
 }
-
-@compute @workgroup_size(1)
-fn compute_main() {
-  dot4I8Packed_881e62();
-}
-
-Failed to generate: error: Unknown builtin method: dot4I8Packed
-
-enable chromium_experimental_dp4a;
-
-fn dot4I8Packed_881e62() {
-  var res : i32 = dot4I8Packed(1u, 1u);
-}
-
-@vertex
-fn vertex_main() -> @builtin(position) vec4<f32> {
-  dot4I8Packed_881e62();
-  return vec4<f32>();
-}
-
-@fragment
-fn fragment_main() {
-  dot4I8Packed_881e62();
-}
-
-@compute @workgroup_size(1)
-fn compute_main() {
-  dot4I8Packed_881e62();
-}
-
-Failed to generate: error: Unknown builtin method: dot4I8Packed

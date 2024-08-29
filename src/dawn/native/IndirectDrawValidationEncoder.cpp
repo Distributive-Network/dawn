@@ -1,20 +1,34 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/IndirectDrawValidationEncoder.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <memory>
@@ -32,6 +46,7 @@
 #include "dawn/native/InternalPipelineStore.h"
 #include "dawn/native/Queue.h"
 #include "dawn/native/utils/WGPUHelpers.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::native {
 
@@ -44,13 +59,26 @@ constexpr uint32_t kDuplicateBaseVertexInstance = 1;
 constexpr uint32_t kIndexedDraw = 2;
 constexpr uint32_t kValidationEnabled = 4;
 constexpr uint32_t kIndirectFirstInstanceEnabled = 8;
+constexpr uint32_t kUseFirstIndexToEmulateIndexBufferOffset = 16;
+
+// Equivalent to the IndirectDraw struct defined in the shader below.
+struct IndirectDraw {
+    uint32_t indirectOffset;
+    uint32_t numIndexBufferElementsLow;
+    uint32_t numIndexBufferElementsHigh;
+    uint32_t indexOffsetAsNumElements;
+};
+static_assert(sizeof(IndirectDraw) == sizeof(uint32_t) * 4);
+static_assert(alignof(IndirectDraw) == alignof(uint32_t));
 
 // Equivalent to the BatchInfo struct defined in the shader below.
 struct BatchInfo {
-    uint64_t numIndexBufferElements;
     uint32_t numDraws;
     uint32_t flags;
 };
+
+// The size, in bytes, of the IndirectDraw struct defined in the shader below.
+constexpr uint32_t kIndirectDrawByteSize = sizeof(uint32_t) * 4;
 
 // TODO(https://crbug.com/dawn/1108): Propagate validation feedback from this shader in
 // various failure modes.
@@ -66,13 +94,19 @@ static const char sRenderValidationShaderSource[] = R"(
             const kIndexedDraw = 2u;
             const kValidationEnabled = 4u;
             const kIndirectFirstInstanceEnabled = 8u;
+            const kUseFirstIndexToEmulateIndexBufferOffset = 16u;
 
-            struct BatchInfo {
+            struct IndirectDraw {
+                indirectOffset: u32,
                 numIndexBufferElementsLow: u32,
                 numIndexBufferElementsHigh: u32,
+                indexOffsetAsNumElements: u32,
+            }
+
+            struct BatchInfo {
                 numDraws: u32,
                 flags: u32,
-                indirectOffsets: array<u32>,
+                draws: array<IndirectDraw>,
             }
 
             struct IndirectParams {
@@ -94,7 +128,7 @@ static const char sRenderValidationShaderSource[] = R"(
 
             fn numIndirectParamsPerDrawCallOutput() -> u32 {
                 var numParams = numIndirectParamsPerDrawCallInput();
-                // 2 extra parameter for duplicated first/baseVexter and firstInstance
+                // 2 extra parameter for duplicated first/baseVertex and firstInstance
                 if (bool(batch.flags & kDuplicateBaseVertexInstance)) {
                     numParams = numParams + 2u;
                 }
@@ -112,7 +146,7 @@ static const char sRenderValidationShaderSource[] = R"(
             fn set_pass(drawIndex: u32) {
                 let numInputParams = numIndirectParamsPerDrawCallInput();
                 var outIndex = drawIndex * numIndirectParamsPerDrawCallOutput();
-                let inIndex = batch.indirectOffsets[drawIndex];
+                let inIndex = batch.draws[drawIndex].indirectOffset;
 
                 // The first 2 parameter is reserved for the duplicated first/baseVertex and firstInstance
 
@@ -128,6 +162,10 @@ static const char sRenderValidationShaderSource[] = R"(
                 for(var i = 0u; i < numInputParams; i = i + 1u) {
                     outputParams.data[outIndex + i] = inputParams.data[inIndex + i];
                 }
+
+                if (bool(batch.flags & kUseFirstIndexToEmulateIndexBufferOffset)) {
+                    outputParams.data[outIndex + kFirstIndexEntry] += batch.draws[drawIndex].indexOffsetAsNumElements;
+                }
             }
 
             @compute @workgroup_size(64, 1, 1)
@@ -141,7 +179,7 @@ static const char sRenderValidationShaderSource[] = R"(
                     return;
                 }
 
-                let inputIndex = batch.indirectOffsets[id.x];
+                let inputIndex = batch.draws[id.x].indirectOffset;
                 if(!bool(batch.flags & kIndirectFirstInstanceEnabled)) {
                     // firstInstance is always the last parameter
                     let firstInstance = inputParams.data[inputIndex + numIndirectParamsPerDrawCallInput() - 1u];
@@ -156,23 +194,27 @@ static const char sRenderValidationShaderSource[] = R"(
                     return;
                 }
 
-                if (batch.numIndexBufferElementsHigh >= 2u) {
+                let numIndexBufferElementsHigh = batch.draws[id.x].numIndexBufferElementsHigh;
+
+                if (numIndexBufferElementsHigh >= 2u) {
                     // firstIndex and indexCount are both u32. The maximum possible sum of these
                     // values is 0x1fffffffe, which is less than 0x200000000. Nothing to validate.
                     set_pass(id.x);
                     return;
                 }
 
+                let numIndexBufferElementsLow = batch.draws[id.x].numIndexBufferElementsLow;
+
                 let firstIndex = inputParams.data[inputIndex + kFirstIndexEntry];
-                if (batch.numIndexBufferElementsHigh == 0u &&
-                    batch.numIndexBufferElementsLow < firstIndex) {
+                if (numIndexBufferElementsHigh == 0u &&
+                    numIndexBufferElementsLow < firstIndex) {
                     fail(id.x);
                     return;
                 }
 
                 // Note that this subtraction may underflow, but only when
                 // numIndexBufferElementsHigh is 1u. The result is still correct in that case.
-                let maxIndexCount = batch.numIndexBufferElementsLow - firstIndex;
+                let maxIndexCount = numIndexBufferElementsLow - firstIndex;
                 let indexCount = inputParams.data[inputIndex + kIndexCountEntry];
                 if (indexCount > maxIndexCount) {
                     fail(id.x);
@@ -186,6 +228,23 @@ ResultOrError<ComputePipelineBase*> GetOrCreateRenderValidationPipeline(DeviceBa
     InternalPipelineStore* store = device->GetInternalPipelineStore();
 
     if (store->renderValidationPipeline == nullptr) {
+        // If we need to apply the index buffer offset to the first index then
+        // we can't handle buffers larger than 4gig otherwise we'll overflow first_index
+        // which is a 32bit value.
+        //
+        // When a buffer is less than 4gig the largest index buffer offset you can pass to
+        // SetIndexBuffer is 0xffff_fffe. Otherwise you'll get a validation error. This
+        // is converted to count of indices and so at most 0x7fff_ffff.
+        //
+        // The largest valid first_index would be 0x7fff_ffff. Anything larger will fail
+        // the validation used in this compute shader and the validated indirect buffer
+        // will have 0,0,0,0,0.
+        //
+        // Adding 0x7fff_ffff + 0x7fff_ffff does not overflow so as long as we keep
+        // maxBufferSize < 4gig we're safe.
+        DAWN_ASSERT(!device->ShouldApplyIndexBufferOffsetToFirstIndex() ||
+                    device->GetLimits().v1.maxBufferSize < 0x100000000u);
+
         // Create compute shader module if not cached before.
         if (store->renderValidationShader == nullptr) {
             DAWN_TRY_ASSIGN(store->renderValidationShader,
@@ -220,7 +279,7 @@ ResultOrError<ComputePipelineBase*> GetOrCreateRenderValidationPipeline(DeviceBa
 }
 
 size_t GetBatchDataSize(uint32_t numDraws) {
-    return sizeof(BatchInfo) + numDraws * sizeof(uint32_t);
+    return sizeof(BatchInfo) + (numDraws * kIndirectDrawByteSize);
 }
 
 }  // namespace
@@ -229,7 +288,7 @@ uint32_t ComputeMaxDrawCallsPerIndirectValidationBatch(const CombinedLimits& lim
     const uint64_t batchDrawCallLimitByDispatchSize =
         static_cast<uint64_t>(limits.v1.maxComputeWorkgroupsPerDimension) * kWorkgroupSize;
     const uint64_t batchDrawCallLimitByStorageBindingSize =
-        (limits.v1.maxStorageBufferBindingSize - sizeof(BatchInfo)) / sizeof(uint32_t);
+        (limits.v1.maxStorageBufferBindingSize - sizeof(BatchInfo)) / kIndirectDrawByteSize;
     return static_cast<uint32_t>(
         std::min({batchDrawCallLimitByDispatchSize, batchDrawCallLimitByStorageBindingSize,
                   uint64_t(std::numeric_limits<uint32_t>::max())}));
@@ -239,7 +298,7 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
                                                 CommandEncoder* commandEncoder,
                                                 RenderPassResourceUsageTracker* usageTracker,
                                                 IndirectDrawMetadata* indirectDrawMetadata) {
-    ASSERT(device->IsLockedByCurrentThreadIfNeeded());
+    DAWN_ASSERT(device->IsLockedByCurrentThreadIfNeeded());
     // Since encoding validation commands may create new objects, verify that the device is alive.
     // TODO(dawn:1199): This check is obsolete if device loss causes device.destroy().
     //   - This function only happens within the context of a TryEncode which would catch the
@@ -247,20 +306,20 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
     DAWN_TRY(device->ValidateIsAlive());
 
     struct Batch {
-        const IndirectDrawMetadata::IndirectValidationBatch* metadata;
-        uint64_t numIndexBufferElements;
+        raw_ptr<const IndirectDrawMetadata::IndirectValidationBatch> metadata;
         uint64_t dataBufferOffset;
         uint64_t dataSize;
         uint64_t inputIndirectOffset;
         uint64_t inputIndirectSize;
         uint64_t outputParamsOffset;
         uint64_t outputParamsSize;
-        BatchInfo* batchInfo;
+        raw_ptr<BatchInfo, AllowPtrArithmetic> batchInfo;
     };
 
     struct Pass {
         uint32_t flags;
-        BufferBase* inputIndirectBuffer;
+        raw_ptr<BufferBase> inputIndirectBuffer;
+        IndirectDrawMetadata::DrawType drawType;
         uint64_t outputParamsSize = 0;
         uint64_t batchDataSize = 0;
         std::unique_ptr<void, void (*)(void*)> batchData{nullptr, std::free};
@@ -269,8 +328,9 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
 
     // First stage is grouping all batches into passes. We try to pack as many batches into a
     // single pass as possible. Batches can be grouped together as long as they're validating
-    // data from the same indirect buffer, but they may still be split into multiple passes if
-    // the number of draw calls in a pass would exceed some (very high) upper bound.
+    // data from the same indirect buffer and draw type, but they may still be split into
+    // multiple passes if the number of draw calls in a pass would exceed some (very high)
+    // upper bound.
     uint64_t outputParamsSize = 0;
     std::vector<Pass> passes;
     IndirectDrawMetadata::IndexedIndirectBufferValidationInfoMap& bufferInfoMap =
@@ -282,6 +342,9 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
     const uint64_t maxStorageBufferBindingSize = device->GetLimits().v1.maxStorageBufferBindingSize;
     const uint32_t minStorageBufferOffsetAlignment =
         device->GetLimits().v1.minStorageBufferOffsetAlignment;
+
+    const bool applyIndexBufferOffsetToFirstIndex =
+        device->ShouldApplyIndexBufferOffsetToFirstIndex();
 
     for (auto& [config, validationInfo] : bufferInfoMap) {
         const uint64_t indirectDrawCommandSize =
@@ -301,7 +364,6 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
 
             Batch newBatch;
             newBatch.metadata = &batch;
-            newBatch.numIndexBufferElements = config.numIndexBufferElements;
             newBatch.dataSize = GetBatchDataSize(batch.draws.size());
             newBatch.inputIndirectOffset = minOffsetAlignedDown;
             newBatch.inputIndirectSize =
@@ -315,7 +377,10 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
             }
 
             Pass* currentPass = passes.empty() ? nullptr : &passes.back();
-            if (currentPass && currentPass->inputIndirectBuffer == config.inputIndirectBuffer) {
+            if (currentPass &&
+                reinterpret_cast<uintptr_t>(currentPass->inputIndirectBuffer.get()) ==
+                    config.inputIndirectBufferPtr &&
+                currentPass->drawType == config.drawType) {
                 uint64_t nextBatchDataOffset =
                     Align(currentPass->batchDataSize, minStorageBufferOffsetAlignment);
                 uint64_t newPassBatchDataSize = nextBatchDataOffset + newBatch.dataSize;
@@ -332,7 +397,8 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
             newBatch.dataBufferOffset = 0;
 
             Pass newPass{};
-            newPass.inputIndirectBuffer = config.inputIndirectBuffer;
+            newPass.inputIndirectBuffer = validationInfo.GetIndirectBuffer();
+            newPass.drawType = config.drawType;
             newPass.batchDataSize = newBatch.dataSize;
             newPass.batches.push_back(newBatch);
             newPass.flags = 0;
@@ -341,6 +407,10 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
             }
             if (config.drawType == IndirectDrawMetadata::DrawType::Indexed) {
                 newPass.flags |= kIndexedDraw;
+
+                if (applyIndexBufferOffsetToFirstIndex) {
+                    newPass.flags |= kUseFirstIndexToEmulateIndexBufferOffset;
+                }
             }
             if (device->IsValidationEnabled()) {
                 newPass.flags |= kValidationEnabled;
@@ -361,9 +431,9 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
         requiredBatchDataBufferSize = std::max(requiredBatchDataBufferSize, pass.batchDataSize);
     }
     DAWN_TRY(batchDataBuffer.EnsureCapacity(requiredBatchDataBufferSize));
-    usageTracker->BufferUsedAs(batchDataBuffer.GetBuffer(), wgpu::BufferUsage::Storage);
 
     DAWN_TRY(outputParamsBuffer.EnsureCapacity(outputParamsSize));
+    // We swap the indirect buffer used so we need to explicitly add the usage.
     usageTracker->BufferUsedAs(outputParamsBuffer.GetBuffer(), wgpu::BufferUsage::Indirect);
 
     // Now we allocate and populate host-side batch data to be copied to the GPU.
@@ -374,16 +444,25 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
         uint8_t* batchData = static_cast<uint8_t*>(pass.batchData.get());
         for (Batch& batch : pass.batches) {
             batch.batchInfo = new (&batchData[batch.dataBufferOffset]) BatchInfo();
-            batch.batchInfo->numIndexBufferElements = batch.numIndexBufferElements;
             batch.batchInfo->numDraws = static_cast<uint32_t>(batch.metadata->draws.size());
             batch.batchInfo->flags = pass.flags;
 
-            uint32_t* indirectOffsets = reinterpret_cast<uint32_t*>(batch.batchInfo + 1);
+            IndirectDraw* indirectDraw = reinterpret_cast<IndirectDraw*>(batch.batchInfo.get() + 1);
             uint64_t outputParamsOffset = batch.outputParamsOffset;
             for (auto& draw : batch.metadata->draws) {
                 // The shader uses this to index an array of u32, hence the division by 4 bytes.
-                *indirectOffsets++ =
+                indirectDraw->indirectOffset =
                     static_cast<uint32_t>((draw.inputBufferOffset - batch.inputIndirectOffset) / 4);
+                // The index buffer elements are 64 bit values, and so need to be set as a
+                // low uint32_t and a high uint32_t.
+                indirectDraw->numIndexBufferElementsLow =
+                    static_cast<uint32_t>(draw.numIndexBufferElements & 0xFFFFFFFF);
+                indirectDraw->numIndexBufferElementsHigh =
+                    static_cast<uint32_t>((draw.numIndexBufferElements >> 32) & 0xFFFFFFFF);
+
+                // This is only used in the GL backend.
+                indirectDraw->indexOffsetAsNumElements = draw.indexBufferOffsetInElements;
+                indirectDraw++;
 
                 draw.cmd->indirectBuffer = outputParamsBuffer.GetBuffer();
                 draw.cmd->indirectOffset = outputParamsOffset;
@@ -391,6 +470,10 @@ MaybeError EncodeIndirectDrawValidationCommands(DeviceBase* device,
                     outputParamsOffset += kDrawIndexedIndirectSize;
                 } else {
                     outputParamsOffset += kDrawIndirectSize;
+                }
+                if (pass.flags & kDuplicateBaseVertexInstance) {
+                    // Add the extra offset for the duplicated base vertex and instance.
+                    outputParamsOffset += 2 * sizeof(uint32_t);
                 }
             }
         }

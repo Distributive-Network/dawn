@@ -1,16 +1,29 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_DAWN_WIRE_SERVER_OBJECTSTORAGE_H_
 #define SRC_DAWN_WIRE_SERVER_OBJECTSTORAGE_H_
@@ -18,12 +31,13 @@
 #include <algorithm>
 #include <map>
 #include <memory>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "dawn/wire/WireCmd_autogen.h"
 #include "dawn/wire/WireServer.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::wire::server {
 
@@ -38,7 +52,7 @@ enum class AllocationState : uint32_t {
 template <typename T>
 struct ObjectDataBase {
     // The backend-provided handle and generation to this object.
-    T handle;
+    T handle = nullptr;
     ObjectGeneration generation = 0;
 
     AllocationState state;
@@ -62,7 +76,7 @@ struct ObjectData<WGPUBuffer> : public ObjectDataBase<WGPUBuffer> {
 };
 
 struct DeviceInfo {
-    Server* server;
+    raw_ptr<Server> server;
     ObjectHandle self;
 };
 
@@ -73,23 +87,49 @@ struct ObjectData<WGPUDevice> : public ObjectDataBase<WGPUDevice> {
     std::unique_ptr<DeviceInfo> info = std::make_unique<DeviceInfo>();
 };
 
-// Information of both an ID and an object data for use as a shorthand in doers.
+// Information of both an ID and an object data for use as a shorthand in doers. Reserved objects
+// are guaranteed to have been reserved, but not guaranteed to be backed by a valid backend handle.
 template <typename T>
-struct Known {
+struct Reserved {
     ObjectId id;
-    ObjectData<T>* data;
+    raw_ptr<ObjectData<T>> data;
 
     const ObjectData<T>* operator->() const {
-        ASSERT(data != nullptr);
+        DAWN_ASSERT(data != nullptr);
         return data;
     }
     ObjectData<T>* operator->() {
-        ASSERT(data != nullptr);
+        DAWN_ASSERT(data != nullptr);
         return data;
     }
 
     ObjectHandle AsHandle() const {
-        ASSERT(data != nullptr);
+        DAWN_ASSERT(data != nullptr);
+        return {id, data->generation};
+    }
+};
+
+// Information of both an ID and an object data for use as a shorthand in doers. Known objects are
+// guaranteed to be backed by a valid backend handle.
+template <typename T>
+struct Known {
+    ObjectId id;
+    raw_ptr<ObjectData<T>> data;
+
+    const ObjectData<T>* operator->() const {
+        DAWN_ASSERT(data != nullptr);
+        DAWN_ASSERT(data->state == AllocationState::Allocated);
+        return data;
+    }
+    ObjectData<T>* operator->() {
+        DAWN_ASSERT(data != nullptr);
+        DAWN_ASSERT(data->state == AllocationState::Allocated);
+        return data;
+    }
+
+    ObjectHandle AsHandle() const {
+        DAWN_ASSERT(data != nullptr);
+        DAWN_ASSERT(data->state == AllocationState::Allocated);
         return {id, data->generation};
     }
 };
@@ -126,6 +166,20 @@ class KnownObjectsBase {
         return WireResult::Success;
     }
 
+    WireResult Get(ObjectId id, Reserved<T>* result) {
+        if (id >= mKnown.size()) {
+            return WireResult::FatalError;
+        }
+
+        Data* data = &mKnown[id];
+        if (data->state == AllocationState::Free) {
+            return WireResult::FatalError;
+        }
+
+        *result = Reserved<T>{id, data};
+        return WireResult::Success;
+    }
+
     WireResult Get(ObjectId id, Known<T>* result) {
         if (id >= mKnown.size()) {
             return WireResult::FatalError;
@@ -140,19 +194,26 @@ class KnownObjectsBase {
         return WireResult::Success;
     }
 
-    Known<T> FillReservation(ObjectId id, T handle) {
-        ASSERT(id < mKnown.size());
+    WireResult FillReservation(ObjectId id, T handle, Known<T>* known = nullptr) {
+        DAWN_ASSERT(id < mKnown.size());
+        DAWN_ASSERT(handle != nullptr);
         Data* data = &mKnown[id];
-        ASSERT(data->state == AllocationState::Reserved);
+
+        if (data->state != AllocationState::Reserved) {
+            return WireResult::FatalError;
+        }
         data->handle = handle;
         data->state = AllocationState::Allocated;
-        return {id, data};
+        if (known != nullptr) {
+            *known = {id, data};
+        }
+        return WireResult::Success;
     }
 
     // Allocates the data for a given ID and returns it in result.
     // Returns false if the ID is already allocated, or too far ahead, or if ID is 0 (ID 0 is
     // reserved for nullptr). Invalidates all the Data*
-    WireResult Allocate(Known<T>* result,
+    WireResult Allocate(Reserved<T>* result,
                         ObjectHandle handle,
                         AllocationState state = AllocationState::Allocated) {
         if (handle.id == 0 || handle.id > mKnown.size()) {
@@ -188,7 +249,7 @@ class KnownObjectsBase {
 
     // Marks an ID as deallocated
     void Free(ObjectId id) {
-        ASSERT(id < mKnown.size());
+        DAWN_ASSERT(id < mKnown.size());
         mKnown[id].state = AllocationState::Free;
     }
 
@@ -231,17 +292,18 @@ class KnownObjects<WGPUDevice> : public KnownObjectsBase<WGPUDevice> {
   public:
     KnownObjects() = default;
 
-    WireResult Allocate(Known<WGPUDevice>* result,
+    WireResult Allocate(Reserved<WGPUDevice>* result,
                         ObjectHandle handle,
                         AllocationState state = AllocationState::Allocated) {
         WIRE_TRY(KnownObjectsBase<WGPUDevice>::Allocate(result, handle, state));
-        AddToKnownSet(*result);
         return WireResult::Success;
     }
 
-    Known<WGPUDevice> FillReservation(ObjectId id, WGPUDevice handle) {
-        Known<WGPUDevice> result = KnownObjectsBase<WGPUDevice>::FillReservation(id, handle);
-        AddToKnownSet(result);
+    WireResult FillReservation(ObjectId id, WGPUDevice handle, Known<WGPUDevice>* known = nullptr) {
+        auto result = KnownObjectsBase<WGPUDevice>::FillReservation(id, handle, known);
+        if (result == WireResult::Success) {
+            mKnownSet.insert((*known)->handle);
+        }
         return result;
     }
 
@@ -250,43 +312,10 @@ class KnownObjects<WGPUDevice> : public KnownObjectsBase<WGPUDevice> {
         KnownObjectsBase<WGPUDevice>::Free(id);
     }
 
-    bool IsKnown(WGPUDevice device) const { return mKnownSet.count(device) != 0; }
+    bool IsKnown(WGPUDevice device) const { return mKnownSet.contains(device); }
 
   private:
-    void AddToKnownSet(Known<WGPUDevice> device) {
-        if (device->state == AllocationState::Allocated && device->handle != nullptr) {
-            mKnownSet.insert(device->handle);
-        }
-    }
-    std::unordered_set<WGPUDevice> mKnownSet;
-};
-
-// ObjectIds are lost in deserialization. Store the ids of deserialized
-// objects here so they can be used in command handlers. This is useful
-// for creating ReturnWireCmds which contain client ids
-template <typename T>
-class ObjectIdLookupTable {
-  public:
-    void Store(T key, ObjectId id) { mTable[key] = id; }
-
-    // Return the cached ObjectId, or 0 (null handle)
-    ObjectId Get(T key) const {
-        const auto it = mTable.find(key);
-        if (it != mTable.end()) {
-            return it->second;
-        }
-        return 0;
-    }
-
-    void Remove(T key) {
-        auto it = mTable.find(key);
-        if (it != mTable.end()) {
-            mTable.erase(it);
-        }
-    }
-
-  private:
-    std::map<T, ObjectId> mTable;
+    absl::flat_hash_set<WGPUDevice> mKnownSet;
 };
 
 }  // namespace dawn::wire::server

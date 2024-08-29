@@ -1,13 +1,20 @@
 #version 310 es
 
-uint local_invocation_index_1 = 0u;
 shared int arg_0;
+void tint_zero_workgroup_memory(uint local_idx) {
+  if ((local_idx < 1u)) {
+    atomicExchange(arg_0, 0);
+  }
+  barrier();
+}
+
+uint local_invocation_index_1 = 0u;
 void atomicSub_77883a() {
   int arg_1 = 0;
   int res = 0;
   arg_1 = 1;
   int x_19 = arg_1;
-  int x_15 = atomicAdd(arg_0, x_19);
+  int x_15 = atomicAdd(arg_0, -(x_19));
   res = x_15;
   return;
 }
@@ -26,10 +33,7 @@ void compute_main_1() {
 }
 
 void compute_main(uint local_invocation_index_1_param) {
-  {
-    atomicExchange(arg_0, 0);
-  }
-  barrier();
+  tint_zero_workgroup_memory(local_invocation_index_1_param);
   local_invocation_index_1 = local_invocation_index_1_param;
   compute_main_1();
 }

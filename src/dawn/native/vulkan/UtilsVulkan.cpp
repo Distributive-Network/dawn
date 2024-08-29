@@ -1,16 +1,29 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/vulkan/UtilsVulkan.h"
 
@@ -23,6 +36,7 @@
 #include "dawn/native/vulkan/Forward.h"
 #include "dawn/native/vulkan/TextureVk.h"
 #include "dawn/native/vulkan/VulkanError.h"
+#include "dawn/native/vulkan/VulkanFunctions.h"
 
 namespace dawn::native::vulkan {
 
@@ -70,7 +84,7 @@ VkCompareOp ToVulkanCompareOp(wgpu::CompareFunction op) {
         case wgpu::CompareFunction::Undefined:
             break;
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 // Convert Dawn texture aspects to  Vulkan texture aspect flags
@@ -98,9 +112,12 @@ VkImageAspectFlags VulkanAspectMask(const Aspect& aspects) {
             case Aspect::Plane1:
                 flags |= VK_IMAGE_ASPECT_PLANE_1_BIT;
                 break;
+            case Aspect::Plane2:
+                flags |= VK_IMAGE_ASPECT_PLANE_2_BIT;
+                break;
 
             case Aspect::None:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
         }
     }
     return flags;
@@ -115,15 +132,15 @@ Extent3D ComputeTextureCopyExtent(const TextureCopy& textureCopy, const Extent3D
     Extent3D validTextureCopyExtent = copySize;
     const TextureBase* texture = textureCopy.texture.Get();
     Extent3D virtualSizeAtLevel =
-        texture->GetMipLevelSingleSubresourceVirtualSize(textureCopy.mipLevel);
-    ASSERT(textureCopy.origin.x <= virtualSizeAtLevel.width);
-    ASSERT(textureCopy.origin.y <= virtualSizeAtLevel.height);
+        texture->GetMipLevelSingleSubresourceVirtualSize(textureCopy.mipLevel, textureCopy.aspect);
+    DAWN_ASSERT(textureCopy.origin.x <= virtualSizeAtLevel.width);
+    DAWN_ASSERT(textureCopy.origin.y <= virtualSizeAtLevel.height);
     if (copySize.width > virtualSizeAtLevel.width - textureCopy.origin.x) {
-        ASSERT(texture->GetFormat().isCompressed);
+        DAWN_ASSERT(texture->GetFormat().isCompressed);
         validTextureCopyExtent.width = virtualSizeAtLevel.width - textureCopy.origin.x;
     }
     if (copySize.height > virtualSizeAtLevel.height - textureCopy.origin.y) {
-        ASSERT(texture->GetFormat().isCompressed);
+        DAWN_ASSERT(texture->GetFormat().isCompressed);
         validTextureCopyExtent.height = virtualSizeAtLevel.height - textureCopy.origin.y;
     }
 
@@ -150,7 +167,7 @@ VkBufferImageCopy ComputeBufferImageCopyRegion(const TextureDataLayout& dataLayo
     region.bufferOffset = dataLayout.offset;
     // In Vulkan the row length is in texels while it is in bytes for Dawn
     const TexelBlockInfo& blockInfo = texture->GetFormat().GetAspectInfo(textureCopy.aspect).block;
-    ASSERT(dataLayout.bytesPerRow % blockInfo.byteSize == 0);
+    DAWN_ASSERT(dataLayout.bytesPerRow % blockInfo.byteSize == 0);
     region.bufferRowLength = dataLayout.bytesPerRow / blockInfo.byteSize * blockInfo.width;
     region.bufferImageHeight = dataLayout.rowsPerImage * blockInfo.height;
 
@@ -158,15 +175,17 @@ VkBufferImageCopy ComputeBufferImageCopyRegion(const TextureDataLayout& dataLayo
     region.imageSubresource.mipLevel = textureCopy.mipLevel;
 
     switch (textureCopy.texture->GetDimension()) {
+        case wgpu::TextureDimension::Undefined:
+            DAWN_UNREACHABLE();
         case wgpu::TextureDimension::e1D:
-            ASSERT(textureCopy.origin.z == 0 && copySize.depthOrArrayLayers == 1);
+            DAWN_ASSERT(textureCopy.origin.z == 0 && copySize.depthOrArrayLayers == 1);
             region.imageOffset.x = textureCopy.origin.x;
             region.imageOffset.y = 0;
             region.imageOffset.z = 0;
             region.imageSubresource.baseArrayLayer = 0;
             region.imageSubresource.layerCount = 1;
 
-            ASSERT(!textureCopy.texture->GetFormat().isCompressed);
+            DAWN_ASSERT(!textureCopy.texture->GetFormat().isCompressed);
             region.imageExtent.width = copySize.width;
             region.imageExtent.height = 1;
             region.imageExtent.depth = 1;
@@ -193,7 +212,7 @@ VkBufferImageCopy ComputeBufferImageCopyRegion(const TextureDataLayout& dataLayo
             region.imageSubresource.baseArrayLayer = 0;
             region.imageSubresource.layerCount = 1;
 
-            ASSERT(!textureCopy.texture->GetFormat().isCompressed);
+            DAWN_ASSERT(!textureCopy.texture->GetFormat().isCompressed);
             region.imageExtent.width = copySize.width;
             region.imageExtent.height = copySize.height;
             region.imageExtent.depth = copySize.depthOrArrayLayers;
@@ -209,7 +228,7 @@ void SetDebugNameInternal(Device* device,
                           uint64_t objectHandle,
                           const char* prefix,
                           std::string label) {
-    if (!objectHandle) {
+    if (!objectHandle || !device->GetVkDevice()) {
         return;
     }
 
@@ -224,6 +243,12 @@ void SetDebugNameInternal(Device* device,
         // Prefix with the device's message ID so that if this label appears in a validation
         // message it can be parsed out and the message can be associated with the right device.
         objectNameStream << device->GetDebugPrefix() << kDeviceDebugSeparator << prefix;
+
+        // NOTE: Whereas other platforms set backend labels *only* if the
+        // `UseUserDefinedLabelsInBackend` toggle is enabled, on Vulkan these
+        // labels must always be set as they currently provide the only way to
+        // map Vulkan errors that include backend objects back to the device
+        // with which the backend objects are associated.
         if (!label.empty() && device->IsToggleEnabled(Toggle::UseUserDefinedLabelsInBackend)) {
             objectNameStream << "_" << label;
         }
@@ -256,6 +281,102 @@ std::string GetDeviceDebugPrefixFromDebugName(const char* debugName) {
 
     size_t length = separator - debugName;
     return std::string(debugName, length);
+}
+
+std::vector<VkDrmFormatModifierPropertiesEXT> GetFormatModifierProps(
+    const VulkanFunctions& fn,
+    VkPhysicalDevice vkPhysicalDevice,
+    VkFormat format) {
+    VkFormatProperties2 formatProps = {};
+    formatProps.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+    PNextChainBuilder formatPropsChain(&formatProps);
+
+    // Obtain the list of Linux DRM format modifiers compatible with a VkFormat
+    VkDrmFormatModifierPropertiesListEXT formatModifierPropsList = {};
+    formatModifierPropsList.drmFormatModifierCount = 0;
+    formatModifierPropsList.pDrmFormatModifierProperties = nullptr;
+    formatPropsChain.Add(&formatModifierPropsList,
+                         VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT);
+
+    fn.GetPhysicalDeviceFormatProperties2(vkPhysicalDevice, format, &formatProps);
+
+    const uint32_t modifierCount = formatModifierPropsList.drmFormatModifierCount;
+
+    std::vector<VkDrmFormatModifierPropertiesEXT> formatModifierPropsVector;
+    formatModifierPropsVector.resize(modifierCount);
+    formatModifierPropsList.pDrmFormatModifierProperties = formatModifierPropsVector.data();
+
+    fn.GetPhysicalDeviceFormatProperties2(vkPhysicalDevice, format, &formatProps);
+    return formatModifierPropsVector;
+}
+
+ResultOrError<VkDrmFormatModifierPropertiesEXT> GetFormatModifierProps(
+    const VulkanFunctions& fn,
+    VkPhysicalDevice vkPhysicalDevice,
+    VkFormat format,
+    uint64_t modifier) {
+    std::vector<VkDrmFormatModifierPropertiesEXT> formatModifierPropsVector =
+        GetFormatModifierProps(fn, vkPhysicalDevice, format);
+
+    // Find the modifier props that match the modifier, and return them.
+    for (const auto& props : formatModifierPropsVector) {
+        if (props.drmFormatModifier == modifier) {
+            return VkDrmFormatModifierPropertiesEXT{props};
+        }
+    }
+    return DAWN_VALIDATION_ERROR("DRM format modifier %u not supported.", modifier);
+}
+
+ResultOrError<VkSamplerYcbcrConversion> CreateSamplerYCbCrConversionCreateInfo(
+    YCbCrVkDescriptor yCbCrDescriptor,
+    Device* device) {
+    uint64_t externalFormat = yCbCrDescriptor.externalFormat;
+    VkFormat vulkanFormat = static_cast<VkFormat>(yCbCrDescriptor.vkFormat);
+    DAWN_INVALID_IF((externalFormat == 0 && vulkanFormat == VK_FORMAT_UNDEFINED),
+                    "Both VkFormat and VkExternalFormatANDROID are undefined.");
+
+    VkComponentMapping vulkanComponent;
+    vulkanComponent.r = static_cast<VkComponentSwizzle>(yCbCrDescriptor.vkComponentSwizzleRed);
+    vulkanComponent.g = static_cast<VkComponentSwizzle>(yCbCrDescriptor.vkComponentSwizzleGreen);
+    vulkanComponent.b = static_cast<VkComponentSwizzle>(yCbCrDescriptor.vkComponentSwizzleBlue);
+    vulkanComponent.a = static_cast<VkComponentSwizzle>(yCbCrDescriptor.vkComponentSwizzleAlpha);
+
+    VkSamplerYcbcrConversionCreateInfo vulkanYCbCrCreateInfo;
+    vulkanYCbCrCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO;
+    vulkanYCbCrCreateInfo.pNext = nullptr;
+    vulkanYCbCrCreateInfo.format = vulkanFormat;
+    vulkanYCbCrCreateInfo.ycbcrModel =
+        static_cast<VkSamplerYcbcrModelConversion>(yCbCrDescriptor.vkYCbCrModel);
+    vulkanYCbCrCreateInfo.ycbcrRange =
+        static_cast<VkSamplerYcbcrRange>(yCbCrDescriptor.vkYCbCrRange);
+    vulkanYCbCrCreateInfo.components = vulkanComponent;
+    vulkanYCbCrCreateInfo.xChromaOffset =
+        static_cast<VkChromaLocation>(yCbCrDescriptor.vkXChromaOffset);
+    vulkanYCbCrCreateInfo.yChromaOffset =
+        static_cast<VkChromaLocation>(yCbCrDescriptor.vkYChromaOffset);
+    vulkanYCbCrCreateInfo.chromaFilter = static_cast<VkFilter>(yCbCrDescriptor.vkChromaFilter);
+    vulkanYCbCrCreateInfo.forceExplicitReconstruction =
+        static_cast<VkBool32>(yCbCrDescriptor.forceExplicitReconstruction);
+
+#if DAWN_PLATFORM_IS(ANDROID)
+    VkExternalFormatANDROID vulkanExternalFormat;
+    // Chain VkExternalFormatANDROID only if needed.
+    if (externalFormat != 0) {
+        vulkanExternalFormat.sType = VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID;
+        vulkanExternalFormat.pNext = nullptr;
+        vulkanExternalFormat.externalFormat = externalFormat;
+
+        vulkanYCbCrCreateInfo.pNext = &vulkanExternalFormat;
+    }
+#endif  // DAWN_PLATFORM_IS(ANDROID)
+
+    VkSamplerYcbcrConversion samplerYCbCrConversion = VK_NULL_HANDLE;
+    DAWN_TRY(CheckVkSuccess(
+        device->fn.CreateSamplerYcbcrConversion(device->GetVkDevice(), &vulkanYCbCrCreateInfo,
+                                                nullptr, &*samplerYCbCrConversion),
+        "CreateSamplerYcbcrConversion"));
+
+    return samplerYCbCrConversion;
 }
 
 }  // namespace dawn::native::vulkan

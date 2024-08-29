@@ -1,16 +1,29 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <vector>
 
@@ -156,11 +169,6 @@ TEST_P(DrawIndexedIndirectTest, Uint32) {
 
 // Test the parameter 'baseVertex' of DrawIndexed() works.
 TEST_P(DrawIndexedIndirectTest, BaseVertex) {
-    // TODO(crbug.com/dawn/161): add workaround for OpenGL index buffer offset (could be compute
-    // shader that adds it to the draw calls)
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGL());
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
-
     // TODO(crbug.com/dawn/1292): Some Intel OpenGL drivers don't seem to like
     // the offsets that Tint/GLSL produces.
     DAWN_SUPPRESS_TEST_IF(IsIntel() && IsOpenGL() && IsLinux());
@@ -184,6 +192,10 @@ TEST_P(DrawIndexedIndirectTest, BaseVertex) {
 
     // Test a draw with only the last 3 indices of the first quad (top right triangle)
     Test({3, 1, 3, unsignedNegFour, 0}, 6 * sizeof(uint32_t), 0, notFilled, filled);
+
+    // Test a draw with only the last 3 indices of the first quad (top right triangle) and offset
+    Test({0, 3, 1, 3, unsignedNegFour, 0}, 6 * sizeof(uint32_t), 1 * sizeof(uint32_t), notFilled,
+         filled);
 }
 
 TEST_P(DrawIndexedIndirectTest, IndirectOffset) {
@@ -235,10 +247,6 @@ TEST_P(DrawIndexedIndirectTest, BasicValidation) {
 }
 
 TEST_P(DrawIndexedIndirectTest, ValidateWithOffsets) {
-    // TODO(crbug.com/dawn/161): The GL/GLES backend doesn't support indirect index buffer offsets
-    // yet.
-    DAWN_SUPPRESS_TEST_IF(IsOpenGL() || IsOpenGLES());
-
     // TODO(crbug.com/dawn/1292): Some Intel OpenGL drivers don't seem to like
     // the offsets that Tint/GLSL produces.
     DAWN_SUPPRESS_TEST_IF(IsIntel() && IsOpenGL() && IsLinux());
@@ -464,6 +472,55 @@ TEST_P(DrawIndexedIndirectTest, ValidateEncodeMultipleThenSubmitAtOnce) {
     EXPECT_PIXEL_RGBA8_EQ(filled, renderPass.color, 3, 1);
 }
 
+TEST_P(DrawIndexedIndirectTest, ValidateEncodeMultipleMixedDrawsOneIndirectBufferThenSubmitAtOnce) {
+    // TODO(crbug.com/dawn/789): Test is failing after a roll on SwANGLE on Windows only.
+    DAWN_SUPPRESS_TEST_IF(IsANGLE() && IsWindows());
+
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
+
+    // TODO(crbug.com/dawn/1292): Some Intel OpenGL drivers don't seem to like
+    // the offsets that Tint/GLSL produces.
+    DAWN_SUPPRESS_TEST_IF(IsIntel() && IsOpenGL() && IsLinux());
+
+    // It's necessary to for this feature to be disabled so that validation layers
+    // can reject non-indexed indirect draws that use a nonzero firstInstance.
+    DAWN_SUPPRESS_TEST_IF(device.HasFeature(wgpu::FeatureName::IndirectFirstInstance));
+
+    utils::RGBA8 filled(0, 255, 0, 255);
+    utils::RGBA8 notFilled(0, 0, 0, 0);
+
+    // Use the same indirect buffer for both Indexed and non-Indexed draws
+    //
+    // Note: Indexed's vertexOffset and non-Indexed's firstInstance share the same offset.
+    //
+    // If the Indexed draw command (vertexOffset = 4) is correctly interpreted as an Indexed
+    // draw command, then the first 3 vertices of the second quad (top right triangle) will be
+    // drawn.
+    //
+    // Otherwise, if the Indexed draw command is incorrectly interpreted as a non-Indexed
+    // draw command (firstInstance = 4), then it won't be drawn since the validation procedure
+    // will reject draws with non-zero firstInstance (firstInstance = 4).
+    wgpu::Buffer indirectBuffer = CreateIndirectBuffer({0, 0, 0, 0, 0,    // Non-Indexed
+                                                        3, 1, 0, 4, 0});  // Indexed
+
+    wgpu::Buffer indexBuffer = CreateIndexBuffer({0, 1, 2});
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass.renderPassInfo);
+    pass.SetPipeline(pipeline);
+    pass.SetVertexBuffer(0, vertexBuffer);
+    pass.SetIndexBuffer(indexBuffer, wgpu::IndexFormat::Uint32, 0);
+    pass.DrawIndirect(indirectBuffer, 0);
+    pass.DrawIndexedIndirect(indirectBuffer, 20);
+    pass.End();
+    wgpu::CommandBuffer commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    EXPECT_PIXEL_RGBA8_EQ(notFilled, renderPass.color, 1, 3);
+    EXPECT_PIXEL_RGBA8_EQ(filled, renderPass.color, 3, 1);
+}
+
 TEST_P(DrawIndexedIndirectTest, ValidateEncodeMultipleThenSubmitOutOfOrder) {
     // TODO(crbug.com/dawn/789): Test is failing under SwANGLE on Windows only.
     DAWN_SUPPRESS_TEST_IF(IsANGLE() && IsWindows());
@@ -673,7 +730,6 @@ TEST_P(DrawIndexedIndirectTest, ValidateReusedBundleWithChangingParams) {
 
     wgpu::ComputePipelineDescriptor computeDesc;
     computeDesc.compute.module = paramWriterModule;
-    computeDesc.compute.entryPoint = "main";
     wgpu::ComputePipeline computePipeline = device.CreateComputePipeline(&computeDesc);
 
     wgpu::CommandEncoder encoder = device.CreateCommandEncoder();

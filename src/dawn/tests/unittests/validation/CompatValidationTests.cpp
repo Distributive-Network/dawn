@@ -1,21 +1,36 @@
-// Copyright 2023 The Dawn Authors
+// Copyright 2023 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <limits>
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "dawn/tests/unittests/validation/ValidationTest.h"
 #include "dawn/utils/ComboRenderPipelineDescriptor.h"
 #include "dawn/utils/WGPUHelpers.h"
@@ -55,6 +70,38 @@ TEST_F(CompatValidationTest, CanNotCreateCubeArrayTextureView) {
     cubeTexture.Destroy();
 }
 
+TEST_F(CompatValidationTest, CanNotSpecifyAlternateCompatibleViewFormatRGBA8Unorm) {
+    constexpr wgpu::TextureFormat viewFormat = wgpu::TextureFormat::RGBA8UnormSrgb;
+
+    wgpu::TextureDescriptor descriptor;
+    descriptor.size = {1, 1, 1};
+    descriptor.dimension = wgpu::TextureDimension::e2D;
+    descriptor.format = wgpu::TextureFormat::RGBA8Unorm;
+    descriptor.usage = wgpu::TextureUsage::TextureBinding;
+    descriptor.viewFormatCount = 1;
+    descriptor.viewFormats = &viewFormat;
+    wgpu::Texture texture;
+    ASSERT_DEVICE_ERROR(texture = device.CreateTexture(&descriptor),
+                        testing::HasSubstr("must match format"));
+    texture.Destroy();
+}
+
+TEST_F(CompatValidationTest, CanNotSpecifyAlternateCompatibleViewFormatRGBA8UnormSrgb) {
+    constexpr wgpu::TextureFormat viewFormat = wgpu::TextureFormat::RGBA8Unorm;
+
+    wgpu::TextureDescriptor descriptor;
+    descriptor.size = {1, 1, 1};
+    descriptor.dimension = wgpu::TextureDimension::e2D;
+    descriptor.format = wgpu::TextureFormat::RGBA8UnormSrgb;
+    descriptor.usage = wgpu::TextureUsage::TextureBinding;
+    descriptor.viewFormatCount = 1;
+    descriptor.viewFormats = &viewFormat;
+    wgpu::Texture texture;
+    ASSERT_DEVICE_ERROR(texture = device.CreateTexture(&descriptor),
+                        testing::HasSubstr("must match format"));
+    texture.Destroy();
+}
+
 TEST_F(CompatValidationTest, CanNotCreatePipelineWithDifferentPerTargetBlendStateOrWriteMask) {
     wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
         @vertex fn vs() -> @builtin(position) vec4f {
@@ -79,9 +126,7 @@ TEST_F(CompatValidationTest, CanNotCreatePipelineWithDifferentPerTargetBlendStat
     utils::ComboRenderPipelineDescriptor testDescriptor;
     testDescriptor.layout = {};
     testDescriptor.vertex.module = module;
-    testDescriptor.vertex.entryPoint = "vs";
     testDescriptor.cFragment.module = module;
-    testDescriptor.cFragment.entryPoint = "fs";
     testDescriptor.cFragment.targetCount = 3;
     testDescriptor.cTargets[1].format = wgpu::TextureFormat::Undefined;
 
@@ -126,7 +171,7 @@ TEST_F(CompatValidationTest, CanNotCreatePipelineWithDifferentPerTargetBlendStat
                 testDescriptor.cTargets[2].writeMask = wgpu::ColorWriteMask::Green;
                 break;
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
         }
 
         if (expectError) {
@@ -137,53 +182,109 @@ TEST_F(CompatValidationTest, CanNotCreatePipelineWithDifferentPerTargetBlendStat
     }
 }
 
-TEST_F(CompatValidationTest, CanNotUseFragmentShaderWithSampleMask) {
-    wgpu::ShaderModule moduleSampleMaskOutput = utils::CreateShaderModule(device, R"(
+TEST_F(CompatValidationTest, CanNotCreatePipelineWithNonZeroDepthBiasClamp) {
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
         @vertex fn vs() -> @builtin(position) vec4f {
-            return vec4f(1);
+            return vec4f(0);
         }
+
+        @fragment fn fs() -> @location(0) vec4f {
+            return vec4f(0);
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor testDescriptor;
+    testDescriptor.layout = {};
+    testDescriptor.vertex.module = module;
+    testDescriptor.cFragment.module = module;
+    testDescriptor.cFragment.targetCount = 1;
+    testDescriptor.cTargets[1].format = wgpu::TextureFormat::RGBA8Unorm;
+
+    wgpu::DepthStencilState* depthStencil =
+        testDescriptor.EnableDepthStencil(wgpu::TextureFormat::Depth24Plus);
+    depthStencil->depthWriteEnabled = true;
+    depthStencil->depthBias = 0;
+    depthStencil->depthBiasSlopeScale = 0;
+
+    depthStencil->depthBiasClamp = 0;
+    device.CreateRenderPipeline(&testDescriptor);
+
+    depthStencil->depthBiasClamp = 1;
+    ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&testDescriptor));
+}
+
+TEST_F(CompatValidationTest, CanNotUseSampleMask) {
+    auto wgsl = R"(
         struct Output {
             @builtin(sample_mask) mask_out: u32,
             @location(0) color : vec4f,
         }
-        @fragment fn fsWithoutSampleMaskUsage() -> @location(0) vec4f {
-            return vec4f(1.0, 1.0, 1.0, 1.0);
-        }
-        @fragment fn fsWithSampleMaskUsage() -> Output {
-            var o: Output;
-            // We need to make sure this sample_mask isn't optimized out even its value equals "no op".
-            o.mask_out = 0xFFFFFFFFu;
-            o.color = vec4f(1.0, 1.0, 1.0, 1.0);
-            return o;
-        }
-    )");
+    )";
+    ASSERT_DEVICE_ERROR(utils::CreateShaderModule(device, wgsl),  //
+                        testing::HasSubstr("sample_mask"));
+}
 
-    // Check we can use a fragment shader that doesn't use sample_mask from
-    // the same module as one that does.
-    {
-        utils::ComboRenderPipelineDescriptor descriptor;
-        descriptor.vertex.module = moduleSampleMaskOutput;
-        descriptor.vertex.entryPoint = "vs";
-        descriptor.cFragment.module = moduleSampleMaskOutput;
-        descriptor.cFragment.entryPoint = "fsWithoutSampleMaskUsage";
-        descriptor.multisample.count = 4;
-        descriptor.multisample.alphaToCoverageEnabled = false;
+TEST_F(CompatValidationTest, CanNotUseSampleIndex) {
+    auto wgsl = R"(
+        @fragment fn fsWithSampleIndexUsage(@builtin(sample_index) sNdx: u32) {
+        }
+    )";
+    ASSERT_DEVICE_ERROR(utils::CreateShaderModule(device, wgsl),
+                        testing::HasSubstr("sample_index"));
+}
 
-        device.CreateRenderPipeline(&descriptor);
+TEST_F(CompatValidationTest, CanNotUseShaderWithUnsupportedInterpolateTypeOrSampling) {
+    static const char* interpolateParams[] = {
+        "perspective",  // should pass
+        "linear",
+        "perspective, sample",
+    };
+    for (auto interpolateParam : interpolateParams) {
+        auto wgsl = absl::StrFormat(R"(
+            struct Vertex {
+                @builtin(position) pos: vec4f,
+                @location(0) @interpolate(%s) color : vec4f,
+            };
+            @vertex fn vs() -> Vertex {
+                var v: Vertex;
+                v.pos = vec4f(1);
+                v.color = vec4f(1);
+                return v;
+            }
+        )",
+                                    interpolateParam);
+        if (strcmp(interpolateParam, "perspective") == 0) {
+            wgpu::ShaderModule moduleInterpolationLinear =
+                utils::CreateShaderModule(device, wgsl.c_str());
+        } else {
+            ASSERT_DEVICE_ERROR(wgpu::ShaderModule moduleInterpolationLinear =
+                                    utils::CreateShaderModule(device, wgsl.c_str()),
+                                testing::HasSubstr("in compatibility mode"));
+        }
     }
+}
 
-    // Check we can not use a fragment shader that uses sample_mask.
-    {
-        utils::ComboRenderPipelineDescriptor descriptor;
-        descriptor.vertex.module = moduleSampleMaskOutput;
-        descriptor.vertex.entryPoint = "vs";
-        descriptor.cFragment.module = moduleSampleMaskOutput;
-        descriptor.cFragment.entryPoint = "fsWithSampleMaskUsage";
-        descriptor.multisample.count = 4;
-        descriptor.multisample.alphaToCoverageEnabled = false;
+TEST_F(CompatValidationTest, CanNotCreateRGxxxStorageTexture) {
+    const wgpu::TextureFormat formats[] = {
+        wgpu::TextureFormat::RGBA8Unorm,  // pass check
+        wgpu::TextureFormat::RG32Sint,
+        wgpu::TextureFormat::RG32Uint,
+        wgpu::TextureFormat::RG32Float,
+    };
+    for (auto format : formats) {
+        wgpu::TextureDescriptor descriptor;
+        descriptor.size = {1, 1, 1};
+        descriptor.dimension = wgpu::TextureDimension::e2D;
+        descriptor.format = format;
+        descriptor.usage = wgpu::TextureUsage::StorageBinding;
+        wgpu::Texture texture;
 
-        ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&descriptor),
-                            testing::HasSubstr("sample_mask"));
+        if (format == wgpu::TextureFormat::RGBA8Unorm) {
+            texture = device.CreateTexture(&descriptor);
+        } else {
+            ASSERT_DEVICE_ERROR(texture = device.CreateTexture(&descriptor));
+        }
+        texture.Destroy();
     }
 }
 
@@ -253,9 +354,7 @@ void TestMultipleTextureViewValidationInRenderPass(
 
     utils::ComboRenderPipelineDescriptor pDesc;
     pDesc.vertex.module = module;
-    pDesc.vertex.entryPoint = "vs";
     pDesc.cFragment.module = module;
-    pDesc.cFragment.entryPoint = "fs";
     pDesc.cTargets[0].format = wgpu::TextureFormat::RGBA8Unorm;
     wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&pDesc);
 
@@ -504,7 +603,6 @@ void TestMultipleTextureViewValidationInComputePass(
 
     wgpu::ComputePipelineDescriptor pDesc;
     pDesc.compute.module = module;
-    pDesc.compute.entryPoint = "cs";
     wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&pDesc);
 
     fn(device, texture, pipeline,
@@ -908,20 +1006,265 @@ TEST_F(CompatValidationTest, CanNotCreateBGRA8UnormTextureWithBGRA8UnormSrgbView
                         testing::HasSubstr("not supported in compatibility mode"));
 }
 
-class CompatCompressedTextureToBufferCopyValidationTests : public CompatValidationTest {
+TEST_F(CompatValidationTest, CanNotCopyMultisampleTextureToTexture) {
+    wgpu::TextureDescriptor srcDescriptor;
+    srcDescriptor.size = {4, 4, 1};
+    srcDescriptor.dimension = wgpu::TextureDimension::e2D;
+    srcDescriptor.format = wgpu::TextureFormat::RGBA8Unorm;
+    srcDescriptor.usage = wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::RenderAttachment;
+    srcDescriptor.sampleCount = 4;
+    wgpu::Texture srcTexture = device.CreateTexture(&srcDescriptor);
+
+    wgpu::TextureDescriptor dstDescriptor;
+    dstDescriptor.size = {4, 4, 1};
+    dstDescriptor.dimension = wgpu::TextureDimension::e2D;
+    dstDescriptor.format = wgpu::TextureFormat::RGBA8Unorm;
+    dstDescriptor.usage = wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::RenderAttachment;
+    dstDescriptor.sampleCount = 4;
+    wgpu::Texture dstTexture = device.CreateTexture(&dstDescriptor);
+
+    wgpu::ImageCopyTexture source = utils::CreateImageCopyTexture(srcTexture);
+    wgpu::ImageCopyTexture destination = utils::CreateImageCopyTexture(dstTexture);
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    encoder.CopyTextureToTexture(&source, &destination, &srcDescriptor.size);
+    ASSERT_DEVICE_ERROR(encoder.Finish(),
+                        testing::HasSubstr("cannot be copied in compatibility mode"));
+}
+
+// Regression test for crbug.com/339704108
+// Error texture should not resolve mCompatibilityTextureBindingViewDimension,
+// as dimension could be in bad form.
+TEST_F(CompatValidationTest, DoNotResolveDefaultTextureBindingViewDimensionOnErrorTexture) {
+    // Set incompatible texture format and view format.
+    // This validation happens before texture dimension validation and binding view dimension
+    // resolving and shall return an error texture.
+    constexpr wgpu::TextureFormat format = wgpu::TextureFormat::BGRA8Unorm;
+    constexpr wgpu::TextureFormat viewFormat = wgpu::TextureFormat::RGBA8UnormSrgb;
+
+    wgpu::TextureDescriptor descriptor;
+    descriptor.size = {1, 1, 1};
+    descriptor.dimension = wgpu::TextureDimension::Undefined;
+    descriptor.format = format;
+    descriptor.usage = wgpu::TextureUsage::TextureBinding;
+    descriptor.viewFormatCount = 1;
+    descriptor.viewFormats = &viewFormat;
+
+    ASSERT_DEVICE_ERROR(device.CreateTexture(&descriptor));
+}
+
+// Regression test for crbug.com/341167195
+// Resolved default compatibility textureBindingViewDimension should be validated as it may come
+// from the TextureBindingViewDimensionDescriptor
+TEST_F(CompatValidationTest, InvalidTextureBindingViewDimensionDescriptorDescriptor) {
+    wgpu::TextureDescriptor descriptor;
+    descriptor.size = {1, 1, 1};
+    descriptor.dimension = wgpu::TextureDimension::Undefined;
+    descriptor.format = wgpu::TextureFormat::RGBA8Unorm;
+    descriptor.usage = wgpu::TextureUsage::TextureBinding;
+
+    wgpu::TextureBindingViewDimensionDescriptor textureBindingViewDimensionDesc;
+    descriptor.nextInChain = &textureBindingViewDimensionDesc;
+    // Forcefully set an invalid view dimension.
+    textureBindingViewDimensionDesc.textureBindingViewDimension =
+        static_cast<wgpu::TextureViewDimension>(99);
+
+    ASSERT_DEVICE_ERROR(device.CreateTexture(&descriptor));
+}
+
+class CompatTextureViewDimensionValidationTests : public CompatValidationTest {
   protected:
-    WGPUDevice CreateTestDevice(native::Adapter dawnAdapter,
-                                wgpu::DeviceDescriptor descriptor) override {
+    void TestBindingTextureViewDimensions(
+        const uint32_t depth,
+        const wgpu::TextureViewDimension textureBindingViewDimension,
+        const wgpu::TextureViewDimension viewDimension,
+        bool success) {
+        wgpu::BindGroupLayout layout = utils::MakeBindGroupLayout(
+            device, {{0, wgpu::ShaderStage::Fragment, wgpu::TextureSampleType::Float,
+                      viewDimension == wgpu::TextureViewDimension::Undefined
+                          ? wgpu::TextureViewDimension::e2D
+                          : viewDimension}});
+
+        wgpu::Texture texture = CreateTextureWithViewDimension(depth, wgpu::TextureDimension::e2D,
+                                                               textureBindingViewDimension);
+
+        wgpu::TextureViewDescriptor viewDesc = {};
+        viewDesc.dimension = viewDimension;
+
+        if (success) {
+            utils::MakeBindGroup(device, layout, {{0, texture.CreateView(&viewDesc)}});
+        } else {
+            ASSERT_DEVICE_ERROR(
+                utils::MakeBindGroup(device, layout, {{0, texture.CreateView(&viewDesc)}}),
+                testing::HasSubstr("must match textureBindingViewDimension"));
+        }
+
+        texture.Destroy();
+    }
+
+    void TestCreateTextureWithViewDimensionImpl(
+        const uint32_t depth,
+        const wgpu::TextureDimension dimension,
+        const wgpu::TextureViewDimension textureBindingViewDimension,
+        bool success,
+        const char* expectedSubstr) {
+        if (success) {
+            CreateTextureWithViewDimension(depth, dimension, textureBindingViewDimension);
+        } else {
+            ASSERT_DEVICE_ERROR(
+                CreateTextureWithViewDimension(depth, dimension, textureBindingViewDimension);
+                testing::HasSubstr(expectedSubstr));
+        }
+    }
+
+    void TestCreateTextureIsCompatibleWithViewDimension(
+        const uint32_t depth,
+        const wgpu::TextureDimension dimension,
+        const wgpu::TextureViewDimension textureBindingViewDimension,
+        bool success) {
+        TestCreateTextureWithViewDimensionImpl(depth, dimension, textureBindingViewDimension,
+                                               success, "is not compatible with the dimension");
+    }
+
+    void TestCreateTextureLayersIsCompatibleWithViewDimension(
+        const uint32_t depth,
+        const wgpu::TextureDimension dimension,
+        const wgpu::TextureViewDimension textureBindingViewDimension,
+        bool success) {
+        TestCreateTextureWithViewDimensionImpl(depth, dimension, textureBindingViewDimension,
+                                               success,
+                                               "is only compatible with depthOrArrayLayers ==");
+    }
+
+    wgpu::Texture CreateTextureWithViewDimension(
+        const uint32_t depth,
+        const wgpu::TextureDimension dimension,
+        const wgpu::TextureViewDimension textureBindingViewDimension) {
+        constexpr wgpu::TextureFormat viewFormat = wgpu::TextureFormat::RGBA8Unorm;
+
+        wgpu::TextureDescriptor textureDesc;
+        textureDesc.size = {1, 1, depth};
+        textureDesc.dimension = dimension;
+        textureDesc.format = wgpu::TextureFormat::RGBA8Unorm;
+        textureDesc.usage = wgpu::TextureUsage::TextureBinding;
+        textureDesc.viewFormatCount = 1;
+        textureDesc.viewFormats = &viewFormat;
+
+        wgpu::TextureBindingViewDimensionDescriptor textureBindingViewDimensionDesc;
+
+        if (textureBindingViewDimension != wgpu::TextureViewDimension::Undefined) {
+            textureDesc.nextInChain = &textureBindingViewDimensionDesc;
+            textureBindingViewDimensionDesc.textureBindingViewDimension =
+                textureBindingViewDimension;
+        }
+
+        return device.CreateTexture(&textureDesc);
+    }
+};
+
+// Note: CubeArray is not included because CubeArray is not allowed
+// in compatibility mode.
+const wgpu::TextureViewDimension kViewDimensions[] = {
+    wgpu::TextureViewDimension::e1D,  wgpu::TextureViewDimension::e2D,
+    wgpu::TextureViewDimension::e3D,  wgpu::TextureViewDimension::e2DArray,
+    wgpu::TextureViewDimension::Cube,
+};
+
+// Test creating 1d textures with each view dimension.
+TEST_F(CompatTextureViewDimensionValidationTests, E1D) {
+    for (auto viewDimension : kViewDimensions) {
+        TestCreateTextureIsCompatibleWithViewDimension(
+            1, wgpu::TextureDimension::e1D, viewDimension,
+            viewDimension == wgpu::TextureViewDimension::e1D);
+    }
+}
+
+// Test creating 2d textures with each view dimension.
+TEST_F(CompatTextureViewDimensionValidationTests, E2D) {
+    for (auto viewDimension : kViewDimensions) {
+        TestCreateTextureIsCompatibleWithViewDimension(
+            viewDimension == wgpu::TextureViewDimension::e2D ? 1 : 6, wgpu::TextureDimension::e2D,
+            viewDimension,
+            viewDimension != wgpu::TextureViewDimension::e1D &&
+                viewDimension != wgpu::TextureViewDimension::e3D);
+    }
+}
+
+// Test creating 1d textures with each view dimension.
+TEST_F(CompatTextureViewDimensionValidationTests, E3D) {
+    for (auto viewDimension : kViewDimensions) {
+        TestCreateTextureIsCompatibleWithViewDimension(
+            1, wgpu::TextureDimension::e3D, viewDimension,
+            viewDimension == wgpu::TextureViewDimension::e3D);
+    }
+}
+
+// Test creating a 2d texture with a 2d view and depthOrArrayLayers > 1 fails
+TEST_F(CompatTextureViewDimensionValidationTests, E2DViewMoreThan1Layer) {
+    TestCreateTextureLayersIsCompatibleWithViewDimension(2, wgpu::TextureDimension::e2D,
+                                                         wgpu::TextureViewDimension::e2D, false);
+}
+
+// Test creating a 2d texture with a cube view with depthOrArrayLayers != 6 fails
+TEST_F(CompatTextureViewDimensionValidationTests, CubeViewMoreWhereLayersIsNot6) {
+    uint32_t layers[] = {1, 5, 6, 7, 12};
+    for (auto numLayers : layers) {
+        TestCreateTextureLayersIsCompatibleWithViewDimension(numLayers, wgpu::TextureDimension::e2D,
+                                                             wgpu::TextureViewDimension::Cube,
+                                                             numLayers == 6);
+    }
+}
+
+TEST_F(CompatTextureViewDimensionValidationTests, OneLayerIs2DView) {
+    TestBindingTextureViewDimensions(1, wgpu::TextureViewDimension::Undefined,
+                                     wgpu::TextureViewDimension::e2D, true);
+}
+
+// Test 2 layer texture gets a 2d-array viewDimension
+TEST_F(CompatTextureViewDimensionValidationTests, TwoLayersIs2DArrayView) {
+    TestBindingTextureViewDimensions(2, wgpu::TextureViewDimension::Undefined,
+                                     wgpu::TextureViewDimension::e2DArray, true);
+}
+
+// Test 6 layer texture gets a 2d-array viewDimension
+TEST_F(CompatTextureViewDimensionValidationTests, SixLayersIs2DArrayView) {
+    TestBindingTextureViewDimensions(6, wgpu::TextureViewDimension::Undefined,
+                                     wgpu::TextureViewDimension::e2DArray, true);
+}
+
+// Test 2d texture can not be viewed as 2D array
+TEST_F(CompatTextureViewDimensionValidationTests, TwoDTextureViewDimensionCanNotBeViewedAs2DArray) {
+    TestBindingTextureViewDimensions(1, wgpu::TextureViewDimension::e2D,
+                                     wgpu::TextureViewDimension::e2DArray, false);
+}
+
+// Test 2d-array texture can not be viewed as cube
+TEST_F(CompatTextureViewDimensionValidationTests,
+       TwoDArrayTextureViewDimensionCanNotBeViewedAsCube) {
+    TestBindingTextureViewDimensions(6, wgpu::TextureViewDimension::e2DArray,
+                                     wgpu::TextureViewDimension::Cube, false);
+}
+
+// Test cube texture can not be viewed as 2d-array
+TEST_F(CompatTextureViewDimensionValidationTests, CubeTextureViewDimensionCanNotBeViewedAs2DArray) {
+    TestBindingTextureViewDimensions(6, wgpu::TextureViewDimension::Cube,
+                                     wgpu::TextureViewDimension::e2DArray, false);
+}
+
+// Test 2Darray != 2d
+// Test cube !== 2d
+// Test cube !== 2d-array
+
+class CompatCompressedCopyT2BAndCopyT2TValidationTests : public CompatValidationTest {
+  protected:
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
         std::vector<wgpu::FeatureName> requiredFeatures;
         for (TextureInfo textureInfo : textureInfos) {
             if (adapter.HasFeature(textureInfo.feature)) {
                 requiredFeatures.push_back(textureInfo.feature);
             }
         }
-
-        descriptor.requiredFeatures = requiredFeatures.data();
-        descriptor.requiredFeatureCount = requiredFeatures.size();
-        return dawnAdapter.CreateDevice(&descriptor);
+        return requiredFeatures;
     }
 
     struct TextureInfo {
@@ -944,7 +1287,7 @@ class CompatCompressedTextureToBufferCopyValidationTests : public CompatValidati
     };
 };
 
-TEST_F(CompatCompressedTextureToBufferCopyValidationTests, CanNotCopyCompressedTextureToBuffer) {
+TEST_F(CompatCompressedCopyT2BAndCopyT2TValidationTests, CanNotCopyCompressedTextureToBuffer) {
     for (TextureInfo textureInfo : textureInfos) {
         if (!device.HasFeature(textureInfo.feature)) {
             continue;
@@ -969,6 +1312,118 @@ TEST_F(CompatCompressedTextureToBufferCopyValidationTests, CanNotCopyCompressedT
         encoder.CopyTextureToBuffer(&source, &destination, &descriptor.size);
         ASSERT_DEVICE_ERROR(encoder.Finish(), testing::HasSubstr("cannot be used"));
     }
+}
+
+TEST_F(CompatCompressedCopyT2BAndCopyT2TValidationTests, CanNotCopyCompressedTextureToTexture) {
+    for (TextureInfo textureInfo : textureInfos) {
+        if (!device.HasFeature(textureInfo.feature)) {
+            continue;
+        }
+
+        wgpu::TextureDescriptor descriptor;
+        descriptor.size = {4, 4, 1};
+        descriptor.dimension = wgpu::TextureDimension::e2D;
+        descriptor.format = textureInfo.format;
+        descriptor.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopySrc;
+        wgpu::Texture srcTexture = device.CreateTexture(&descriptor);
+
+        descriptor.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
+        wgpu::Texture dstTexture = device.CreateTexture(&descriptor);
+
+        wgpu::ImageCopyTexture source = utils::CreateImageCopyTexture(srcTexture);
+        wgpu::ImageCopyTexture destination = utils::CreateImageCopyTexture(dstTexture);
+
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        encoder.CopyTextureToTexture(&source, &destination, &descriptor.size);
+        ASSERT_DEVICE_ERROR(encoder.Finish(), testing::HasSubstr("cannot be used"));
+    }
+}
+
+class CompatMaxVertexAttributesTest : public CompatValidationTest {
+  protected:
+    void TestMaxVertexAttributes(bool usesVertexIndex, bool usesInstanceIndex) {
+        wgpu::SupportedLimits limits;
+        device.GetLimits(&limits);
+
+        uint32_t maxAttributes = limits.limits.maxVertexAttributes;
+        uint32_t numAttributesUsedByBuiltins =
+            (usesVertexIndex ? 1 : 0) + (usesInstanceIndex ? 1 : 0);
+
+        TestAttributes(maxAttributes - numAttributesUsedByBuiltins, usesVertexIndex,
+                       usesInstanceIndex, true);
+        if (usesVertexIndex || usesInstanceIndex) {
+            TestAttributes(maxAttributes - numAttributesUsedByBuiltins + 1, usesVertexIndex,
+                           usesInstanceIndex, false);
+        }
+    }
+
+    void TestAttributes(uint32_t numAttributes,
+                        bool usesVertexIndex,
+                        bool usesInstanceIndex,
+                        bool expectSuccess) {
+        std::vector<std::string> inputs;
+        std::vector<std::string> outputs;
+
+        utils::ComboRenderPipelineDescriptor descriptor;
+        descriptor.layout = {};
+        descriptor.vertex.bufferCount = 1;
+        descriptor.cBuffers[0].arrayStride = 16;
+        descriptor.cBuffers[0].attributeCount = numAttributes;
+
+        for (uint32_t i = 0; i < numAttributes; ++i) {
+            inputs.push_back(absl::StrFormat("@location(%u) v%u: vec4f", i, i));
+            outputs.push_back(absl::StrFormat("v%u", i));
+            descriptor.cAttributes[i].format = wgpu::VertexFormat::Float32x4;
+            descriptor.cAttributes[i].shaderLocation = i;
+        }
+
+        if (usesVertexIndex) {
+            inputs.push_back("@builtin(vertex_index) vNdx: u32");
+            outputs.push_back("vec4f(f32(vNdx))");
+        }
+
+        if (usesInstanceIndex) {
+            inputs.push_back("@builtin(instance_index) iNdx: u32");
+            outputs.push_back("vec4f(f32(iNdx))");
+        }
+
+        auto wgsl = absl::StrFormat(R"(
+            @fragment fn fs() -> @location(0) vec4f {
+                return vec4f(1);
+            }
+            @vertex fn vs(%s) -> @builtin(position) vec4f {
+                return %s;
+            }
+            )",
+                                    absl::StrJoin(inputs, ", "), absl::StrJoin(outputs, " + "));
+
+        wgpu::ShaderModule module = utils::CreateShaderModule(device, wgsl.c_str());
+        descriptor.vertex.module = module;
+        descriptor.cFragment.module = module;
+
+        if (expectSuccess) {
+            device.CreateRenderPipeline(&descriptor);
+        } else {
+            ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&descriptor),
+                                testing::HasSubstr("compat"));
+        }
+    }
+};
+
+TEST_F(CompatMaxVertexAttributesTest, CanUseMaxVertexAttributes) {
+    TestMaxVertexAttributes(false, false);
+}
+
+TEST_F(CompatMaxVertexAttributesTest, VertexIndexTakesAnAttribute) {
+    TestMaxVertexAttributes(true, false);
+}
+
+TEST_F(CompatMaxVertexAttributesTest, InstanceIndexTakesAnAttribute) {
+    TestMaxVertexAttributes(false, true);
+}
+
+TEST_F(CompatMaxVertexAttributesTest, VertexAndInstanceIndexEachTakeAnAttribute) {
+    TestMaxVertexAttributes(true, true);
 }
 
 }  // anonymous namespace

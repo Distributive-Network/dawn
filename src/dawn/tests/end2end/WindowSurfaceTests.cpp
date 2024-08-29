@@ -1,16 +1,29 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <cstdlib>
 #include <memory>
@@ -43,6 +56,10 @@
 namespace dawn {
 namespace {
 
+struct GLFWindowDestroyer {
+    void operator()(GLFWwindow* ptr) { glfwDestroyWindow(ptr); }
+};
+
 // Test for wgpu::Surface creation that only need an instance (no devices) and don't need all the
 // complexity of DawnTest.
 class WindowSurfaceInstanceTests : public testing::Test {
@@ -58,12 +75,7 @@ class WindowSurfaceInstanceTests : public testing::Test {
         mInstance = wgpu::CreateInstance();
     }
 
-    void TearDown() override {
-        if (mWindow != nullptr) {
-            glfwDestroyWindow(mWindow);
-            mWindow = nullptr;
-        }
-    }
+    void TearDown() override { mWindow.reset(); }
 
     void AssertSurfaceCreation(const wgpu::SurfaceDescriptor* descriptor, bool succeeds) {
         wgpu::Surface surface = mInstance.CreateSurface(descriptor);
@@ -73,13 +85,14 @@ class WindowSurfaceInstanceTests : public testing::Test {
     GLFWwindow* CreateWindow() {
         // Set GLFW_NO_API to avoid GLFW bringing up a GL context that we won't use.
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        mWindow = glfwCreateWindow(400, 400, "WindowSurfaceInstanceTests window", nullptr, nullptr);
-        return mWindow;
+        mWindow.reset(
+            glfwCreateWindow(400, 400, "WindowSurfaceInstanceTests window", nullptr, nullptr));
+        return mWindow.get();
     }
 
   private:
     wgpu::Instance mInstance;
-    GLFWwindow* mWindow = nullptr;
+    std::unique_ptr<GLFWwindow, GLFWindowDestroyer> mWindow = nullptr;
 };
 
 // Test that a valid chained descriptor works (and that GLFWUtils creates a valid chained
@@ -106,7 +119,7 @@ TEST_F(WindowSurfaceInstanceTests, NoChainedDescriptors) {
 // Test that a chained descriptor with a garbage sType produces an error.
 TEST_F(WindowSurfaceInstanceTests, BadChainedDescriptors) {
     wgpu::ChainedStruct chainedDescriptor;
-    chainedDescriptor.sType = wgpu::SType::Invalid;  // The default but we set it for clarity.
+    chainedDescriptor.sType = wgpu::SType(0u);  // The default but we set it for clarity.
 
     wgpu::SurfaceDescriptor descriptor;
     descriptor.nextInChain = &chainedDescriptor;

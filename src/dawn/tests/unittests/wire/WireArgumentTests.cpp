@@ -1,16 +1,29 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <array>
 #include <string>
@@ -51,18 +64,14 @@ TEST_F(WireArgumentTests, ValueArgument) {
 // Test that the wire is able to send arrays of numerical values
 TEST_F(WireArgumentTests, ValueArrayArgument) {
     // Create a bindgroup.
-    WGPUBindGroupLayoutDescriptor bglDescriptor = {};
-    bglDescriptor.entryCount = 0;
-    bglDescriptor.entries = nullptr;
+    WGPUBindGroupLayoutDescriptor bglDescriptor = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
 
     WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(device, &bglDescriptor);
     WGPUBindGroupLayout apiBgl = api.GetNewBindGroupLayout();
     EXPECT_CALL(api, DeviceCreateBindGroupLayout(apiDevice, _)).WillOnce(Return(apiBgl));
 
-    WGPUBindGroupDescriptor bindGroupDescriptor = {};
+    WGPUBindGroupDescriptor bindGroupDescriptor = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
     bindGroupDescriptor.layout = bgl;
-    bindGroupDescriptor.entryCount = 0;
-    bindGroupDescriptor.entries = nullptr;
 
     WGPUBindGroup bindGroup = wgpuDeviceCreateBindGroup(device, &bindGroupDescriptor);
     WGPUBindGroup apiBindGroup = api.GetNewBindGroup();
@@ -98,73 +107,49 @@ TEST_F(WireArgumentTests, ValueArrayArgument) {
 // Test that the wire is able to send C strings
 TEST_F(WireArgumentTests, CStringArgument) {
     // Create shader module
-    WGPUShaderModuleDescriptor vertexDescriptor = {};
+    WGPUShaderModuleDescriptor vertexDescriptor = WGPU_SHADER_MODULE_DESCRIPTOR_INIT;
     WGPUShaderModule vsModule = wgpuDeviceCreateShaderModule(device, &vertexDescriptor);
     WGPUShaderModule apiVsModule = api.GetNewShaderModule();
     EXPECT_CALL(api, DeviceCreateShaderModule(apiDevice, _)).WillOnce(Return(apiVsModule));
 
     // Create the color state descriptor
-    WGPUBlendComponent blendComponent = {};
-    blendComponent.operation = WGPUBlendOperation_Add;
-    blendComponent.srcFactor = WGPUBlendFactor_One;
-    blendComponent.dstFactor = WGPUBlendFactor_One;
-    WGPUBlendState blendState = {};
+    WGPUBlendComponent blendComponent = WGPU_BLEND_COMPONENT_INIT;
+    WGPUBlendState blendState = WGPU_BLEND_STATE_INIT;
     blendState.alpha = blendComponent;
     blendState.color = blendComponent;
-    WGPUColorTargetState colorTargetState = {};
+    WGPUColorTargetState colorTargetState = WGPU_COLOR_TARGET_STATE_INIT;
     colorTargetState.format = WGPUTextureFormat_RGBA8Unorm;
     colorTargetState.blend = &blendState;
-    colorTargetState.writeMask = WGPUColorWriteMask_All;
 
     // Create the depth-stencil state
-    WGPUStencilFaceState stencilFace = {};
-    stencilFace.compare = WGPUCompareFunction_Always;
-    stencilFace.failOp = WGPUStencilOperation_Keep;
-    stencilFace.depthFailOp = WGPUStencilOperation_Keep;
-    stencilFace.passOp = WGPUStencilOperation_Keep;
+    WGPUStencilFaceState stencilFace = WGPU_STENCIL_FACE_STATE_INIT;
 
-    WGPUDepthStencilState depthStencilState = {};
+    WGPUDepthStencilState depthStencilState = WGPU_DEPTH_STENCIL_STATE_INIT;
     depthStencilState.format = WGPUTextureFormat_Depth24PlusStencil8;
-    depthStencilState.depthWriteEnabled = false;
     depthStencilState.depthCompare = WGPUCompareFunction_Always;
     depthStencilState.stencilBack = stencilFace;
     depthStencilState.stencilFront = stencilFace;
-    depthStencilState.stencilReadMask = 0xff;
-    depthStencilState.stencilWriteMask = 0xff;
-    depthStencilState.depthBias = 0;
-    depthStencilState.depthBiasSlopeScale = 0.0;
-    depthStencilState.depthBiasClamp = 0.0;
 
     // Create the pipeline layout
-    WGPUPipelineLayoutDescriptor layoutDescriptor = {};
-    layoutDescriptor.bindGroupLayoutCount = 0;
-    layoutDescriptor.bindGroupLayouts = nullptr;
+    WGPUPipelineLayoutDescriptor layoutDescriptor = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
     WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(device, &layoutDescriptor);
     WGPUPipelineLayout apiLayout = api.GetNewPipelineLayout();
     EXPECT_CALL(api, DeviceCreatePipelineLayout(apiDevice, _)).WillOnce(Return(apiLayout));
 
     // Create pipeline
-    WGPURenderPipelineDescriptor pipelineDescriptor = {};
+    WGPURenderPipelineDescriptor pipelineDescriptor = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
 
     pipelineDescriptor.vertex.module = vsModule;
     pipelineDescriptor.vertex.entryPoint = "main";
-    pipelineDescriptor.vertex.bufferCount = 0;
-    pipelineDescriptor.vertex.buffers = nullptr;
 
-    WGPUFragmentState fragment = {};
+    WGPUFragmentState fragment = WGPU_FRAGMENT_STATE_INIT;
     fragment.module = vsModule;
     fragment.entryPoint = "main";
     fragment.targetCount = 1;
     fragment.targets = &colorTargetState;
     pipelineDescriptor.fragment = &fragment;
 
-    pipelineDescriptor.multisample.count = 1;
-    pipelineDescriptor.multisample.mask = 0xFFFFFFFF;
-    pipelineDescriptor.multisample.alphaToCoverageEnabled = false;
     pipelineDescriptor.layout = layout;
-    pipelineDescriptor.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-    pipelineDescriptor.primitive.frontFace = WGPUFrontFace_CCW;
-    pipelineDescriptor.primitive.cullMode = WGPUCullMode_None;
     pipelineDescriptor.depthStencil = &depthStencilState;
 
     wgpuDeviceCreateRenderPipeline(device, &pipelineDescriptor);
@@ -186,7 +171,7 @@ TEST_F(WireArgumentTests, ObjectAsValueArgument) {
     WGPUCommandEncoder apiEncoder = api.GetNewCommandEncoder();
     EXPECT_CALL(api, DeviceCreateCommandEncoder(apiDevice, nullptr)).WillOnce(Return(apiEncoder));
 
-    WGPUBufferDescriptor descriptor = {};
+    WGPUBufferDescriptor descriptor = WGPU_BUFFER_DESCRIPTOR_INIT;
     descriptor.size = 8;
     descriptor.usage =
         static_cast<WGPUBufferUsage>(WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst);
@@ -238,14 +223,11 @@ TEST_F(WireArgumentTests, ObjectsAsPointerArgument) {
 
 // Test that the wire is able to send structures that contain pure values (non-objects)
 TEST_F(WireArgumentTests, StructureOfValuesArgument) {
-    WGPUSamplerDescriptor descriptor = {};
+    WGPUSamplerDescriptor descriptor = WGPU_SAMPLER_DESCRIPTOR_INIT;
     descriptor.magFilter = WGPUFilterMode_Linear;
-    descriptor.minFilter = WGPUFilterMode_Nearest;
     descriptor.mipmapFilter = WGPUMipmapFilterMode_Linear;
-    descriptor.addressModeU = WGPUAddressMode_ClampToEdge;
     descriptor.addressModeV = WGPUAddressMode_Repeat;
     descriptor.addressModeW = WGPUAddressMode_MirrorRepeat;
-    descriptor.lodMinClamp = kLodMin;
     descriptor.lodMaxClamp = kLodMax;
     descriptor.compare = WGPUCompareFunction_Never;
 
@@ -271,15 +253,13 @@ TEST_F(WireArgumentTests, StructureOfValuesArgument) {
 
 // Test that the wire is able to send structures that contain objects
 TEST_F(WireArgumentTests, StructureOfObjectArrayArgument) {
-    WGPUBindGroupLayoutDescriptor bglDescriptor = {};
-    bglDescriptor.entryCount = 0;
-    bglDescriptor.entries = nullptr;
+    WGPUBindGroupLayoutDescriptor bglDescriptor = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
 
     WGPUBindGroupLayout bgl = wgpuDeviceCreateBindGroupLayout(device, &bglDescriptor);
     WGPUBindGroupLayout apiBgl = api.GetNewBindGroupLayout();
     EXPECT_CALL(api, DeviceCreateBindGroupLayout(apiDevice, _)).WillOnce(Return(apiBgl));
 
-    WGPUPipelineLayoutDescriptor descriptor = {};
+    WGPUPipelineLayoutDescriptor descriptor = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
     descriptor.bindGroupLayoutCount = 1;
     descriptor.bindGroupLayouts = &bgl;
 
@@ -324,7 +304,7 @@ TEST_F(WireArgumentTests, StructureOfStructureArrayArgument) {
          {},
          {}},
     };
-    WGPUBindGroupLayoutDescriptor bglDescriptor = {};
+    WGPUBindGroupLayoutDescriptor bglDescriptor = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
     bglDescriptor.entryCount = NUM_BINDINGS;
     bglDescriptor.entries = entries;
 
@@ -354,7 +334,7 @@ TEST_F(WireArgumentTests, StructureOfStructureArrayArgument) {
 TEST_F(WireArgumentTests, DISABLED_NullptrInArray) {
     WGPUBindGroupLayout nullBGL = nullptr;
 
-    WGPUPipelineLayoutDescriptor descriptor = {};
+    WGPUPipelineLayoutDescriptor descriptor = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
     descriptor.bindGroupLayoutCount = 1;
     descriptor.bindGroupLayouts = &nullBGL;
 

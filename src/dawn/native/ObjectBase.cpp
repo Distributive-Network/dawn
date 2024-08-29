@@ -1,21 +1,36 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <atomic>
 #include <mutex>
 #include <utility>
 
 #include "absl/strings/str_format.h"
+#include "dawn/native/Adapter.h"
 #include "dawn/native/Device.h"
 #include "dawn/native/ObjectBase.h"
 #include "dawn/native/ObjectType_autogen.h"
@@ -36,31 +51,36 @@ ObjectBase::ObjectBase(DeviceBase* device) : ErrorMonad(), mDevice(device) {}
 
 ObjectBase::ObjectBase(DeviceBase* device, ErrorTag) : ErrorMonad(kError), mDevice(device) {}
 
+InstanceBase* ObjectBase::GetInstance() const {
+    return mDevice->GetInstance();
+}
+
 DeviceBase* ObjectBase::GetDevice() const {
     return mDevice.Get();
 }
 
 void ApiObjectList::Track(ApiObjectBase* object) {
-    if (mMarkedDestroyed) {
+    if (mMarkedDestroyed.load(std::memory_order_acquire)) {
         object->DestroyImpl();
         return;
     }
-    std::lock_guard<std::mutex> lock(mMutex);
-    mObjects.Prepend(object);
+    mObjects.Use([&object](auto lockedObjects) { lockedObjects->Prepend(object); });
 }
 
 bool ApiObjectList::Untrack(ApiObjectBase* object) {
-    std::lock_guard<std::mutex> lock(mMutex);
-    return object->RemoveFromList();
+    return mObjects.Use([&object](auto lockedObjects) { return object->RemoveFromList(); });
 }
 
 void ApiObjectList::Destroy() {
-    std::lock_guard<std::mutex> lock(mMutex);
-    mMarkedDestroyed = true;
-    while (!mObjects.empty()) {
-        auto* head = mObjects.head();
+    LinkedList<ApiObjectBase> objects;
+    mObjects.Use([&objects, this](auto lockedObjects) {
+        mMarkedDestroyed.store(true, std::memory_order_release);
+        lockedObjects->MoveInto(&objects);
+    });
+    while (!objects.empty()) {
+        auto* head = objects.head();
         bool removed = head->RemoveFromList();
-        ASSERT(removed);
+        DAWN_ASSERT(removed);
         head->value()->DestroyImpl();
     }
 }
@@ -81,20 +101,11 @@ ApiObjectBase::ApiObjectBase(DeviceBase* device, ErrorTag tag, const char* label
 ApiObjectBase::ApiObjectBase(DeviceBase* device, LabelNotImplementedTag tag) : ObjectBase(device) {}
 
 ApiObjectBase::~ApiObjectBase() {
-    ASSERT(!IsAlive());
+    DAWN_ASSERT(!IsAlive());
 }
 
 void ApiObjectBase::APISetLabel(const char* label) {
     SetLabel(label);
-}
-
-void ApiObjectBase::APIRelease() {
-    // TODO(crbug.com/dawn/1769): We have to lock the entire APIRelease() method.
-    // This is because some objects are cached as raw pointers by the device. And the cache lookup
-    // would have been racing with the ref count's decrement here if there had not been any locking
-    // in place. This is temporary solution until we improve the cache's implementation.
-    auto deviceLock(GetDevice()->GetScopedLockSafeForDelete());
-    Release();
 }
 
 void ApiObjectBase::SetLabel(std::string label) {
@@ -110,6 +121,8 @@ void ApiObjectBase::FormatLabel(absl::FormatSink* s) const {
     s->Append(ObjectTypeAsString(GetType()));
     if (!mLabel.empty()) {
         s->Append(absl::StrFormat(" \"%s\"", mLabel));
+    } else {
+        s->Append(" (unlabeled)");
     }
 }
 
@@ -130,16 +143,13 @@ void ApiObjectBase::LockAndDeleteThis() {
 }
 
 ApiObjectList* ApiObjectBase::GetObjectTrackingList() {
-    ASSERT(GetDevice() != nullptr);
+    DAWN_ASSERT(GetDevice() != nullptr);
     return GetDevice()->GetObjectTrackingList(GetType());
 }
 
 void ApiObjectBase::Destroy() {
-    if (!IsAlive()) {
-        return;
-    }
     ApiObjectList* list = GetObjectTrackingList();
-    ASSERT(list != nullptr);
+    DAWN_ASSERT(list != nullptr);
     if (list->Untrack(this)) {
         DestroyImpl();
     }

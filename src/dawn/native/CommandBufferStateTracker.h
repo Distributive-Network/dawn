@@ -1,16 +1,29 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_DAWN_NATIVE_COMMANDBUFFERSTATETRACKER_H_
 #define SRC_DAWN_NATIVE_COMMANDBUFFERSTATETRACKER_H_
@@ -23,6 +36,7 @@
 #include "dawn/native/BindingInfo.h"
 #include "dawn/native/Error.h"
 #include "dawn/native/Forward.h"
+#include "partition_alloc/pointers/raw_ptr_exclusion.h"
 
 namespace dawn::native {
 
@@ -54,9 +68,10 @@ class CommandBufferStateTracker {
                       BindGroupBase* bindgroup,
                       uint32_t dynamicOffsetCount,
                       const uint32_t* dynamicOffsets);
-    void SetIndexBuffer(wgpu::IndexFormat format, uint64_t size);
+    void SetIndexBuffer(wgpu::IndexFormat format, uint64_t offset, uint64_t size);
     void UnsetVertexBuffer(VertexBufferSlot slot);
     void SetVertexBuffer(VertexBufferSlot slot, uint64_t size);
+    void End();
 
     static constexpr size_t kNumAspects = 4;
     using ValidationAspects = std::bitset<kNumAspects>;
@@ -69,6 +84,7 @@ class CommandBufferStateTracker {
     PipelineLayoutBase* GetPipelineLayout() const;
     wgpu::IndexFormat GetIndexFormat() const;
     uint64_t GetIndexBufferSize() const;
+    uint64_t GetIndexBufferOffset() const;
 
   private:
     MaybeError ValidateOperation(ValidationAspects requiredAspects);
@@ -79,19 +95,23 @@ class CommandBufferStateTracker {
 
     ValidationAspects mAspects;
 
-    ityp::array<BindGroupIndex, BindGroupBase*, kMaxBindGroups> mBindgroups = {};
-    ityp::array<BindGroupIndex, std::vector<uint32_t>, kMaxBindGroups> mDynamicOffsets = {};
-    ityp::bitset<VertexBufferSlot, kMaxVertexBuffers> mVertexBufferSlotsUsed;
+    VertexBufferMask mVertexBuffersUsed;
+    PerVertexBuffer<uint64_t> mVertexBufferSizes = {};
+
     bool mIndexBufferSet = false;
     wgpu::IndexFormat mIndexFormat;
     uint64_t mIndexBufferSize = 0;
+    uint64_t mIndexBufferOffset = 0;
 
-    ityp::array<VertexBufferSlot, uint64_t, kMaxVertexBuffers> mVertexBufferSizes = {};
+    // RAW_PTR_EXCLUSION: These pointers are very hot in command recording code and point at
+    // various objects referenced by the object graph of the CommandBuffer so they cannot be
+    // freed from underneath this class.
+    RAW_PTR_EXCLUSION PerBindGroup<BindGroupBase*> mBindgroups = {};
+    PerBindGroup<std::vector<uint32_t>> mDynamicOffsets = {};
 
-    PipelineLayoutBase* mLastPipelineLayout = nullptr;
-    PipelineBase* mLastPipeline = nullptr;
-
-    const RequiredBufferSizes* mMinBufferSizes = nullptr;
+    RAW_PTR_EXCLUSION PipelineLayoutBase* mLastPipelineLayout = nullptr;
+    RAW_PTR_EXCLUSION PipelineBase* mLastPipeline = nullptr;
+    RAW_PTR_EXCLUSION const RequiredBufferSizes* mMinBufferSizes = nullptr;
 };
 
 }  // namespace dawn::native

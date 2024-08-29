@@ -1,32 +1,65 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/BindingInfo.h"
 
+#include "dawn/common/MatchVariant.h"
 #include "dawn/native/ChainUtils.h"
 #include "dawn/native/Limits.h"
+#include "dawn/native/Sampler.h"
 
 namespace dawn::native {
 
-void IncrementBindingCounts(BindingCounts* bindingCounts, const BindGroupLayoutEntry& entry) {
+BindingInfoType GetBindingInfoType(const BindingInfo& info) {
+    return MatchVariant(
+        info.bindingLayout,
+        [](const BufferBindingInfo&) -> BindingInfoType { return BindingInfoType::Buffer; },
+        [](const SamplerBindingInfo&) -> BindingInfoType { return BindingInfoType::Sampler; },
+        [](const TextureBindingInfo&) -> BindingInfoType { return BindingInfoType::Texture; },
+        [](const StorageTextureBindingInfo&) -> BindingInfoType {
+            return BindingInfoType::StorageTexture;
+        },
+        [](const StaticSamplerBindingInfo&) -> BindingInfoType {
+            return BindingInfoType::StaticSampler;
+        },
+        [](const InputAttachmentBindingInfo&) -> BindingInfoType {
+            return BindingInfoType::InputAttachment;
+        });
+}
+
+void IncrementBindingCounts(BindingCounts* bindingCounts,
+                            const UnpackedPtr<BindGroupLayoutEntry>& entry) {
     bindingCounts->totalCount += 1;
 
     uint32_t PerStageBindingCounts::*perStageBindingCountMember = nullptr;
 
-    if (entry.buffer.type != wgpu::BufferBindingType::Undefined) {
+    if (entry->buffer.type != wgpu::BufferBindingType::Undefined) {
         ++bindingCounts->bufferCount;
-        const BufferBindingLayout& buffer = entry.buffer;
+        const BufferBindingLayout& buffer = entry->buffer;
 
         if (buffer.minBindingSize == 0) {
             ++bindingCounts->unverifiedBufferCount;
@@ -51,25 +84,29 @@ void IncrementBindingCounts(BindingCounts* bindingCounts, const BindGroupLayoutE
 
             case wgpu::BufferBindingType::Undefined:
                 // Can't get here due to the enclosing if statement.
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
                 break;
         }
-    } else if (entry.sampler.type != wgpu::SamplerBindingType::Undefined) {
+    } else if (entry->sampler.type != wgpu::SamplerBindingType::Undefined) {
         perStageBindingCountMember = &PerStageBindingCounts::samplerCount;
-    } else if (entry.texture.sampleType != wgpu::TextureSampleType::Undefined) {
-        perStageBindingCountMember = &PerStageBindingCounts::sampledTextureCount;
-    } else if (entry.storageTexture.access != wgpu::StorageTextureAccess::Undefined) {
-        perStageBindingCountMember = &PerStageBindingCounts::storageTextureCount;
-    } else {
-        const ExternalTextureBindingLayout* externalTextureBindingLayout;
-        FindInChain(entry.nextInChain, &externalTextureBindingLayout);
-        if (externalTextureBindingLayout != nullptr) {
-            perStageBindingCountMember = &PerStageBindingCounts::externalTextureCount;
+    } else if (entry->texture.sampleType != wgpu::TextureSampleType::Undefined) {
+        if (entry->texture.viewDimension == kInternalInputAttachmentDim) {
+            // Internal use only.
+            return;
+        } else {
+            perStageBindingCountMember = &PerStageBindingCounts::sampledTextureCount;
         }
+    } else if (entry->storageTexture.access != wgpu::StorageTextureAccess::Undefined) {
+        perStageBindingCountMember = &PerStageBindingCounts::storageTextureCount;
+    } else if (entry.Get<ExternalTextureBindingLayout>()) {
+        perStageBindingCountMember = &PerStageBindingCounts::externalTextureCount;
+    } else if (entry.Get<StaticSamplerBindingLayout>()) {
+        ++bindingCounts->staticSamplerCount;
+        perStageBindingCountMember = &PerStageBindingCounts::staticSamplerCount;
     }
 
-    ASSERT(perStageBindingCountMember != nullptr);
-    for (SingleShaderStage stage : IterateStages(entry.visibility)) {
+    DAWN_ASSERT(perStageBindingCountMember != nullptr);
+    for (SingleShaderStage stage : IterateStages(entry->visibility)) {
         ++(bindingCounts->perStage[stage].*perStageBindingCountMember);
     }
 }
@@ -91,6 +128,7 @@ void AccumulateBindingCounts(BindingCounts* bindingCounts, const BindingCounts& 
         bindingCounts->perStage[stage].uniformBufferCount += rhs.perStage[stage].uniformBufferCount;
         bindingCounts->perStage[stage].externalTextureCount +=
             rhs.perStage[stage].externalTextureCount;
+        bindingCounts->perStage[stage].staticSamplerCount += rhs.perStage[stage].staticSamplerCount;
     }
 }
 
@@ -140,12 +178,14 @@ MaybeError ValidateBindingCounts(const CombinedLimits& limits, const BindingCoun
             bindingCounts.perStage[stage].externalTextureCount, stage,
             limits.v1.maxSampledTexturesPerShaderStage);
 
+        // TODO(crbug.com/dawn/2463): Account for static samplers here.
         DAWN_INVALID_IF(
             bindingCounts.perStage[stage].samplerCount > limits.v1.maxSamplersPerShaderStage,
             "The number of samplers (%u) in the %s stage exceeds the maximum per-stage limit "
             "(%u).",
             bindingCounts.perStage[stage].samplerCount, stage, limits.v1.maxSamplersPerShaderStage);
 
+        // TODO(crbug.com/dawn/2463): Account for static samplers here.
         DAWN_INVALID_IF(
             bindingCounts.perStage[stage].samplerCount +
                     (bindingCounts.perStage[stage].externalTextureCount *
@@ -195,5 +235,36 @@ MaybeError ValidateBindingCounts(const CombinedLimits& limits, const BindingCoun
 
     return {};
 }
+
+BufferBindingInfo::BufferBindingInfo() = default;
+
+BufferBindingInfo::BufferBindingInfo(const BufferBindingLayout& apiLayout)
+    : type(apiLayout.type),
+      minBindingSize(apiLayout.minBindingSize),
+      hasDynamicOffset(apiLayout.hasDynamicOffset) {}
+
+TextureBindingInfo::TextureBindingInfo() {}
+
+TextureBindingInfo::TextureBindingInfo(const TextureBindingLayout& apiLayout)
+    : sampleType(apiLayout.sampleType),
+      viewDimension(apiLayout.viewDimension),
+      multisampled(apiLayout.multisampled) {}
+
+StorageTextureBindingInfo::StorageTextureBindingInfo() = default;
+
+StorageTextureBindingInfo::StorageTextureBindingInfo(const StorageTextureBindingLayout& apiLayout)
+    : format(apiLayout.format), viewDimension(apiLayout.viewDimension), access(apiLayout.access) {}
+
+SamplerBindingInfo::SamplerBindingInfo() = default;
+
+SamplerBindingInfo::SamplerBindingInfo(const SamplerBindingLayout& apiLayout)
+    : type(apiLayout.type) {}
+
+StaticSamplerBindingInfo::StaticSamplerBindingInfo(const StaticSamplerBindingLayout& apiLayout)
+    : sampler(apiLayout.sampler) {}
+
+InputAttachmentBindingInfo::InputAttachmentBindingInfo() = default;
+InputAttachmentBindingInfo::InputAttachmentBindingInfo(wgpu::TextureSampleType sampleType)
+    : sampleType(sampleType) {}
 
 }  // namespace dawn::native

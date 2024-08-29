@@ -1,16 +1,29 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/tests/unittests/wire/WireTest.h"
 
@@ -68,12 +81,8 @@ TEST_F(WireDisconnectTests, FlushAfterDisconnect) {
 
 // Check that disconnecting the wire client calls the device lost callback exacty once.
 TEST_F(WireDisconnectTests, CallsDeviceLostCallback) {
-    MockCallback<WGPUDeviceLostCallback> mockDeviceLostCallback;
-    wgpuDeviceSetDeviceLostCallback(device, mockDeviceLostCallback.Callback(),
-                                    mockDeviceLostCallback.MakeUserdata(this));
-
     // Disconnect the wire client. We should receive device lost only once.
-    EXPECT_CALL(mockDeviceLostCallback, Call(WGPUDeviceLostReason_Undefined, _, this))
+    EXPECT_CALL(deviceLostCallback, Call(_, WGPUDeviceLostReason_InstanceDropped, _, this))
         .Times(Exactly(1));
     GetWireClient()->Disconnect();
     GetWireClient()->Disconnect();
@@ -82,21 +91,17 @@ TEST_F(WireDisconnectTests, CallsDeviceLostCallback) {
 // Check that disconnecting the wire client after a device loss does not trigger the callback
 // again.
 TEST_F(WireDisconnectTests, ServerLostThenDisconnect) {
-    MockCallback<WGPUDeviceLostCallback> mockDeviceLostCallback;
-    wgpuDeviceSetDeviceLostCallback(device, mockDeviceLostCallback.Callback(),
-                                    mockDeviceLostCallback.MakeUserdata(this));
-
-    api.CallDeviceSetDeviceLostCallbackCallback(apiDevice, WGPUDeviceLostReason_Undefined,
+    api.CallDeviceSetDeviceLostCallbackCallback(apiDevice, WGPUDeviceLostReason_Unknown,
                                                 "some reason");
 
     // Flush the device lost return command.
-    EXPECT_CALL(mockDeviceLostCallback,
-                Call(WGPUDeviceLostReason_Undefined, StrEq("some reason"), this))
+    EXPECT_CALL(deviceLostCallback,
+                Call(_, WGPUDeviceLostReason_Unknown, StrEq("some reason"), this))
         .Times(Exactly(1));
     FlushServer();
 
     // Disconnect the client. We shouldn't see the lost callback again.
-    EXPECT_CALL(mockDeviceLostCallback, Call(_, _, _)).Times(Exactly(0));
+    EXPECT_CALL(deviceLostCallback, Call).Times(Exactly(0));
     GetWireClient()->Disconnect();
 }
 
@@ -107,13 +112,13 @@ TEST_F(WireDisconnectTests, ServerLostThenDisconnectInCallback) {
     wgpuDeviceSetDeviceLostCallback(device, mockDeviceLostCallback.Callback(),
                                     mockDeviceLostCallback.MakeUserdata(this));
 
-    api.CallDeviceSetDeviceLostCallbackCallback(apiDevice, WGPUDeviceLostReason_Undefined,
+    api.CallDeviceSetDeviceLostCallbackCallback(apiDevice, WGPUDeviceLostReason_Unknown,
                                                 "lost reason");
 
     // Disconnect the client inside the lost callback. We should see the callback
     // only once.
     EXPECT_CALL(mockDeviceLostCallback,
-                Call(WGPUDeviceLostReason_Undefined, StrEq("lost reason"), this))
+                Call(WGPUDeviceLostReason_Unknown, StrEq("lost reason"), this))
         .WillOnce(InvokeWithoutArgs([&] {
             EXPECT_CALL(mockDeviceLostCallback, Call(_, _, _)).Times(Exactly(0));
             GetWireClient()->Disconnect();
@@ -128,13 +133,13 @@ TEST_F(WireDisconnectTests, DisconnectThenServerLost) {
                                     mockDeviceLostCallback.MakeUserdata(this));
 
     // Disconnect the client. We should see the callback once.
-    EXPECT_CALL(mockDeviceLostCallback, Call(WGPUDeviceLostReason_Undefined, _, this))
+    EXPECT_CALL(mockDeviceLostCallback, Call(WGPUDeviceLostReason_InstanceDropped, _, this))
         .Times(Exactly(1));
     GetWireClient()->Disconnect();
 
     // Lose the device on the server. The client callback shouldn't be
     // called again.
-    api.CallDeviceSetDeviceLostCallbackCallback(apiDevice, WGPUDeviceLostReason_Undefined,
+    api.CallDeviceSetDeviceLostCallbackCallback(apiDevice, WGPUDeviceLostReason_Unknown,
                                                 "lost reason");
     EXPECT_CALL(mockDeviceLostCallback, Call(_, _, _)).Times(Exactly(0));
     FlushServer();
@@ -160,24 +165,24 @@ TEST_F(WireDisconnectTests, DeleteClientDestroysObjects) {
     // Expect release on all objects created by the client. Note: the device
     // should be deleted first because it may free its reference to the default queue
     // on deletion.
-    Sequence s1, s2, s3;
+    Sequence s1, s2, s3, s4, s5;
     EXPECT_CALL(api, OnDeviceSetUncapturedErrorCallback(apiDevice, nullptr, nullptr))
         .Times(1)
         .InSequence(s1, s2);
     EXPECT_CALL(api, OnDeviceSetLoggingCallback(apiDevice, nullptr, nullptr))
         .Times(1)
         .InSequence(s1, s2);
-    EXPECT_CALL(api, OnDeviceSetDeviceLostCallback(apiDevice, nullptr, nullptr))
-        .Times(1)
-        .InSequence(s1, s2);
-    EXPECT_CALL(api, DeviceRelease(apiDevice)).Times(1).InSequence(s1, s2, s3);
+    EXPECT_CALL(api, DeviceRelease(apiDevice)).Times(1).InSequence(s1, s2, s3, s4, s5);
     EXPECT_CALL(api, QueueRelease(apiQueue)).Times(1).InSequence(s1);
     EXPECT_CALL(api, CommandEncoderRelease(apiCommandEncoder)).Times(1).InSequence(s2);
     EXPECT_CALL(api, SamplerRelease(apiSampler)).Times(1).InSequence(s3);
+    EXPECT_CALL(api, AdapterRelease(apiAdapter)).Times(1).InSequence(s4);
+    EXPECT_CALL(api, InstanceRelease(apiInstance)).Times(1).InSequence(s5);
     FlushClient();
 
     // Signal that we already released and cleared callbacks for |apiDevice|
     DefaultApiDeviceWasReleased();
+    DefaultApiAdapterWasReleased();
 }
 
 }  // anonymous namespace

@@ -1,21 +1,35 @@
-// Copyright 2022 The Tint Authors.
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/wgsl/resolver/resolver.h"
 
 #include "gmock/gmock.h"
 #include "src/tint/lang/wgsl/resolver/resolver_helper_test.h"
+#include "src/tint/utils/containers/slice.h"
 
 namespace tint::resolver {
 namespace {
@@ -339,6 +353,59 @@ TEST_F(ResolverEvaluationStageTest, Binary_NotEvaluated) {
     ASSERT_TRUE(r()->Resolve()) << r()->error();
     EXPECT_EQ(Sem().Get(lhs)->Stage(), core::EvaluationStage::kConstant);
     EXPECT_EQ(Sem().Get(rhs)->Stage(), core::EvaluationStage::kNotEvaluated);
+    EXPECT_EQ(Sem().Get(binary)->Stage(), core::EvaluationStage::kConstant);
+}
+
+TEST_F(ResolverEvaluationStageTest, FnCall_Runtime) {
+    // fn f() -> bool { return true; }
+    // let l = false
+    // let result = l && f();
+    Func("f", Empty, ty.bool_(), Vector{Return(true)});
+    auto* let = Let("l", Expr(false));
+    auto* lhs = Expr(let);
+    auto* rhs = Call("f");
+    auto* binary = LogicalAnd(lhs, rhs);
+    auto* result = Let("result", binary);
+    WrapInFunction(let, result);
+
+    ASSERT_TRUE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(Sem().Get(rhs)->Stage(), core::EvaluationStage::kRuntime);
+    EXPECT_EQ(Sem().Get(binary)->Stage(), core::EvaluationStage::kRuntime);
+}
+
+TEST_F(ResolverEvaluationStageTest, FnCall_NotEvaluated) {
+    // fn f() -> bool { return true; }
+    // let result = false && f();
+    Func("f", Empty, ty.bool_(), Vector{Return(true)});
+    auto* rhs = Call("f");
+    auto* lhs = Expr(false);
+    auto* binary = LogicalAnd(lhs, rhs);
+    auto* result = Let("result", binary);
+    WrapInFunction(result);
+
+    ASSERT_TRUE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(Sem().Get(rhs)->Stage(), core::EvaluationStage::kNotEvaluated);
+    EXPECT_EQ(Sem().Get(binary)->Stage(), core::EvaluationStage::kConstant);
+}
+
+TEST_F(ResolverEvaluationStageTest, NestedFnCall_NotEvaluated) {
+    // fn f(b : bool) -> bool { return b; }
+    // let result = false && f(f(f(1 == 0)));
+    Func("f", Vector{Param("b", ty.bool_())}, ty.bool_(), Vector{Return("b")});
+    auto* cmp = Equal(0_i, 1_i);
+    auto* rhs_0 = Call("f", cmp);
+    auto* rhs_1 = Call("f", rhs_0);
+    auto* rhs_2 = Call("f", rhs_1);
+    auto* lhs = Expr(false);
+    auto* binary = LogicalAnd(lhs, rhs_2);
+    auto* result = Let("result", binary);
+    WrapInFunction(result);
+
+    ASSERT_TRUE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(Sem().Get(cmp)->Stage(), core::EvaluationStage::kNotEvaluated);
+    EXPECT_EQ(Sem().Get(rhs_0)->Stage(), core::EvaluationStage::kNotEvaluated);
+    EXPECT_EQ(Sem().Get(rhs_1)->Stage(), core::EvaluationStage::kNotEvaluated);
+    EXPECT_EQ(Sem().Get(rhs_2)->Stage(), core::EvaluationStage::kNotEvaluated);
     EXPECT_EQ(Sem().Get(binary)->Stage(), core::EvaluationStage::kConstant);
 }
 

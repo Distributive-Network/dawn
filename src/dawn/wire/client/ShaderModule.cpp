@@ -1,65 +1,180 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/wire/client/ShaderModule.h"
 
+#include <memory>
+
 #include "dawn/wire/client/Client.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::wire::client {
 
-ShaderModule::~ShaderModule() {
-    ClearAllCallbacks(WGPUCompilationInfoRequestStatus_Unknown);
-}
+class ShaderModule::CompilationInfoEvent final : public TrackedEvent {
+  public:
+    static constexpr EventType kType = EventType::CompilationInfo;
 
-void ShaderModule::GetCompilationInfo(WGPUCompilationInfoCallback callback, void* userdata) {
-    Client* client = GetClient();
-    if (client->IsDisconnected()) {
-        callback(WGPUCompilationInfoRequestStatus_DeviceLost, nullptr, userdata);
-        return;
+    CompilationInfoEvent(const WGPUCompilationInfoCallbackInfo2& callbackInfo, ShaderModule* shader)
+        : TrackedEvent(callbackInfo.mode),
+          mCallback(callbackInfo.callback),
+          mUserdata1(callbackInfo.userdata1),
+          mUserdata2(callbackInfo.userdata2),
+          mShader(shader) {
+        DAWN_ASSERT(mShader != nullptr);
+        mShader->AddRef();
     }
 
-    uint64_t serial = mCompilationInfoRequests.Add({callback, userdata});
+    ~CompilationInfoEvent() override { mShader.ExtractAsDangling()->Release(); }
+
+    EventType GetType() override { return kType; }
+
+    WireResult ReadyHook(FutureID futureId,
+                         WGPUCompilationInfoRequestStatus status,
+                         const WGPUCompilationInfo* info) {
+        if (mShader->mCompilationInfo) {
+            // If we already cached the compilation info on the shader, we don't need to do it
+            // again. This can happen if we were to call GetCompilationInfo multiple times before
+            // the wire flushes.
+            return ReadyHook(futureId);
+        }
+
+        mStatus = status;
+        mShader->mMessageStrings.reserve(info->messageCount);
+        mShader->mMessages.reserve(info->messageCount);
+        for (size_t i = 0; i < info->messageCount; i++) {
+            mShader->mMessageStrings.push_back(info->messages[i].message);
+            mShader->mMessages.push_back(info->messages[i]);
+            mShader->mMessages[i].message = mShader->mMessageStrings[i].c_str();
+        }
+        mShader->mCompilationInfo = {nullptr, mShader->mMessages.size(), mShader->mMessages.data()};
+
+        return WireResult::Success;
+    }
+
+    WireResult ReadyHook(FutureID futureId) {
+        // We call this ReadyHook when we already have a cached compilation on the shader (usually
+        // from a previous GetCompilationInfo call).
+        DAWN_ASSERT(mShader->mCompilationInfo);
+        mStatus = WGPUCompilationInfoRequestStatus_Success;
+        return WireResult::Success;
+    }
+
+  private:
+    void CompleteImpl(FutureID futureID, EventCompletionType completionType) override {
+        WGPUCompilationInfo* compilationInfo = nullptr;
+        if (completionType == EventCompletionType::Shutdown) {
+            mStatus = WGPUCompilationInfoRequestStatus_InstanceDropped;
+        } else {
+            compilationInfo = &(*mShader->mCompilationInfo);
+        }
+
+        void* userdata1 = mUserdata1.ExtractAsDangling();
+        void* userdata2 = mUserdata2.ExtractAsDangling();
+        if (mCallback) {
+            mCallback(mStatus, compilationInfo, userdata1, userdata2);
+        }
+    }
+
+    WGPUCompilationInfoCallback2 mCallback;
+    raw_ptr<void> mUserdata1;
+    raw_ptr<void> mUserdata2;
+
+    WGPUCompilationInfoRequestStatus mStatus;
+
+    // Strong reference to the shader so that when we call the callback we can pass the
+    // compilation info from `mShader`.
+    raw_ptr<ShaderModule> mShader;
+};
+
+ObjectType ShaderModule::GetObjectType() const {
+    return ObjectType::ShaderModule;
+}
+
+namespace {
+
+void DefaultGetCompilationInfoCallback(WGPUCompilationInfoRequestStatus status,
+                                       const WGPUCompilationInfo* compilationInfo,
+                                       void* callback,
+                                       void* userdata) {
+    if (callback == nullptr) {
+        DAWN_ASSERT(userdata == nullptr);
+        return;
+    }
+    auto cb = reinterpret_cast<WGPUCompilationInfoCallback>(callback);
+    cb(status, compilationInfo, userdata);
+}
+
+}  // anonymous namespace
+
+void ShaderModule::GetCompilationInfo(WGPUCompilationInfoCallback callback, void* userdata) {
+    if (callback == nullptr) {
+        DAWN_ASSERT(userdata == nullptr);
+        return;
+    }
+    GetCompilationInfo2({nullptr, WGPUCallbackMode_AllowSpontaneous,
+                         &DefaultGetCompilationInfoCallback, reinterpret_cast<void*>(callback),
+                         userdata});
+}
+
+WGPUFuture ShaderModule::GetCompilationInfoF(const WGPUCompilationInfoCallbackInfo& callbackInfo) {
+    return GetCompilationInfo2(
+        {callbackInfo.nextInChain, callbackInfo.mode, &DefaultGetCompilationInfoCallback,
+         reinterpret_cast<void*>(callbackInfo.callback), callbackInfo.userdata});
+}
+
+WGPUFuture ShaderModule::GetCompilationInfo2(const WGPUCompilationInfoCallbackInfo2& callbackInfo) {
+    auto [futureIDInternal, tracked] =
+        GetEventManager().TrackEvent(std::make_unique<CompilationInfoEvent>(callbackInfo, this));
+    if (!tracked) {
+        return {futureIDInternal};
+    }
+
+    // If we already have a cached compilation info object, we can set it ready now.
+    if (mCompilationInfo) {
+        DAWN_CHECK(GetEventManager().SetFutureReady<CompilationInfoEvent>(futureIDInternal) ==
+                   WireResult::Success);
+        return {futureIDInternal};
+    }
 
     ShaderModuleGetCompilationInfoCmd cmd;
     cmd.shaderModuleId = GetWireId();
-    cmd.requestSerial = serial;
+    cmd.eventManagerHandle = GetEventManagerHandle();
+    cmd.future = {futureIDInternal};
 
-    client->SerializeCommand(cmd);
+    GetClient()->SerializeCommand(cmd);
+    return {futureIDInternal};
 }
 
-bool ShaderModule::GetCompilationInfoCallback(uint64_t requestSerial,
-                                              WGPUCompilationInfoRequestStatus status,
-                                              const WGPUCompilationInfo* info) {
-    CompilationInfoRequest request;
-    if (!mCompilationInfoRequests.Acquire(requestSerial, &request)) {
-        return false;
-    }
-
-    request.callback(status, info, request.userdata);
-    return true;
-}
-
-void ShaderModule::CancelCallbacksForDisconnect() {
-    ClearAllCallbacks(WGPUCompilationInfoRequestStatus_DeviceLost);
-}
-
-void ShaderModule::ClearAllCallbacks(WGPUCompilationInfoRequestStatus status) {
-    mCompilationInfoRequests.CloseAll([status](CompilationInfoRequest* request) {
-        if (request->callback != nullptr) {
-            request->callback(status, nullptr, request->userdata);
-        }
-    });
+WireResult Client::DoShaderModuleGetCompilationInfoCallback(ObjectHandle eventManager,
+                                                            WGPUFuture future,
+                                                            WGPUCompilationInfoRequestStatus status,
+                                                            const WGPUCompilationInfo* info) {
+    return GetEventManager(eventManager)
+        .SetFutureReady<ShaderModule::CompilationInfoEvent>(future.id, status, info);
 }
 
 }  // namespace dawn::wire::client

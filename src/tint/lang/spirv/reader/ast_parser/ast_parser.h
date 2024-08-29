@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_TINT_LANG_SPIRV_READER_AST_PARSER_AST_PARSER_H_
 #define SRC_TINT_LANG_SPIRV_READER_AST_PARSER_AST_PARSER_H_
@@ -90,7 +103,7 @@ struct TypedExpression {
     TypedExpression& operator=(const TypedExpression&);
 
     /// @returns true if both type and expr are not nullptr
-    operator bool() const { return type && expr; }
+    explicit operator bool() const { return type && expr; }
 
     /// The type
     const Type* type = nullptr;
@@ -254,6 +267,7 @@ class ASTParser {
     /// then the `type` parameter is updated.  Returns false on failure (with
     /// a diagnostic), or when the variable should not be emitted, e.g. for a
     /// PointSize builtin.
+    /// This method is idempotent.
     /// @param id the ID of the SPIR-V variable
     /// @param store_type the WGSL store type for the variable, which should be prepopulated
     /// @param attributes the attribute list to populate
@@ -421,17 +435,20 @@ class ASTParser {
     /// @returns a list of SPIR-V decorations.
     DecorationList GetMemberPipelineDecorations(const Struct& struct_type, int member_index);
 
+    /// @param var_id the SPIR-V ID of the OpVariable
     /// @param storage_type the 'var' storage type
     /// @param address_space the 'var' address space
-    /// @returns the access mode for a 'var' declaration with the given storage type and address
-    /// space.
-    core::Access VarAccess(const Type* storage_type, core::AddressSpace address_space);
+    /// @returns the access mode for a 'var' declaration with the given variable id, storage type
+    /// and address space. Must only be called after decorations for the variable have been
+    /// converted.
+    core::Access VarAccess(uint32_t var_id,
+                           const Type* storage_type,
+                           core::AddressSpace address_space);
 
     /// Creates an AST 'var' node for a SPIR-V ID, including any attached decorations, unless it's
     /// an ignorable builtin variable.
     /// @param id the SPIR-V result ID
     /// @param address_space the address space, which cannot be core::AddressSpace::kUndefined
-    /// @param access the access
     /// @param storage_type the storage type of the variable
     /// @param initializer the variable initializer
     /// @param attributes the variable attributes
@@ -439,7 +456,6 @@ class ASTParser {
     /// in the error case
     const ast::Var* MakeVar(uint32_t id,
                             core::AddressSpace address_space,
-                            core::Access access,
                             const Type* storage_type,
                             const ast::Expression* initializer,
                             Attributes attributes);
@@ -615,7 +631,7 @@ class ASTParser {
 
     /// @param str a candidate identifier
     /// @returns true if the given string is a valid WGSL identifier.
-    static bool IsValidIdentifier(const std::string& str);
+    static bool IsValidIdentifier(std::string_view str);
 
     /// Returns true if the given SPIR-V ID is a declared specialization constant,
     /// generated by one of OpConstantTrue, OpConstantFalse, or OpSpecConstant
@@ -682,8 +698,7 @@ class ASTParser {
     /// @param id a SPIR-V ID
     /// @returns the AST variable or null.
     ModuleVariable GetModuleVariable(uint32_t id) {
-        auto entry = module_variable_.Find(id);
-        return entry ? *entry : ModuleVariable{};
+        return module_variable_.GetOr(id, ModuleVariable{});
     }
 
     /// Returns the channel component type corresponding to the given image
@@ -738,6 +753,22 @@ class ASTParser {
     /// @returns the SPIR-V binary.
     const std::vector<uint32_t>& spv_binary() { return spv_binary_; }
 
+    /// Enable a WGSL extension, if not already enabled.
+    /// @param extension the extension to enable
+    void Enable(wgsl::Extension extension) {
+        if (enabled_extensions_.Add(extension)) {
+            builder_.Enable(extension);
+        }
+    }
+
+    /// Require a WGSL language feature, if not already required.
+    /// @param feature the language feature to require
+    void Require(wgsl::LanguageFeature feature) {
+        if (required_features_.Add(feature)) {
+            builder_.Require(feature);
+        }
+    }
+
   private:
     /// Converts a specific SPIR-V type to a Tint type. Integer case
     const Type* ConvertType(const spvtools::opt::analysis::Integer* int_ty);
@@ -766,8 +797,7 @@ class ASTParser {
     /// preserve member names, which are given by OpMemberName which is normally
     /// not significant to the optimizer's module representation.
     /// @param type_id the SPIR-V ID for the type.
-    /// @param struct_ty the Tint type
-    const Type* ConvertType(uint32_t type_id, const spvtools::opt::analysis::Struct* struct_ty);
+    const Type* ConvertStructType(uint32_t type_id);
     /// Converts a specific SPIR-V type to a Tint type. Pointer / Reference case
     /// The pointer to gl_PerVertex maps to nullptr, and instead is recorded
     /// in member #builtin_position_.
@@ -879,6 +909,9 @@ class ASTParser {
     // The ast::Struct type names with only read-only members.
     std::unordered_set<Symbol> read_only_struct_types_;
 
+    // The IDs of variables marked as NonWritable.
+    std::unordered_set<uint32_t> read_only_vars_;
+
     // Maps from OpConstantComposite IDs to identifiers of module-scope const declarations.
     std::unordered_map<uint32_t, Symbol> declared_constant_composites_;
 
@@ -925,6 +958,11 @@ class ASTParser {
     /// field will be 0. Sadly, in SPIR-V right now, there's only one workgroup
     /// size object in the module.
     WorkgroupSizeInfo workgroup_size_builtin_;
+
+    /// Set of WGSL extensions that have been enabled.
+    Hashset<wgsl::Extension, 4> enabled_extensions_;
+    /// Set of WGSL language features that have been required.
+    Hashset<wgsl::LanguageFeature, 4> required_features_;
 };
 
 }  // namespace tint::spirv::reader::ast_parser

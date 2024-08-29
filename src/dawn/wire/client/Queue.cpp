@@ -1,55 +1,149 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/wire/client/Queue.h"
 
+#include <memory>
+#include <utility>
+
 #include "dawn/wire/client/Client.h"
-#include "dawn/wire/client/Device.h"
+#include "dawn/wire/client/EventManager.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::wire::client {
+namespace {
 
-Queue::~Queue() {
-    ClearAllCallbacks(WGPUQueueWorkDoneStatus_Unknown);
-}
+class WorkDoneEvent : public TrackedEvent {
+  public:
+    static constexpr EventType kType = EventType::WorkDone;
 
-bool Queue::OnWorkDoneCallback(uint64_t requestSerial, WGPUQueueWorkDoneStatus status) {
-    OnWorkDoneData request;
-    if (!mOnWorkDoneRequests.Acquire(requestSerial, &request)) {
-        return false;
+    explicit WorkDoneEvent(const WGPUQueueWorkDoneCallbackInfo2& callbackInfo)
+        : TrackedEvent(callbackInfo.mode),
+          mCallback(callbackInfo.callback),
+          mUserdata1(callbackInfo.userdata1),
+          mUserdata2(callbackInfo.userdata2) {}
+
+    EventType GetType() override { return kType; }
+
+    WireResult ReadyHook(FutureID futureID, WGPUQueueWorkDoneStatus status) {
+        mStatus = status;
+        return WireResult::Success;
     }
 
-    request.callback(status, request.userdata);
-    return true;
+  private:
+    void CompleteImpl(FutureID futureID, EventCompletionType completionType) override {
+        if (completionType == EventCompletionType::Shutdown) {
+            mStatus = WGPUQueueWorkDoneStatus_InstanceDropped;
+        }
+        if (mStatus == WGPUQueueWorkDoneStatus_DeviceLost) {
+            mStatus = WGPUQueueWorkDoneStatus_Success;
+        }
+        void* userdata1 = mUserdata1.ExtractAsDangling();
+        void* userdata2 = mUserdata2.ExtractAsDangling();
+        if (mCallback) {
+            mCallback(mStatus, userdata1, userdata2);
+        }
+    }
+
+    WGPUQueueWorkDoneCallback2 mCallback;
+    raw_ptr<void> mUserdata1;
+    raw_ptr<void> mUserdata2;
+
+    WGPUQueueWorkDoneStatus mStatus = WGPUQueueWorkDoneStatus_Success;
+};
+
+}  // anonymous namespace
+
+Queue::~Queue() = default;
+
+ObjectType Queue::GetObjectType() const {
+    return ObjectType::Queue;
 }
 
-void Queue::OnSubmittedWorkDone(uint64_t signalValue,
-                                WGPUQueueWorkDoneCallback callback,
-                                void* userdata) {
+WireResult Client::DoQueueWorkDoneCallback(ObjectHandle eventManager,
+                                           WGPUFuture future,
+                                           WGPUQueueWorkDoneStatus status) {
+    return GetEventManager(eventManager).SetFutureReady<WorkDoneEvent>(future.id, status);
+}
+
+void Queue::OnSubmittedWorkDone(WGPUQueueWorkDoneCallback callback, void* userdata) {
+    OnSubmittedWorkDoneF({nullptr, WGPUCallbackMode_AllowSpontaneous, callback, userdata});
+}
+
+WGPUFuture Queue::OnSubmittedWorkDoneF(const WGPUQueueWorkDoneCallbackInfo& callbackInfo) {
+    // TODO(crbug.com/dawn/2052): Once we always return a future, change this to log to the instance
+    // (note, not raise a validation error to the device) and return the null future.
+    DAWN_ASSERT(callbackInfo.nextInChain == nullptr);
+
     Client* client = GetClient();
-    if (client->IsDisconnected()) {
-        callback(WGPUQueueWorkDoneStatus_DeviceLost, userdata);
-        return;
+    auto [futureIDInternal, tracked] =
+        GetEventManager().TrackEvent(std::make_unique<WorkDoneEvent>(WGPUQueueWorkDoneCallbackInfo2{
+            callbackInfo.nextInChain, callbackInfo.mode,
+            [](WGPUQueueWorkDoneStatus status, void* callback, void* userdata) {
+                auto cb = reinterpret_cast<WGPUQueueWorkDoneCallback>(callback);
+                cb(status, userdata);
+            },
+            reinterpret_cast<void*>(callbackInfo.callback != nullptr ? callbackInfo.callback
+                                                                     : nullptr),
+            callbackInfo.userdata}));
+    if (!tracked) {
+        return {futureIDInternal};
     }
-
-    uint64_t serial = mOnWorkDoneRequests.Add({callback, userdata});
 
     QueueOnSubmittedWorkDoneCmd cmd;
     cmd.queueId = GetWireId();
-    cmd.signalValue = signalValue;
-    cmd.requestSerial = serial;
+    cmd.eventManagerHandle = GetEventManagerHandle();
+    cmd.future = {futureIDInternal};
+    cmd.userdataCount = 1;
 
     client->SerializeCommand(cmd);
+    return {futureIDInternal};
+}
+
+WGPUFuture Queue::OnSubmittedWorkDone2(const WGPUQueueWorkDoneCallbackInfo2& callbackInfo) {
+    // TODO(crbug.com/dawn/2052): Once we always return a future, change this to log to the instance
+    // (note, not raise a validation error to the device) and return the null future.
+    DAWN_ASSERT(callbackInfo.nextInChain == nullptr);
+
+    Client* client = GetClient();
+    auto [futureIDInternal, tracked] =
+        GetEventManager().TrackEvent(std::make_unique<WorkDoneEvent>(callbackInfo));
+    if (!tracked) {
+        return {futureIDInternal};
+    }
+
+    QueueOnSubmittedWorkDoneCmd cmd;
+    cmd.queueId = GetWireId();
+    cmd.eventManagerHandle = GetEventManagerHandle();
+    cmd.future = {futureIDInternal};
+    cmd.userdataCount = 2;
+
+    client->SerializeCommand(cmd);
+    return {futureIDInternal};
 }
 
 void Queue::WriteBuffer(WGPUBuffer cBuffer, uint64_t bufferOffset, const void* data, size_t size) {
@@ -79,18 +173,6 @@ void Queue::WriteTexture(const WGPUImageCopyTexture* destination,
     cmd.writeSize = writeSize;
 
     GetClient()->SerializeCommand(cmd);
-}
-
-void Queue::CancelCallbacksForDisconnect() {
-    ClearAllCallbacks(WGPUQueueWorkDoneStatus_DeviceLost);
-}
-
-void Queue::ClearAllCallbacks(WGPUQueueWorkDoneStatus status) {
-    mOnWorkDoneRequests.CloseAll([status](OnWorkDoneData* request) {
-        if (request->callback != nullptr) {
-            request->callback(status, request->userdata);
-        }
-    });
 }
 
 }  // namespace dawn::wire::client

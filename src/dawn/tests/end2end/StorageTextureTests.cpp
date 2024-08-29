@@ -1,16 +1,29 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <string>
 #include <vector>
@@ -35,7 +48,7 @@ class StorageTextureTests : public DawnTest {
                                  uint32_t y,
                                  uint32_t depthOrArrayLayer) {
         const uint32_t pixelValue = 1 + x + kWidth * (y + kHeight * depthOrArrayLayer);
-        ASSERT(pixelValue <= 255u / 4);
+        DAWN_ASSERT(pixelValue <= 255u / 4);
 
         switch (format) {
             // 32-bit unsigned integer formats
@@ -160,8 +173,14 @@ class StorageTextureTests : public DawnTest {
                 break;
             }
 
+            case wgpu::TextureFormat::R8Unorm: {
+                uint8_t* valuePtr = static_cast<uint8_t*>(pixelValuePtr);
+                *valuePtr = pixelValue;
+                break;
+            }
+
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
                 break;
         }
     }
@@ -171,8 +190,8 @@ class StorageTextureTests : public DawnTest {
                                     wgpu::TextureViewDimension dimension,
                                     uint32_t binding) {
         std::ostringstream ostream;
-        ostream << "@group(0) @binding(" << binding << ") "
-                << "var storageImage" << binding << " : ";
+        ostream << "@group(0) @binding(" << binding << ") " << "var storageImage" << binding
+                << " : ";
         switch (dimension) {
             case wgpu::TextureViewDimension::e1D:
                 ostream << "texture_storage_1d";
@@ -187,7 +206,7 @@ class StorageTextureTests : public DawnTest {
                 ostream << "texture_storage_3d";
                 break;
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
                 break;
         }
         ostream << "<" << utils::GetWGSLImageFormatQualifier(format) << ", ";
@@ -247,8 +266,11 @@ class StorageTextureTests : public DawnTest {
                 return "vec4f(f32(value) / 127.0, -f32(value) / 127.0, "
                        "f32(value) * 2.0 / 127.0, -f32(value) * 2.0 / 127.0)";
 
+            case wgpu::TextureFormat::R8Unorm:
+                return "vec4f(f32(value) / 255.0, 0.0, 0.0, 1.0)";
+
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
                 break;
         }
     }
@@ -290,6 +312,7 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
             // normalized signed/unsigned integer formats
             case wgpu::TextureFormat::RGBA8Unorm:
             case wgpu::TextureFormat::RGBA8Snorm:
+            case wgpu::TextureFormat::R8Unorm:
                 // On Windows Intel drivers the tests will fail if tolerance <= 0.00000001f.
                 return R"(
 fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
@@ -298,10 +321,17 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
 })";
 
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
                 break;
         }
 
+        return "";
+    }
+
+    const char* GetEnable(wgpu::TextureFormat format) {
+        if (format == wgpu::TextureFormat::R8Unorm) {
+            return "enable chromium_internal_graphite;";
+        }
         return "";
     }
 
@@ -333,13 +363,14 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
                 textureStore = "textureStore(storageImage0, vec3i(x, y, slice), expected)";
                 break;
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
                 break;
         }
         const char* workgroupSize = !strcmp(stage, "compute") ? " @workgroup_size(1)" : "";
         const bool isFragment = strcmp(stage, "fragment") == 0;
 
         std::ostringstream ostream;
+        ostream << GetEnable(format) << "\n";
         ostream << GetImageDeclaration(format, "write", dimension, 0) << "\n";
         ostream << "@" << stage << workgroupSize << "\n";
         ostream << "fn main() ";
@@ -397,15 +428,16 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
     }
 
     wgpu::Texture CreateTextureWithTestData(
-        const std::vector<uint8_t>& initialTextureData,
+        const uint8_t* initialTextureData,
+        size_t initialTextureDataSize,
         wgpu::TextureFormat format,
         wgpu::TextureViewDimension dimension = wgpu::TextureViewDimension::e2D) {
         uint32_t texelSize = utils::GetTexelBlockSizeInBytes(format);
-        ASSERT(kWidth * texelSize <= kTextureBytesPerRowAlignment);
+        DAWN_ASSERT(kWidth * texelSize <= kTextureBytesPerRowAlignment);
 
         const uint32_t bytesPerTextureRow = texelSize * kWidth;
         const uint32_t sliceCount =
-            static_cast<uint32_t>(initialTextureData.size() / texelSize / (kWidth * kHeight));
+            static_cast<uint32_t>(initialTextureDataSize / texelSize / (kWidth * kHeight));
         const size_t uploadBufferSize =
             kTextureBytesPerRowAlignment * (kHeight * sliceCount - 1) + kWidth * bytesPerTextureRow;
 
@@ -427,7 +459,9 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
                                         wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst);
 
         wgpu::Texture outputTexture = CreateTexture(
-            format, wgpu::TextureUsage::StorageBinding | wgpu::TextureUsage::CopyDst,
+            format,
+            wgpu::TextureUsage::StorageBinding | wgpu::TextureUsage::CopySrc |
+                wgpu::TextureUsage::CopyDst,
             {kWidth, kHeight, sliceCount}, utils::ViewDimensionToTextureDimension(dimension));
 
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
@@ -450,7 +484,6 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
         wgpu::ComputePipelineDescriptor computeDescriptor;
         computeDescriptor.layout = nullptr;
         computeDescriptor.compute.module = csModule;
-        computeDescriptor.compute.entryPoint = "main";
         return device.CreateComputePipeline(&computeDescriptor);
     }
 
@@ -605,13 +638,15 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
                                    wgpu::TextureFormat format,
                                    const wgpu::Extent3D& size) {
         const std::vector<uint8_t>& expectedData = GetExpectedData(format, size.depthOrArrayLayers);
-        CheckOutputStorageTexture(writeonlyStorageTexture, format, size, expectedData);
+        CheckOutputStorageTexture(writeonlyStorageTexture, format, size, expectedData.data(),
+                                  expectedData.size());
     }
 
     void CheckOutputStorageTexture(wgpu::Texture writeonlyStorageTexture,
                                    wgpu::TextureFormat format,
                                    const wgpu::Extent3D& size,
-                                   const std::vector<uint8_t>& expectedData) {
+                                   const uint8_t* expectedData,
+                                   size_t expectedDataSize) {
         // Copy the content from the write-only storage texture to the result buffer.
         wgpu::BufferDescriptor descriptor;
         descriptor.size =
@@ -632,7 +667,7 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
 
         // Check if the contents in the result buffer are what we expect.
         uint32_t texelSize = utils::GetTexelBlockSizeInBytes(format);
-        ASSERT(size.width * texelSize <= kTextureBytesPerRowAlignment);
+        DAWN_ASSERT(size.width * texelSize <= kTextureBytesPerRowAlignment);
 
         for (size_t z = 0; z < size.depthOrArrayLayers; ++z) {
             for (size_t y = 0; y < size.height; ++y) {
@@ -640,7 +675,7 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
                     kTextureBytesPerRowAlignment * (size.height * z + y);
                 const size_t expectedDataOffset = texelSize * size.width * (size.height * z + y);
                 EXPECT_BUFFER_U32_RANGE_EQ(
-                    reinterpret_cast<const uint32_t*>(expectedData.data() + expectedDataOffset),
+                    reinterpret_cast<const uint32_t*>(expectedData + expectedDataOffset),
                     resultBuffer, resultBufferOffset, texelSize);
             }
         }
@@ -662,19 +697,12 @@ fn IsEqualTo(pixel : vec4f, expected : vec4f) -> bool {
 // Test that write-only storage textures are supported in compute shader.
 TEST_P(StorageTextureTests, WriteonlyStorageTextureInComputeShader) {
     for (wgpu::TextureFormat format : utils::kAllTextureFormats) {
-        if (!utils::TextureFormatSupportsStorageTexture(format, IsCompatibilityMode())) {
+        if (!utils::TextureFormatSupportsStorageTexture(format, device, IsCompatibilityMode())) {
             continue;
         }
 
         // TODO(dawn:1877): Snorm copy failing ANGLE Swiftshader, need further investigation.
         if (format == wgpu::TextureFormat::RGBA8Snorm && IsANGLESwiftShader()) {
-            continue;
-        }
-
-        // TODO(crbug.com/dawn/676): investigate why this test fails with RGBA8Snorm on Linux
-        // Intel OpenGL and OpenGLES drivers.
-        if (format == wgpu::TextureFormat::RGBA8Snorm && IsIntel() &&
-            (IsOpenGL() || IsOpenGLES()) && IsLinux()) {
             continue;
         }
 
@@ -694,8 +722,11 @@ TEST_P(StorageTextureTests, WriteonlyStorageTextureInComputeShader) {
 
 // Test that write-only storage textures are supported in fragment shader.
 TEST_P(StorageTextureTests, WriteonlyStorageTextureInFragmentShader) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
+
     for (wgpu::TextureFormat format : utils::kAllTextureFormats) {
-        if (!utils::TextureFormatSupportsStorageTexture(format, IsCompatibilityMode())) {
+        if (!utils::TextureFormatSupportsStorageTexture(format, device, IsCompatibilityMode())) {
             continue;
         }
 
@@ -707,13 +738,6 @@ TEST_P(StorageTextureTests, WriteonlyStorageTextureInFragmentShader) {
         // TODO(dawn:1503): ANGLE OpenGL fails blit emulation path when texture is not copied
         // explicitly via the mUseCopy = true workaround path.
         if (format == wgpu::TextureFormat::RGBA8Snorm && IsANGLE() && IsWindows()) {
-            continue;
-        }
-
-        // TODO(crbug.com/dawn/676): investigate why this test fails with RGBA8Snorm on Linux
-        // Intel OpenGL and OpenGLES drivers.
-        if (format == wgpu::TextureFormat::RGBA8Snorm && IsIntel() &&
-            (IsOpenGL() || IsOpenGLES()) && IsLinux()) {
             continue;
         }
 
@@ -734,9 +758,6 @@ TEST_P(StorageTextureTests, WriteonlyStorageTextureInFragmentShader) {
 
 // Verify 2D array and 3D write-only storage textures work correctly.
 TEST_P(StorageTextureTests, Writeonly2DArrayOr3DStorageTexture) {
-    // TODO(crbug.com/dawn/547): implement 3D storage texture on OpenGL and OpenGLES.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGL() || IsOpenGLES());
-
     constexpr uint32_t kSliceCount = 3u;
 
     constexpr wgpu::TextureFormat kTextureFormat = wgpu::TextureFormat::R32Uint;
@@ -807,7 +828,6 @@ TEST_P(StorageTextureTests, SampledAndWriteonlyStorageTexturePingPong) {
 
     wgpu::ComputePipelineDescriptor pipelineDesc = {};
     pipelineDesc.compute.module = module;
-    pipelineDesc.compute.entryPoint = "main";
     wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&pipelineDesc);
 
     // In bindGroupA storageTexture1 is bound as read-only storage texture and storageTexture2 is
@@ -932,6 +952,71 @@ DAWN_INSTANTIATE_TEST(BGRA8UnormStorageTextureTests,
                       OpenGLESBackend(),
                       VulkanBackend());
 
+class R8UnormStorageTextureTests : public StorageTextureTests {
+  public:
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        if (SupportsFeatures({wgpu::FeatureName::R8UnormStorage})) {
+            mIsR8UnormStorageSupported = true;
+            return {wgpu::FeatureName::R8UnormStorage};
+        } else {
+            mIsR8UnormStorageSupported = false;
+            return {};
+        }
+    }
+
+    bool IsR8UnormStorageSupported() { return mIsR8UnormStorageSupported; }
+
+  private:
+    bool mIsR8UnormStorageSupported = false;
+};
+
+// Test that R8Unorm is supported to be used as storage texture in compute shaders when the
+// optional feature 'r8unorm-storage' is supported.
+TEST_P(R8UnormStorageTextureTests, WriteonlyStorageTextureInComputeShader) {
+    DAWN_TEST_UNSUPPORTED_IF(!IsR8UnormStorageSupported());
+
+    constexpr wgpu::TextureFormat kFormat = wgpu::TextureFormat::R8Unorm;
+    wgpu::Texture writeonlyStorageTexture =
+        CreateTexture(kFormat, wgpu::TextureUsage::StorageBinding | wgpu::TextureUsage::CopySrc,
+                      {kWidth, kHeight});
+
+    // Write the expected pixel values into the write-only storage texture.
+    const std::string computeShader = CommonWriteOnlyTestCode("compute", kFormat);
+    WriteIntoStorageTextureInComputePass(writeonlyStorageTexture, computeShader.c_str());
+
+    // Verify the pixel data in the write-only storage texture is expected.
+    CheckOutputStorageTexture(writeonlyStorageTexture, kFormat, {kWidth, kHeight});
+}
+
+// Test that R8Unorm is supported to be used as storage texture in fragment shaders when the
+// optional feature 'r8unorm-storage' is supported.
+TEST_P(R8UnormStorageTextureTests, WriteonlyStorageTextureInFragmentShader) {
+    DAWN_TEST_UNSUPPORTED_IF(!IsR8UnormStorageSupported());
+
+    constexpr wgpu::TextureFormat kFormat = wgpu::TextureFormat::R8Unorm;
+
+    // Prepare the write-only storage texture.
+    wgpu::Texture writeonlyStorageTexture =
+        CreateTexture(kFormat, wgpu::TextureUsage::StorageBinding | wgpu::TextureUsage::CopySrc,
+                      {kWidth, kHeight});
+
+    // Write the expected pixel values into the write-only storage texture.
+    const std::string fragmentShader = CommonWriteOnlyTestCode("fragment", kFormat);
+    WriteIntoStorageTextureInRenderPass(writeonlyStorageTexture, kSimpleVertexShader,
+                                        fragmentShader.c_str());
+
+    // Verify the pixel data in the write-only storage texture is expected.
+    CheckOutputStorageTexture(writeonlyStorageTexture, kFormat, {kWidth, kHeight});
+}
+
+DAWN_INSTANTIATE_TEST(R8UnormStorageTextureTests,
+                      D3D11Backend(),
+                      D3D12Backend(),
+                      MetalBackend(),
+                      OpenGLBackend(),
+                      OpenGLESBackend(),
+                      VulkanBackend());
+
 class StorageTextureZeroInitTests : public StorageTextureTests {
   public:
     static std::vector<uint8_t> GetExpectedData() {
@@ -985,8 +1070,9 @@ TEST_P(StorageTextureZeroInitTests, WriteonlyStorageTextureClearsToZeroInRenderP
 
     WriteIntoStorageTextureInRenderPass(writeonlyStorageTexture, kSimpleVertexShader,
                                         kCommonWriteOnlyZeroInitTestCodeFragment);
+    std::vector<uint8_t> expectedData = GetExpectedData();
     CheckOutputStorageTexture(writeonlyStorageTexture, wgpu::TextureFormat::R32Uint,
-                              {kWidth, kHeight}, GetExpectedData());
+                              {kWidth, kHeight}, expectedData.data(), expectedData.size());
 }
 
 // Verify that the texture is correctly cleared to 0 before its first usage as a write-only storage
@@ -999,8 +1085,9 @@ TEST_P(StorageTextureZeroInitTests, WriteonlyStorageTextureClearsToZeroInCompute
 
     WriteIntoStorageTextureInComputePass(writeonlyStorageTexture,
                                          kCommonWriteOnlyZeroInitTestCodeCompute);
+    std::vector<uint8_t> expectedData = GetExpectedData();
     CheckOutputStorageTexture(writeonlyStorageTexture, wgpu::TextureFormat::R32Uint,
-                              {kWidth, kHeight}, GetExpectedData());
+                              {kWidth, kHeight}, expectedData.data(), expectedData.size());
 }
 
 DAWN_INSTANTIATE_TEST(StorageTextureZeroInitTests,
@@ -1010,6 +1097,307 @@ DAWN_INSTANTIATE_TEST(StorageTextureZeroInitTests,
                       OpenGLESBackend({"nonzero_clear_resources_on_creation_for_testing"}),
                       MetalBackend({"nonzero_clear_resources_on_creation_for_testing"}),
                       VulkanBackend({"nonzero_clear_resources_on_creation_for_testing"}));
+
+class ReadWriteStorageTextureTests : public StorageTextureTests {};
+
+// Verify read-write storage texture can work correctly in compute shaders.
+TEST_P(ReadWriteStorageTextureTests, ReadWriteStorageTextureInComputeShader) {
+    std::array<uint32_t, kWidth * kHeight> inputData;
+    std::array<uint32_t, kWidth * kHeight> expectedData;
+    for (size_t i = 0; i < inputData.size(); ++i) {
+        inputData[i] = i + 1;
+        expectedData[i] = inputData[i] * 2;
+    }
+
+    wgpu::Texture readWriteStorageTexture = CreateTextureWithTestData(
+        reinterpret_cast<const uint8_t*>(inputData.data()), inputData.size() * sizeof(uint32_t),
+        wgpu::TextureFormat::R32Uint);
+
+    std::ostringstream sstream;
+    sstream << R"(
+@group(0) @binding(0) var rwImage : texture_storage_2d<r32uint, read_write>;
+
+@compute @workgroup_size()"
+            << kWidth << ", " << kHeight << R"()
+fn main(@builtin(local_invocation_id) local_id: vec3<u32>,) {
+  var data1 = textureLoad(rwImage, vec2i(local_id.xy));
+  data1.x = data1.x * 2;
+  textureStore(rwImage, vec2i(local_id.xy), data1);
+})";
+
+    wgpu::ComputePipeline pipeline = CreateComputePipeline(sstream.str().c_str());
+    wgpu::BindGroup bindGroup = utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0),
+                                                     {{0, readWriteStorageTexture.CreateView()}});
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::ComputePassEncoder computePassEncoder = encoder.BeginComputePass();
+    computePassEncoder.SetBindGroup(0, bindGroup);
+    computePassEncoder.SetPipeline(pipeline);
+    computePassEncoder.DispatchWorkgroups(1);
+    computePassEncoder.End();
+    wgpu::CommandBuffer commandBuffer = encoder.Finish();
+    queue.Submit(1, &commandBuffer);
+
+    CheckOutputStorageTexture(readWriteStorageTexture, wgpu::TextureFormat::R32Uint,
+                              {kWidth, kHeight},
+                              reinterpret_cast<const uint8_t*>(expectedData.data()),
+                              expectedData.size() * sizeof(uint32_t));
+}
+
+// Verify read-write storage texture can work correctly in fragment shaders.
+TEST_P(ReadWriteStorageTextureTests, ReadWriteStorageTextureInFragmentShader) {
+    std::array<uint32_t, kWidth * kHeight> inputData;
+    std::array<uint32_t, kWidth * kHeight> expectedData;
+    for (size_t i = 0; i < inputData.size(); ++i) {
+        inputData[i] = i + 1;
+        expectedData[i] = inputData[i] * 2;
+    }
+
+    wgpu::Texture readWriteStorageTexture = CreateTextureWithTestData(
+        reinterpret_cast<const uint8_t*>(inputData.data()), inputData.size() * sizeof(uint32_t),
+        wgpu::TextureFormat::R32Uint);
+
+    wgpu::TextureDescriptor colorTextureDescriptor;
+    colorTextureDescriptor.format = wgpu::TextureFormat::RGBA8Unorm;
+    colorTextureDescriptor.size = {kWidth, kHeight, 1};
+    colorTextureDescriptor.usage = wgpu::TextureUsage::RenderAttachment;
+    wgpu::Texture dummyColorTexture = device.CreateTexture(&colorTextureDescriptor);
+
+    wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
+ @vertex fn main(@builtin(vertex_index) VertexIndex : u32) -> @builtin(position) vec4f {
+    var pos = array(
+        vec2f(-2.0, -2.0),
+        vec2f(-2.0,  2.0),
+        vec2f( 2.0, -2.0),
+        vec2f(-2.0,  2.0),
+        vec2f( 2.0, -2.0),
+        vec2f( 2.0,  2.0));
+    return vec4f(pos[VertexIndex], 0.0, 1.0);
+})");
+
+    wgpu::ShaderModule fsModule = utils::CreateShaderModule(device, R"(
+@group(0) @binding(0) var rwImage : texture_storage_2d<r32uint, read_write>;
+@fragment fn main(@builtin(position) fragcoord: vec4f) -> @location(0) vec4f {
+    var data1 = textureLoad(rwImage, vec2i(fragcoord.xy));
+    data1.x = data1.x * 2;
+    textureStore(rwImage, vec2i(fragcoord.xy), data1);
+    return vec4f(0.0, 1.0, 0.0, 1.0);
+})");
+
+    utils::ComboRenderPipelineDescriptor pipelineDescriptor;
+    pipelineDescriptor.vertex.module = vsModule;
+    pipelineDescriptor.cFragment.module = fsModule;
+    pipelineDescriptor.cTargets[0].format = colorTextureDescriptor.format;
+    wgpu::RenderPipeline renderPipeline = device.CreateRenderPipeline(&pipelineDescriptor);
+
+    wgpu::BindGroup bindGroup = utils::MakeBindGroup(device, renderPipeline.GetBindGroupLayout(0),
+                                                     {{0, readWriteStorageTexture.CreateView()}});
+
+    utils::ComboRenderPassDescriptor renderPassDescriptor({dummyColorTexture.CreateView()});
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::RenderPassEncoder renderPassEncoder = encoder.BeginRenderPass(&renderPassDescriptor);
+    renderPassEncoder.SetBindGroup(0, bindGroup);
+    renderPassEncoder.SetPipeline(renderPipeline);
+    renderPassEncoder.Draw(6);
+    renderPassEncoder.End();
+    wgpu::CommandBuffer commandBuffer = encoder.Finish();
+    queue.Submit(1, &commandBuffer);
+
+    CheckOutputStorageTexture(readWriteStorageTexture, wgpu::TextureFormat::R32Uint,
+                              {kWidth, kHeight},
+                              reinterpret_cast<const uint8_t*>(expectedData.data()),
+                              expectedData.size() * sizeof(uint32_t));
+}
+
+// Verify read-only storage texture can work correctly in compute shaders.
+TEST_P(ReadWriteStorageTextureTests, ReadOnlyStorageTextureInComputeShader) {
+    constexpr wgpu::TextureFormat kStorageTextureFormat = wgpu::TextureFormat::R32Uint;
+    const std::vector<uint8_t> kInitialTextureData = GetExpectedData(kStorageTextureFormat);
+    wgpu::Texture readonlyStorageTexture = CreateTextureWithTestData(
+        kInitialTextureData.data(), kInitialTextureData.size(), kStorageTextureFormat);
+
+    std::ostringstream sstream;
+    sstream << R"(
+@group(0) @binding(0) var srcImage : texture_storage_2d<r32uint, read>;
+@group(0) @binding(1) var<storage, read_write> output : u32;
+
+@compute @workgroup_size(1)
+fn main() {
+    for (var y = 0u; y < )"
+            << kHeight << R"(; y++) {
+        for (var x = 0u; x < )"
+            << kWidth << R"(; x++) {
+            var expected = vec4u(1u + x + y * 4u, 0, 0, 1u);
+            var pixel = textureLoad(srcImage, vec2u(x, y));
+            if (any(pixel != expected)) {
+                output = 0u;
+                return;
+            }
+        }
+    }
+    output = 1u;
+})";
+    uint32_t kInitialValue = 0xFF;
+    wgpu::Buffer resultBuffer =
+        utils::CreateBufferFromData(device, &kInitialValue, sizeof(kInitialValue),
+                                    wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc);
+
+    wgpu::ComputePipeline pipeline = CreateComputePipeline(sstream.str().c_str());
+    wgpu::BindGroup bindGroup =
+        utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0),
+                             {{0, readonlyStorageTexture.CreateView()}, {1, resultBuffer}});
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::ComputePassEncoder computePassEncoder = encoder.BeginComputePass();
+    computePassEncoder.SetBindGroup(0, bindGroup);
+    computePassEncoder.SetPipeline(pipeline);
+    computePassEncoder.DispatchWorkgroups(1);
+    computePassEncoder.End();
+    wgpu::CommandBuffer commandBuffer = encoder.Finish();
+    queue.Submit(1, &commandBuffer);
+
+    // Check if the contents in the result buffer are what we expect.
+    constexpr uint32_t kExpectedValue = 1u;
+    EXPECT_BUFFER_U32_RANGE_EQ(&kExpectedValue, resultBuffer, 0, 1u);
+}
+
+// Verify read-only storage texture can work correctly in vertex shaders.
+TEST_P(ReadWriteStorageTextureTests, ReadOnlyStorageTextureInVertexShader) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
+
+    constexpr wgpu::TextureFormat kStorageTextureFormat = wgpu::TextureFormat::R32Uint;
+    const std::vector<uint8_t> kInitialTextureData = GetExpectedData(kStorageTextureFormat);
+    wgpu::Texture readonlyStorageTexture = CreateTextureWithTestData(
+        kInitialTextureData.data(), kInitialTextureData.size(), kStorageTextureFormat);
+
+    std::ostringstream vsstream;
+    vsstream << R"(
+@group(0) @binding(0) var srcImage : texture_storage_2d<r32uint, read>;
+
+struct VertexOutput {
+    @builtin(position) pos: vec4f,
+    @location(0) color: vec4f,
+}
+
+@vertex fn main() -> VertexOutput {
+    var vertexOutput : VertexOutput;
+    vertexOutput.pos = vec4f(0, 0, 0, 1);
+    for (var y = 0u; y < )"
+             << kHeight << R"(; y++) {
+        for (var x = 0u; x < )"
+             << kWidth << R"(; x++) {
+            var expected = vec4u(1u + x + y * 4u, 0, 0, 1u);
+            var pixel = textureLoad(srcImage, vec2u(x, y));
+            if (any(pixel != expected)) {
+                vertexOutput.color = vec4f(1, 0, 0, 1);
+                return vertexOutput;
+            }
+        }
+    }
+    vertexOutput.color = vec4f(0, 1, 0, 1);
+    return vertexOutput;
+})";
+    const char* kFragmentShader = R"(
+struct FragmentInput {
+    @location(0) color: vec4f,
+}
+
+@fragment fn main(fragmentInput : FragmentInput) -> @location(0) vec4f {
+    return fragmentInput.color;
+})";
+
+    CheckDrawsGreen(vsstream.str().c_str(), kFragmentShader, readonlyStorageTexture);
+}
+
+// Verify read-only storage texture can work correctly in fragment shaders.
+TEST_P(ReadWriteStorageTextureTests, ReadOnlyStorageTextureInFragmentShader) {
+    constexpr wgpu::TextureFormat kStorageTextureFormat = wgpu::TextureFormat::R32Uint;
+    const std::vector<uint8_t> kInitialTextureData = GetExpectedData(kStorageTextureFormat);
+    wgpu::Texture readonlyStorageTexture = CreateTextureWithTestData(
+        kInitialTextureData.data(), kInitialTextureData.size(), kStorageTextureFormat);
+
+    std::ostringstream fsstream;
+    fsstream << R"(
+@group(0) @binding(0) var srcImage : texture_storage_2d<r32uint, read>;
+
+@fragment fn main() -> @location(0) vec4f {
+    for (var y = 0u; y < )"
+             << kHeight << R"(; y++) {
+        for (var x = 0u; x < )"
+             << kWidth << R"(; x++) {
+            var expected = vec4u(1u + x + y * 4u, 0, 0, 1u);
+            var pixel = textureLoad(srcImage, vec2u(x, y));
+            if (any(pixel != expected)) {
+                return vec4f(1, 0, 0, 1);
+            }
+        }
+    }
+    return vec4f(0, 1, 0, 1);
+})";
+
+    CheckDrawsGreen(kSimpleVertexShader, fsstream.str().c_str(), readonlyStorageTexture);
+}
+
+// Verify using read-write storage texture access in pipeline layout is compatible with write-only
+// storage texture access in shader.
+TEST_P(ReadWriteStorageTextureTests, ReadWriteInPipelineLayoutAndWriteOnlyInShader) {
+    constexpr wgpu::TextureFormat kStorageTextureFormat = wgpu::TextureFormat::R32Uint;
+    std::array<uint32_t, kWidth * kHeight> expectedData;
+    for (size_t i = 0; i < expectedData.size(); ++i) {
+        expectedData[i] = i + 1;
+    }
+
+    wgpu::Texture storageTexture = CreateTexture(
+        wgpu::TextureFormat::R32Uint,
+        wgpu::TextureUsage::StorageBinding | wgpu::TextureUsage::CopySrc, {kWidth, kHeight, 1});
+
+    std::ostringstream sstream;
+    sstream << R"(
+@group(0) @binding(0) var rwImage : texture_storage_2d<r32uint, write>;
+
+@compute @workgroup_size()"
+            << kWidth << ", " << kHeight << R"()
+fn main(
+  @builtin(local_invocation_id) local_id: vec3u,
+  @builtin(local_invocation_index) local_index : u32) {
+  let data1 = vec4u(local_index + 1u, 0, 0, 1);
+  textureStore(rwImage, vec2i(local_id.xy), data1);
+})";
+
+    wgpu::BindGroupLayout bindGroupLayout = utils::MakeBindGroupLayout(
+        device, {{0, wgpu::ShaderStage::Compute, wgpu::StorageTextureAccess::ReadWrite,
+                  kStorageTextureFormat, wgpu::TextureViewDimension::e2D}});
+    wgpu::ComputePipelineDescriptor computeDescriptor;
+    computeDescriptor.layout = utils::MakePipelineLayout(device, {bindGroupLayout});
+    computeDescriptor.compute.module = utils::CreateShaderModule(device, sstream.str().c_str());
+    wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&computeDescriptor);
+
+    wgpu::BindGroup bindGroup =
+        utils::MakeBindGroup(device, bindGroupLayout, {{0, storageTexture.CreateView()}});
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::ComputePassEncoder computePassEncoder = encoder.BeginComputePass();
+    computePassEncoder.SetBindGroup(0, bindGroup);
+    computePassEncoder.SetPipeline(pipeline);
+    computePassEncoder.DispatchWorkgroups(1);
+    computePassEncoder.End();
+    wgpu::CommandBuffer commandBuffer = encoder.Finish();
+    queue.Submit(1, &commandBuffer);
+
+    CheckOutputStorageTexture(storageTexture, wgpu::TextureFormat::R32Uint, {kWidth, kHeight},
+                              reinterpret_cast<const uint8_t*>(expectedData.data()),
+                              expectedData.size() * sizeof(uint32_t));
+}
+
+DAWN_INSTANTIATE_TEST(ReadWriteStorageTextureTests,
+                      D3D11Backend(),
+                      D3D12Backend(),
+                      OpenGLBackend(),
+                      OpenGLESBackend(),
+                      MetalBackend(),
+                      VulkanBackend());
 
 }  // anonymous namespace
 }  // namespace dawn

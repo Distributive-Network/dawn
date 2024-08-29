@@ -1,22 +1,34 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_TINT_LANG_WGSL_READER_PARSER_LEXER_H_
 #define SRC_TINT_LANG_WGSL_READER_PARSER_LEXER_H_
 
 #include <optional>
-#include <string>
 #include <vector>
 
 #include "src/tint/lang/wgsl/reader/parser/token.h"
@@ -49,8 +61,8 @@ class Lexer {
     std::optional<Token> skip_comment();
 
     Token build_token_from_int_if_possible(Source source,
-                                           size_t start,
-                                           size_t prefix_count,
+                                           uint32_t start,
+                                           uint32_t prefix_count,
                                            int32_t base);
 
     std::optional<Token::Type> parse_keyword(std::string_view);
@@ -74,19 +86,19 @@ class Lexer {
     void end_source(Source&) const;
 
     /// @returns view of current line
-    const std::string_view line() const;
+    std::string_view line() const;
     /// @returns position in current line
-    size_t pos() const;
+    uint32_t pos() const;
     /// @returns length of current line
-    size_t length() const;
+    uint32_t length() const;
     /// @returns reference to character at `pos` within current line
-    const char& at(size_t pos) const;
+    const char& at(uint32_t pos) const;
     /// @returns substring view at `offset` within current line of length `count`
-    std::string_view substr(size_t offset, size_t count);
+    std::string_view substr(uint32_t offset, uint32_t count);
     /// advances current position by `offset` within current line
-    void advance(size_t offset = 1);
+    void advance(uint32_t offset = 1);
     /// sets current position to `pos` within current line
-    void set_pos(size_t pos);
+    void set_pos(uint32_t pos);
     /// advances current position to next line
     void advance_line();
     /// @returns true if the end of the input has been reached.
@@ -103,9 +115,9 @@ class Lexer {
     /// @returns true if 'ch' is a hexadecimal digit
     bool is_hex(char ch) const;
     /// @returns true if string at `pos` matches `substr`
-    bool matches(size_t pos, std::string_view substr);
+    bool matches(uint32_t pos, std::string_view substr);
     /// @returns true if char at `pos` matches `ch`
-    bool matches(size_t pos, char ch);
+    bool matches(uint32_t pos, char ch);
     /// The source file content
     Source::File const* const file_;
     /// The current location within the input

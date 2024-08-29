@@ -1,16 +1,29 @@
-// Copyright 2021 The Tint Authors.
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "gmock/gmock.h"
 #include "src/tint/lang/core/fluent_types.h"
@@ -42,7 +55,7 @@ TEST_F(MslSanitizerTest, Call_ArrayLength) {
          });
 
     Options opts = DefaultOptions();
-    opts.array_length_from_uniform.ubo_binding = BindingPoint{0, 30};
+    opts.array_length_from_uniform.ubo_binding = 30;
     opts.array_length_from_uniform.bindpoint_to_size_index.emplace(BindingPoint{2, 1}, 1);
     ASTPrinter& gen = SanitizeAndBuild(opts);
 
@@ -65,16 +78,16 @@ struct tint_array {
     T elements[N];
 };
 
-struct tint_symbol {
-  /* 0x0000 */ tint_array<uint4, 1> buffer_size;
+struct TintArrayLengths {
+  /* 0x0000 */ tint_array<uint4, 1> array_lengths;
 };
 
 struct my_struct {
   tint_array<float, 1> a;
 };
 
-fragment void a_func(const constant tint_symbol* tint_symbol_2 [[buffer(30)]]) {
-  uint len = (((*(tint_symbol_2)).buffer_size[0u][1u] - 0u) / 4u);
+fragment void a_func(const constant TintArrayLengths* tint_symbol [[buffer(30)]]) {
+  uint len = (((*(tint_symbol)).array_lengths[0u][1u] - 0u) / 4u);
   return;
 }
 
@@ -99,7 +112,7 @@ TEST_F(MslSanitizerTest, Call_ArrayLength_OtherMembersInStruct) {
          });
 
     Options opts = DefaultOptions();
-    opts.array_length_from_uniform.ubo_binding = BindingPoint{0, 30};
+    opts.array_length_from_uniform.ubo_binding = 30;
     opts.array_length_from_uniform.bindpoint_to_size_index.emplace(BindingPoint{2, 1}, 1);
     ASTPrinter& gen = SanitizeAndBuild(opts);
 
@@ -122,8 +135,8 @@ struct tint_array {
     T elements[N];
 };
 
-struct tint_symbol {
-  /* 0x0000 */ tint_array<uint4, 1> buffer_size;
+struct TintArrayLengths {
+  /* 0x0000 */ tint_array<uint4, 1> array_lengths;
 };
 
 struct my_struct {
@@ -131,8 +144,8 @@ struct my_struct {
   tint_array<float, 1> a;
 };
 
-fragment void a_func(const constant tint_symbol* tint_symbol_2 [[buffer(30)]]) {
-  uint len = (((*(tint_symbol_2)).buffer_size[0u][1u] - 4u) / 4u);
+fragment void a_func(const constant TintArrayLengths* tint_symbol [[buffer(30)]]) {
+  uint len = (((*(tint_symbol)).array_lengths[0u][1u] - 4u) / 4u);
   return;
 }
 
@@ -160,7 +173,7 @@ TEST_F(MslSanitizerTest, Call_ArrayLength_ViaLets) {
          });
 
     Options opts = DefaultOptions();
-    opts.array_length_from_uniform.ubo_binding = BindingPoint{0, 30};
+    opts.array_length_from_uniform.ubo_binding = 30;
     opts.array_length_from_uniform.bindpoint_to_size_index.emplace(BindingPoint{2, 1}, 1);
     ASTPrinter& gen = SanitizeAndBuild(opts);
 
@@ -183,16 +196,16 @@ struct tint_array {
     T elements[N];
 };
 
-struct tint_symbol {
-  /* 0x0000 */ tint_array<uint4, 1> buffer_size;
+struct TintArrayLengths {
+  /* 0x0000 */ tint_array<uint4, 1> array_lengths;
 };
 
 struct my_struct {
   tint_array<float, 1> a;
 };
 
-fragment void a_func(const constant tint_symbol* tint_symbol_2 [[buffer(30)]]) {
-  uint len = (((*(tint_symbol_2)).buffer_size[0u][1u] - 0u) / 4u);
+fragment void a_func(const constant TintArrayLengths* tint_symbol [[buffer(30)]]) {
+  uint len = (((*(tint_symbol)).array_lengths[0u][1u] - 0u) / 4u);
   return;
 }
 
@@ -219,7 +232,7 @@ TEST_F(MslSanitizerTest, Call_ArrayLength_ArrayLengthFromUniform) {
          });
 
     Options options;
-    options.array_length_from_uniform.ubo_binding = {0, 29};
+    options.array_length_from_uniform.ubo_binding = 29;
     options.array_length_from_uniform.bindpoint_to_size_index.emplace(BindingPoint{0, 1}, 7u);
     options.array_length_from_uniform.bindpoint_to_size_index.emplace(BindingPoint{0, 2}, 2u);
     ASTPrinter& gen = SanitizeAndBuild(options);
@@ -243,16 +256,16 @@ struct tint_array {
     T elements[N];
 };
 
-struct tint_symbol {
-  /* 0x0000 */ tint_array<uint4, 2> buffer_size;
+struct TintArrayLengths {
+  /* 0x0000 */ tint_array<uint4, 2> array_lengths;
 };
 
 struct my_struct {
   tint_array<float, 1> a;
 };
 
-fragment void a_func(const constant tint_symbol* tint_symbol_2 [[buffer(29)]]) {
-  uint len = ((((*(tint_symbol_2)).buffer_size[1u][3u] - 0u) / 4u) + (((*(tint_symbol_2)).buffer_size[0u][2u] - 0u) / 4u));
+fragment void a_func(const constant TintArrayLengths* tint_symbol [[buffer(29)]]) {
+  uint len = ((((*(tint_symbol)).array_lengths[1u][3u] - 0u) / 4u) + (((*(tint_symbol)).array_lengths[0u][2u] - 0u) / 4u));
   return;
 }
 
@@ -278,12 +291,12 @@ TEST_F(MslSanitizerTest, Call_ArrayLength_ArrayLengthFromUniformMissingBinding) 
          });
 
     Options options;
-    options.array_length_from_uniform.ubo_binding = {0, 29};
+    options.array_length_from_uniform.ubo_binding = 29;
     options.array_length_from_uniform.bindpoint_to_size_index.emplace(BindingPoint{0, 2}, 2u);
     ASTPrinter& gen = SanitizeAndBuild(options);
 
     ASSERT_FALSE(gen.Generate());
-    EXPECT_THAT(gen.Diagnostics().str(), HasSubstr("Unable to translate builtin: arrayLength"));
+    EXPECT_THAT(gen.Diagnostics().Str(), HasSubstr("Unable to translate builtin: arrayLength"));
 }
 
 }  // namespace

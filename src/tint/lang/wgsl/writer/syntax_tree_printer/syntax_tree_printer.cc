@@ -1,27 +1,37 @@
-// Copyright 2023 The Tint Authors.
+// Copyright 2023 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/wgsl/writer/syntax_tree_printer/syntax_tree_printer.h"
 
-#include <algorithm>
-
 #include "src/tint/lang/core/texel_format.h"
-#include "src/tint/lang/wgsl/ast/accessor_expression.h"
 #include "src/tint/lang/wgsl/ast/alias.h"
 #include "src/tint/lang/wgsl/ast/assignment_statement.h"
 #include "src/tint/lang/wgsl/ast/binary_expression.h"
-#include "src/tint/lang/wgsl/ast/bitcast_expression.h"
+#include "src/tint/lang/wgsl/ast/blend_src_attribute.h"
 #include "src/tint/lang/wgsl/ast/bool_literal_expression.h"
 #include "src/tint/lang/wgsl/ast/break_if_statement.h"
 #include "src/tint/lang/wgsl/ast/break_statement.h"
@@ -41,7 +51,6 @@
 #include "src/tint/lang/wgsl/ast/if_statement.h"
 #include "src/tint/lang/wgsl/ast/increment_decrement_statement.h"
 #include "src/tint/lang/wgsl/ast/index_accessor_expression.h"
-#include "src/tint/lang/wgsl/ast/index_attribute.h"
 #include "src/tint/lang/wgsl/ast/int_literal_expression.h"
 #include "src/tint/lang/wgsl/ast/internal_attribute.h"
 #include "src/tint/lang/wgsl/ast/interpolate_attribute.h"
@@ -69,20 +78,19 @@
 #include "src/tint/lang/wgsl/sem/struct.h"
 #include "src/tint/lang/wgsl/sem/switch_statement.h"
 #include "src/tint/utils/macros/scoped_assignment.h"
-#include "src/tint/utils/math/math.h"
 #include "src/tint/utils/rtti/switch.h"
 #include "src/tint/utils/strconv/float_to_string.h"
 #include "src/tint/utils/text/string.h"
 
 namespace tint::wgsl::writer {
 
-SyntaxTreePrinter::SyntaxTreePrinter(const Program* program) : program_(program) {}
+SyntaxTreePrinter::SyntaxTreePrinter(const Program& program) : program_(program) {}
 
 SyntaxTreePrinter::~SyntaxTreePrinter() = default;
 
 bool SyntaxTreePrinter::Generate() {
     // Generate global declarations in the order they appear in the module.
-    for (auto* decl : program_->AST().GlobalDeclarations()) {
+    for (auto* decl : program_.AST().GlobalDeclarations()) {
         Switch(
             decl,  //
             [&](const ast::DiagnosticDirective* dd) { EmitDiagnosticControl(dd->control); },
@@ -90,10 +98,10 @@ bool SyntaxTreePrinter::Generate() {
             [&](const ast::TypeDecl* td) { EmitTypeDecl(td); },
             [&](const ast::Function* func) { EmitFunction(func); },
             [&](const ast::Variable* var) { EmitVariable(var); },
-            [&](const ast::ConstAssert* ca) { EmitConstAssert(ca); },
-            [&](Default) { TINT_UNREACHABLE(); });
+            [&](const ast::ConstAssert* ca) { EmitConstAssert(ca); },  //
+            TINT_ICE_ON_NO_MATCH);
 
-        if (decl != program_->AST().GlobalDeclarations().Back()) {
+        if (decl != program_.AST().GlobalDeclarations().Back()) {
             Line();
         }
     }
@@ -135,11 +143,8 @@ void SyntaxTreePrinter::EmitTypeDecl(const ast::TypeDecl* ty) {
             }
             Line() << "]";
         },
-        [&](const ast::Struct* str) { EmitStructType(str); },
-        [&](Default) {
-            diagnostics_.add_error(diag::System::Writer,
-                                   "unknown declared type: " + std::string(ty->TypeInfo().name));
-        });
+        [&](const ast::Struct* str) { EmitStructType(str); },  //
+        TINT_ICE_ON_NO_MATCH);
 }
 
 void SyntaxTreePrinter::EmitExpression(const ast::Expression* expr) {
@@ -147,14 +152,13 @@ void SyntaxTreePrinter::EmitExpression(const ast::Expression* expr) {
         expr,  //
         [&](const ast::IndexAccessorExpression* a) { EmitIndexAccessor(a); },
         [&](const ast::BinaryExpression* b) { EmitBinary(b); },
-        [&](const ast::BitcastExpression* b) { EmitBitcast(b); },
         [&](const ast::CallExpression* c) { EmitCall(c); },
         [&](const ast::IdentifierExpression* i) { EmitIdentifier(i); },
         [&](const ast::LiteralExpression* l) { EmitLiteral(l); },
         [&](const ast::MemberAccessorExpression* m) { EmitMemberAccessor(m); },
         [&](const ast::PhonyExpression*) { Line() << "[PhonyExpression]"; },
-        [&](const ast::UnaryOpExpression* u) { EmitUnaryOp(u); },
-        [&](Default) { diagnostics_.add_error(diag::System::Writer, "unknown expression type"); });
+        [&](const ast::UnaryOpExpression* u) { EmitUnaryOp(u); },  //
+        TINT_ICE_ON_NO_MATCH);
 }
 
 void SyntaxTreePrinter::EmitIndexAccessor(const ast::IndexAccessorExpression* expr) {
@@ -187,24 +191,6 @@ void SyntaxTreePrinter::EmitMemberAccessor(const ast::MemberAccessorExpression* 
             EmitExpression(expr->object);
         }
         Line() << "member: " << expr->member->symbol.Name();
-    }
-    Line() << "]";
-}
-
-void SyntaxTreePrinter::EmitBitcast(const ast::BitcastExpression* expr) {
-    Line() << "BitcastExpression [";
-    {
-        ScopedIndent bc(this);
-        {
-            Line() << "type: ";
-            ScopedIndent ty(this);
-            EmitExpression(expr->type);
-        }
-        {
-            Line() << "expr: ";
-            ScopedIndent exp(this);
-            EmitExpression(expr->expr);
-        }
     }
     Line() << "]";
 }
@@ -253,14 +239,15 @@ void SyntaxTreePrinter::EmitLiteral(const ast::LiteralExpression* lit) {
                 // NaN and Inf are not allowed to be spelled in literal, it should be fine to emit
                 // f16 literals in this way.
                 if (l->suffix == ast::FloatLiteralExpression::Suffix::kNone) {
-                    Line() << tint::writer::DoubleToBitPreservingString(l->value);
+                    Line() << tint::strconv::DoubleToBitPreservingString(l->value);
                 } else {
-                    Line() << tint::writer::FloatToBitPreservingString(static_cast<float>(l->value))
+                    Line() << tint::strconv::FloatToBitPreservingString(
+                                  static_cast<float>(l->value))
                            << l->suffix;
                 }
             },
-            [&](const ast::IntLiteralExpression* l) { Line() << l->value << l->suffix; },
-            [&](Default) { diagnostics_.add_error(diag::System::Writer, "unknown literal type"); });
+            [&](const ast::IntLiteralExpression* l) { Line() << l->value << l->suffix; },  //
+            TINT_ICE_ON_NO_MATCH);
     }
     Line() << "]";
 }
@@ -486,8 +473,8 @@ void SyntaxTreePrinter::EmitVariable(const ast::Variable* v) {
             },
             [&](const ast::Let*) { Line() << "Let []"; },
             [&](const ast::Override*) { Line() << "Override []"; },
-            [&](const ast::Const*) { Line() << "Const []"; },
-            [&](Default) { TINT_ICE() << "unhandled variable type " << v->TypeInfo().name; });
+            [&](const ast::Const*) { Line() << "Const []"; },  //
+            TINT_ICE_ON_NO_MATCH);
 
         Line() << "name: " << v->name->symbol.Name();
 
@@ -556,8 +543,8 @@ void SyntaxTreePrinter::EmitAttributes(VectorRef<const ast::Attribute*> attrs) {
                 }
                 Line() << "]";
             },
-            [&](const ast::IndexAttribute* index) {
-                Line() << "IndexAttribute [";
+            [&](const ast::BlendSrcAttribute* index) {
+                Line() << "BlendSrcAttribute [";
                 {
                     ScopedIndent idx(this);
                     EmitExpression(index->expr);
@@ -635,10 +622,8 @@ void SyntaxTreePrinter::EmitAttributes(VectorRef<const ast::Attribute*> attrs) {
             },
             [&](const ast::InternalAttribute* internal) {
                 Line() << "InternalAttribute [" << internal->InternalName() << "]";
-            },
-            [&](Default) {
-                TINT_ICE() << "Unsupported attribute '" << attr->TypeInfo().name << "'";
-            });
+            },  //
+            TINT_ICE_ON_NO_MATCH);
     }
 }
 
@@ -799,11 +784,8 @@ void SyntaxTreePrinter::EmitStatement(const ast::Statement* stmt) {
         [&](const ast::ReturnStatement* r) { EmitReturn(r); },
         [&](const ast::ConstAssert* c) { EmitConstAssert(c); },
         [&](const ast::SwitchStatement* s) { EmitSwitch(s); },
-        [&](const ast::VariableDeclStatement* v) { EmitVariable(v->variable); },
-        [&](Default) {
-            diagnostics_.add_error(diag::System::Writer,
-                                   "unknown statement type: " + std::string(stmt->TypeInfo().name));
-        });
+        [&](const ast::VariableDeclStatement* v) { EmitVariable(v->variable); },  //
+        TINT_ICE_ON_NO_MATCH);
 }
 
 void SyntaxTreePrinter::EmitStatements(VectorRef<const ast::Statement*> stmts) {

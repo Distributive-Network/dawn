@@ -1,16 +1,29 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <vector>
 
@@ -39,7 +52,7 @@ std::ostream& operator<<(std::ostream& o, EncoderType type) {
             o << "RenderPass";
             break;
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
             break;
     }
 
@@ -70,7 +83,7 @@ class ExpectBetweenTimestamps : public detail::Expectation {
             if (actual[i] < mMinValue || actual[i] > mMaxValue) {
                 return testing::AssertionFailure()
                        << "Expected data[" << i << "] to be between " << mMinValue << " and "
-                       << mMaxValue << ", actual " << actual[i] << std::endl;
+                       << mMaxValue << ", actual " << actual[i] << "\n";
             }
         }
 
@@ -92,10 +105,12 @@ class GPUTimestampCalibrationTests : public DawnTestWithParams<GPUTimestampCalib
         // Requires that timestamp query feature is enabled and timestamp query conversion is
         // disabled.
         DAWN_TEST_UNSUPPORTED_IF(!mIsFeatureSupported);
-        // The "timestamp-query-inside-passes" feature is not supported on command encoder.
-        DAWN_TEST_UNSUPPORTED_IF(GetParam().mFeatureName ==
-                                     wgpu::FeatureName::TimestampQueryInsidePasses &&
-                                 GetParam().mEncoderType == EncoderType::NonPass);
+        // The "chromium-experimental-timestamp-query-inside-passes" feature is not supported on
+        // command encoder.
+        DAWN_TEST_UNSUPPORTED_IF(
+            GetParam().mFeatureName ==
+                wgpu::FeatureName::ChromiumExperimentalTimestampQueryInsidePasses &&
+            GetParam().mEncoderType == EncoderType::NonPass);
 
         mBackend = GPUTimestampCalibrationTestBackend::Create(device);
         DAWN_TEST_UNSUPPORTED_IF(!mBackend->IsSupported());
@@ -123,7 +138,6 @@ class GPUTimestampCalibrationTests : public DawnTestWithParams<GPUTimestampCalib
 
         wgpu::ComputePipelineDescriptor descriptor;
         descriptor.compute.module = module;
-        descriptor.compute.entryPoint = "main";
 
         return device.CreateComputePipeline(&descriptor);
     }
@@ -151,14 +165,11 @@ class GPUTimestampCalibrationTests : public DawnTestWithParams<GPUTimestampCalib
                                            const wgpu::QuerySet& querySet) {
         switch (GetParam().mFeatureName) {
             case wgpu::FeatureName::TimestampQuery: {
-                std::vector<wgpu::ComputePassTimestampWrite> timestampWrites;
-                timestampWrites.push_back(
-                    {querySet, 0, wgpu::ComputePassTimestampLocation::Beginning});
-                timestampWrites.push_back({querySet, 1, wgpu::ComputePassTimestampLocation::End});
+                wgpu::ComputePassTimestampWrites timestampWrites = {
+                    .querySet = querySet, .beginningOfPassWriteIndex = 0, .endOfPassWriteIndex = 1};
 
                 wgpu::ComputePassDescriptor descriptor;
-                descriptor.timestampWriteCount = timestampWrites.size();
-                descriptor.timestampWrites = timestampWrites.data();
+                descriptor.timestampWrites = &timestampWrites;
 
                 wgpu::ComputePassEncoder pass = encoder.BeginComputePass(&descriptor);
                 pass.SetPipeline(CreateComputePipeline());
@@ -166,7 +177,7 @@ class GPUTimestampCalibrationTests : public DawnTestWithParams<GPUTimestampCalib
                 pass.End();
                 break;
             }
-            case wgpu::FeatureName::TimestampQueryInsidePasses: {
+            case wgpu::FeatureName::ChromiumExperimentalTimestampQueryInsidePasses: {
                 wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
                 pass.WriteTimestamp(querySet, 0);
                 pass.SetPipeline(CreateComputePipeline());
@@ -187,13 +198,9 @@ class GPUTimestampCalibrationTests : public DawnTestWithParams<GPUTimestampCalib
 
         switch (GetParam().mFeatureName) {
             case wgpu::FeatureName::TimestampQuery: {
-                std::vector<wgpu::RenderPassTimestampWrite> timestampWrites;
-                timestampWrites.push_back(
-                    {querySet, 0, wgpu::RenderPassTimestampLocation::Beginning});
-                timestampWrites.push_back({querySet, 1, wgpu::RenderPassTimestampLocation::End});
-
-                renderPass.renderPassInfo.timestampWriteCount = timestampWrites.size();
-                renderPass.renderPassInfo.timestampWrites = timestampWrites.data();
+                wgpu::RenderPassTimestampWrites timestampWrites = {
+                    .querySet = querySet, .beginningOfPassWriteIndex = 0, .endOfPassWriteIndex = 1};
+                renderPass.renderPassInfo.timestampWrites = &timestampWrites;
 
                 wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass.renderPassInfo);
                 pass.SetPipeline(CreateRenderPipeline());
@@ -201,7 +208,7 @@ class GPUTimestampCalibrationTests : public DawnTestWithParams<GPUTimestampCalib
                 pass.End();
                 break;
             }
-            case wgpu::FeatureName::TimestampQueryInsidePasses: {
+            case wgpu::FeatureName::ChromiumExperimentalTimestampQueryInsidePasses: {
                 wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass.renderPassInfo);
                 pass.WriteTimestamp(querySet, 0);
                 pass.SetPipeline(CreateRenderPipeline());
@@ -235,8 +242,10 @@ class GPUTimestampCalibrationTests : public DawnTestWithParams<GPUTimestampCalib
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
         switch (GetParam().mEncoderType) {
             case EncoderType::NonPass: {
-                // The "timestamp-query-inside-passes" feature is not supported on command encoder
-                ASSERT(GetParam().mFeatureName != wgpu::FeatureName::TimestampQueryInsidePasses);
+                // The "chromium-experimental-timestamp-query-inside-passes" feature is not
+                // supported on command encoder
+                DAWN_ASSERT(GetParam().mFeatureName !=
+                            wgpu::FeatureName::ChromiumExperimentalTimestampQueryInsidePasses);
                 encoder.WriteTimestamp(querySet, 0);
                 encoder.WriteTimestamp(querySet, 1);
                 break;
@@ -302,7 +311,8 @@ DAWN_INSTANTIATE_TEST_P(
      D3D12Backend({}, {"disable_timestamp_query_conversion"}),
      MetalBackend({"disable_timestamp_query_conversion"}, {}),
      MetalBackend({}, {"disable_timestamp_query_conversion"})},
-    {wgpu::FeatureName::TimestampQuery, wgpu::FeatureName::TimestampQueryInsidePasses},
+    {wgpu::FeatureName::TimestampQuery,
+     wgpu::FeatureName::ChromiumExperimentalTimestampQueryInsidePasses},
     {EncoderType::NonPass, EncoderType::ComputePass, EncoderType::RenderPass});
 
 }  // anonymous namespace

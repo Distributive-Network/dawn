@@ -1,16 +1,29 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <thread>
 #include <utility>
@@ -18,6 +31,7 @@
 #include "dawn/common/Ref.h"
 #include "dawn/common/RefCounted.h"
 #include "gtest/gtest.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn {
 namespace {
@@ -39,12 +53,30 @@ class RCTest : public RefCounted {
     RCTest* GetThis() { return this; }
 
   private:
-    bool* mDeleted = nullptr;
+    raw_ptr<bool> mDeleted = nullptr;
 };
 
 struct RCTestDerived : public RCTest {
     using RCTest::RCTest;
 };
+
+TEST(RefCount, Increment) {
+    RefCount refCount0(/*initCount=*/0, /*payload=*/0);
+    // Previous count is 0
+    EXPECT_TRUE(refCount0.Increment());
+    // Previous count is 1
+    EXPECT_FALSE(refCount0.Increment());
+
+    EXPECT_FALSE(refCount0.Decrement());
+    EXPECT_TRUE(refCount0.Decrement());
+
+    RefCount refCount1(/*initCount=*/1, /*payload=*/0);
+    // Previous count is 1
+    EXPECT_FALSE(refCount1.Increment());
+
+    EXPECT_FALSE(refCount1.Decrement());
+    EXPECT_TRUE(refCount1.Decrement());
+}
 
 // Test that RCs start with one ref, and removing it destroys the object.
 TEST(RefCounted, StartsWithOneRef) {
@@ -60,7 +92,7 @@ TEST(RefCounted, AddingRefKeepsAlive) {
     bool deleted = false;
     auto* test = new RCTest(&deleted);
 
-    test->Reference();
+    test->AddRef();
     test->Release();
     EXPECT_FALSE(deleted);
 
@@ -68,14 +100,14 @@ TEST(RefCounted, AddingRefKeepsAlive) {
     EXPECT_TRUE(deleted);
 }
 
-// Test that Reference and Release atomically change the refcount.
-TEST(RefCounted, RaceOnReferenceRelease) {
+// Test that AddRef and Release atomically change the refcount.
+TEST(RefCounted, RaceOnAddRefRelease) {
     bool deleted = false;
     auto* test = new RCTest(&deleted);
 
     auto referenceManyTimes = [test] {
         for (uint32_t i = 0; i < 100000; ++i) {
-            test->Reference();
+            test->AddRef();
         }
     };
     std::thread t1(referenceManyTimes);
@@ -263,7 +295,7 @@ TEST(Ref, PayloadUnchangedByRefCounting) {
     RCTest* test = new RCTest(1ull);
     EXPECT_EQ(test->GetRefCountPayload(), 1u);
 
-    test->Reference();
+    test->AddRef();
     EXPECT_EQ(test->GetRefCountPayload(), 1u);
     test->Release();
     EXPECT_EQ(test->GetRefCountPayload(), 1u);

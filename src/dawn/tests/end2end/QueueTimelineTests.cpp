@@ -1,73 +1,55 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <memory>
 
 #include "dawn/tests/DawnTest.h"
+#include "dawn/tests/MockCallback.h"
 #include "gmock/gmock.h"
 
 namespace dawn {
 namespace {
 
+using testing::_;
 using testing::InSequence;
+using testing::MockCppCallback;
 
-class MockMapCallback {
-  public:
-    MOCK_METHOD(void, Call, (WGPUBufferMapAsyncStatus status, void* userdata));
-};
-
-static std::unique_ptr<MockMapCallback> mockMapCallback;
-static void ToMockMapCallback(WGPUBufferMapAsyncStatus status, void* userdata) {
-    EXPECT_EQ(status, WGPUBufferMapAsyncStatus_Success);
-    mockMapCallback->Call(status, userdata);
-}
-
-class MockQueueWorkDoneCallback {
-  public:
-    MOCK_METHOD(void, Call, (WGPUQueueWorkDoneStatus status, void* userdata));
-};
-
-static std::unique_ptr<MockQueueWorkDoneCallback> mockQueueWorkDoneCallback;
-static void ToMockQueueWorkDone(WGPUQueueWorkDoneStatus status, void* userdata) {
-    mockQueueWorkDoneCallback->Call(status, userdata);
-}
-
-static std::unique_ptr<MockQueueWorkDoneCallback> mockQueueWorkDoneCallback1;
-static void ToMockQueueWorkDone1(WGPUQueueWorkDoneStatus status, void* userdata) {
-    mockQueueWorkDoneCallback1->Call(status, userdata);
-}
+using MockMapAsyncCallback = MockCppCallback<void (*)(wgpu::MapAsyncStatus, const char*)>;
+using MockQueueWorkDoneCallback = MockCppCallback<void (*)(wgpu::QueueWorkDoneStatus)>;
 
 class QueueTimelineTests : public DawnTest {
   protected:
     void SetUp() override {
         DawnTest::SetUp();
 
-        mockMapCallback = std::make_unique<MockMapCallback>();
-        mockQueueWorkDoneCallback = std::make_unique<MockQueueWorkDoneCallback>();
-        mockQueueWorkDoneCallback1 = std::make_unique<MockQueueWorkDoneCallback>();
-
         wgpu::BufferDescriptor descriptor;
         descriptor.size = 4;
         descriptor.usage = wgpu::BufferUsage::MapRead;
         mMapReadBuffer = device.CreateBuffer(&descriptor);
-    }
-
-    void TearDown() override {
-        mockMapCallback = nullptr;
-        mockQueueWorkDoneCallback = nullptr;
-        mockQueueWorkDoneCallback1 = nullptr;
-        DawnTest::TearDown();
     }
 
     wgpu::Buffer mMapReadBuffer;
@@ -77,13 +59,17 @@ class QueueTimelineTests : public DawnTest {
 // when queue.OnSubmittedWorkDone is called after mMapReadBuffer.MapAsync. The callback order should
 // happen in the order the functions are called.
 TEST_P(QueueTimelineTests, MapRead_OnWorkDone) {
+    MockMapAsyncCallback mockMapAsyncCb;
+    MockQueueWorkDoneCallback mockQueueWorkDoneCb;
+
     InSequence sequence;
-    EXPECT_CALL(*mockMapCallback, Call(WGPUBufferMapAsyncStatus_Success, this)).Times(1);
-    EXPECT_CALL(*mockQueueWorkDoneCallback, Call(WGPUQueueWorkDoneStatus_Success, this)).Times(1);
+    EXPECT_CALL(mockMapAsyncCb, Call(wgpu::MapAsyncStatus::Success, _)).Times(1);
+    EXPECT_CALL(mockQueueWorkDoneCb, Call(wgpu::QueueWorkDoneStatus::Success)).Times(1);
 
-    mMapReadBuffer.MapAsync(wgpu::MapMode::Read, 0, wgpu::kWholeMapSize, ToMockMapCallback, this);
-
-    queue.OnSubmittedWorkDone(0u, ToMockQueueWorkDone, this);
+    mMapReadBuffer.MapAsync(wgpu::MapMode::Read, 0, wgpu::kWholeMapSize,
+                            wgpu::CallbackMode::AllowProcessEvents, mockMapAsyncCb.Callback());
+    queue.OnSubmittedWorkDone(wgpu::CallbackMode::AllowProcessEvents,
+                              mockQueueWorkDoneCb.Callback());
 
     WaitForAllOperations();
     mMapReadBuffer.Unmap();
@@ -91,12 +77,17 @@ TEST_P(QueueTimelineTests, MapRead_OnWorkDone) {
 
 // Test that the OnSubmittedWorkDone callbacks should happen in the order the functions are called.
 TEST_P(QueueTimelineTests, OnWorkDone_OnWorkDone) {
-    InSequence sequence;
-    EXPECT_CALL(*mockQueueWorkDoneCallback, Call(WGPUQueueWorkDoneStatus_Success, this)).Times(1);
-    EXPECT_CALL(*mockQueueWorkDoneCallback1, Call(WGPUQueueWorkDoneStatus_Success, this)).Times(1);
+    MockQueueWorkDoneCallback mockQueueWorkDoneCb1;
+    MockQueueWorkDoneCallback mockQueueWorkDoneCb2;
 
-    queue.OnSubmittedWorkDone(0u, ToMockQueueWorkDone, this);
-    queue.OnSubmittedWorkDone(0u, ToMockQueueWorkDone1, this);
+    InSequence sequence;
+    EXPECT_CALL(mockQueueWorkDoneCb1, Call(wgpu::QueueWorkDoneStatus::Success)).Times(1);
+    EXPECT_CALL(mockQueueWorkDoneCb2, Call(wgpu::QueueWorkDoneStatus::Success)).Times(1);
+
+    queue.OnSubmittedWorkDone(wgpu::CallbackMode::AllowProcessEvents,
+                              mockQueueWorkDoneCb1.Callback());
+    queue.OnSubmittedWorkDone(wgpu::CallbackMode::AllowProcessEvents,
+                              mockQueueWorkDoneCb2.Callback());
 
     WaitForAllOperations();
 }

@@ -1,16 +1,29 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <string>
 #include <vector>
@@ -69,7 +82,7 @@ class BindGroupTests : public DawnTest {
     }
 
     wgpu::ShaderModule MakeFSModule(std::vector<wgpu::BufferBindingType> bindingTypes) const {
-        ASSERT(bindingTypes.size() <= kMaxBindGroups);
+        DAWN_ASSERT(bindingTypes.size() <= kMaxBindGroups);
 
         std::ostringstream fs;
         for (size_t i = 0; i < bindingTypes.size(); ++i) {
@@ -87,7 +100,7 @@ class BindGroupTests : public DawnTest {
                        << " : Buffer" << i << ";";
                     break;
                 default:
-                    UNREACHABLE();
+                    DAWN_UNREACHABLE();
             }
         }
 
@@ -146,7 +159,6 @@ TEST_P(BindGroupTests, ReusedBindGroupSingleSubmit) {
 
     wgpu::ComputePipelineDescriptor cpDesc;
     cpDesc.compute.module = module;
-    cpDesc.compute.entryPoint = "main";
     wgpu::ComputePipeline cp = device.CreateComputePipeline(&cpDesc);
 
     wgpu::BufferDescriptor bufferDesc;
@@ -169,9 +181,8 @@ TEST_P(BindGroupTests, ReusedUBO) {
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
-        // TODO(crbug.com/tint/369): Use a mat2x2 when Tint translates it correctly.
         struct VertexUniformBuffer {
-            transform : vec4f
+            transform : mat2x2f
         }
 
         @group(0) @binding(0) var <uniform> vertexUbo : VertexUniformBuffer;
@@ -183,8 +194,7 @@ TEST_P(BindGroupTests, ReusedUBO) {
                 vec2f( 1.0, 1.0),
                 vec2f(-1.0, -1.0));
 
-            var transform = mat2x2<f32>(vertexUbo.transform.xy, vertexUbo.transform.zw);
-            return vec4f(transform * pos[VertexIndex], 0.0, 1.0);
+            return vec4f(vertexUbo.transform * pos[VertexIndex], 0.0, 1.0);
         })");
 
     wgpu::ShaderModule fsModule = utils::CreateShaderModule(device, R"(
@@ -209,7 +219,7 @@ TEST_P(BindGroupTests, ReusedUBO) {
         char padding[256 - 8 * sizeof(float)];
         float color[4];
     };
-    ASSERT(offsetof(Data, color) == 256);
+    DAWN_ASSERT(offsetof(Data, color) == 256);
     Data data{
         {1.f, 0.f, 0.f, 1.0f},
         {0},
@@ -247,11 +257,7 @@ TEST_P(BindGroupTests, UBOSamplerAndTexture) {
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
-        // TODO(crbug.com/tint/369): Use a mat2x2 when Tint translates it correctly.
-        struct VertexUniformBuffer {
-            transform : vec4f
-        }
-        @group(0) @binding(0) var <uniform> vertexUbo : VertexUniformBuffer;
+        @group(0) @binding(0) var <uniform> transform : mat2x2f;
 
         @vertex
         fn main(@builtin(vertex_index) VertexIndex : u32) -> @builtin(position) vec4f {
@@ -260,7 +266,6 @@ TEST_P(BindGroupTests, UBOSamplerAndTexture) {
                 vec2f( 1.0, 1.0),
                 vec2f(-1.0, -1.0));
 
-            var transform = mat2x2<f32>(vertexUbo.transform.xy, vertexUbo.transform.zw);
             return vec4f(transform * pos[VertexIndex], 0.0, 1.0);
         })");
 
@@ -350,10 +355,9 @@ TEST_P(BindGroupTests, MultipleBindLayouts) {
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
-        // TODO(crbug.com/tint/369): Use a mat2x2 when Tint translates it correctly.
-        struct VertexUniformBuffer {
-            transform : vec4f
-        }
+         struct VertexUniformBuffer {
+             transform : mat2x2f
+         }
 
         @group(0) @binding(0) var <uniform> vertexUbo1 : VertexUniformBuffer;
         @group(1) @binding(0) var <uniform> vertexUbo2 : VertexUniformBuffer;
@@ -365,10 +369,8 @@ TEST_P(BindGroupTests, MultipleBindLayouts) {
                 vec2f( 1.0, 1.0),
                 vec2f(-1.0, -1.0));
 
-            return vec4f(mat2x2<f32>(
-                vertexUbo1.transform.xy + vertexUbo2.transform.xy,
-                vertexUbo1.transform.zw + vertexUbo2.transform.zw
-            ) * pos[VertexIndex], 0.0, 1.0);
+            return vec4f(
+                (vertexUbo1.transform + vertexUbo2.transform) * pos[VertexIndex], 0.0, 1.0);
         })");
 
     wgpu::ShaderModule fsModule = utils::CreateShaderModule(device, R"(
@@ -395,7 +397,7 @@ TEST_P(BindGroupTests, MultipleBindLayouts) {
         char padding[256 - 4 * sizeof(float)];
         float color[4];
     };
-    ASSERT(offsetof(Data, color) == 256);
+    DAWN_ASSERT(offsetof(Data, color) == 256);
 
     std::vector<Data> data;
     std::vector<wgpu::Buffer> buffers;
@@ -1080,6 +1082,9 @@ TEST_P(BindGroupTests, DrawThenChangePipelineTwiceAndBindGroup) {
 // Regression test for crbug.com/dawn/408 where dynamic offsets were applied in the wrong order.
 // Dynamic offsets should be applied in increasing order of binding number.
 TEST_P(BindGroupTests, DynamicOffsetOrder) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
+
     // We will put the following values and the respective offsets into a buffer.
     // The test will ensure that the correct dynamic offset is applied to each buffer by reading the
     // value from an offset binding.
@@ -1141,7 +1146,6 @@ TEST_P(BindGroupTests, DynamicOffsetOrder) {
         @compute @workgroup_size(1) fn main() {
             outputBuffer = vec3u(buffer0.value, buffer2.value, buffer3.value);
         })");
-    pipelineDescriptor.compute.entryPoint = "main";
     pipelineDescriptor.layout = utils::MakeBasicPipelineLayout(device, &bgl);
     wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&pipelineDescriptor);
 
@@ -1223,7 +1227,6 @@ TEST_P(BindGroupTests, DynamicAndNonDynamicBindingsDoNotConflictAfterRemapping) 
         @compute @workgroup_size(1) fn main() {
             outputBuffer.value = vec2u(buffer0.value, buffer1.value);
         })");
-        pipelineDescriptor.compute.entryPoint = "main";
         pipelineDescriptor.layout = utils::MakeBasicPipelineLayout(device, &bgl);
         wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&pipelineDescriptor);
 
@@ -1252,13 +1255,17 @@ TEST_P(BindGroupTests, DynamicAndNonDynamicBindingsDoNotConflictAfterRemapping) 
 TEST_P(BindGroupTests, BindGroupLayoutVisibilityCanBeNone) {
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
-    wgpu::BindGroupLayoutEntry entry;
-    entry.binding = 0;
-    entry.visibility = wgpu::ShaderStage::None;
-    entry.buffer.type = wgpu::BufferBindingType::Uniform;
+    wgpu::BindGroupLayoutEntry entries[2];
+    entries[0].binding = 0;
+    entries[0].visibility = wgpu::ShaderStage::None;
+    entries[0].buffer.type = wgpu::BufferBindingType::Uniform;
+    entries[1].binding = 1;
+    entries[1].visibility = wgpu::ShaderStage::None;
+    entries[1].texture.sampleType = wgpu::TextureSampleType::Float;
+
     wgpu::BindGroupLayoutDescriptor descriptor;
-    descriptor.entryCount = 1;
-    descriptor.entries = &entry;
+    descriptor.entryCount = 2;
+    descriptor.entries = entries;
     wgpu::BindGroupLayout layout = device.CreateBindGroupLayout(&descriptor);
 
     wgpu::RenderPipeline pipeline = MakeTestPipeline(renderPass, {}, {layout});
@@ -1266,8 +1273,16 @@ TEST_P(BindGroupTests, BindGroupLayoutVisibilityCanBeNone) {
     std::array<float, 4> color = {1, 0, 0, 1};
     wgpu::Buffer uniformBuffer =
         utils::CreateBufferFromData(device, &color, sizeof(color), wgpu::BufferUsage::Uniform);
-    wgpu::BindGroup bindGroup =
-        utils::MakeBindGroup(device, layout, {{0, uniformBuffer, 0, sizeof(color)}});
+
+    wgpu::TextureDescriptor textureDescriptor;
+    textureDescriptor.size = {kRTSize, kRTSize};
+    textureDescriptor.format = wgpu::TextureFormat::RGBA8Unorm;
+    textureDescriptor.usage = wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::TextureBinding;
+    wgpu::Texture texture = device.CreateTexture(&textureDescriptor);
+    wgpu::TextureView textureView = texture.CreateView();
+
+    wgpu::BindGroup bindGroup = utils::MakeBindGroup(
+        device, layout, {{0, uniformBuffer, 0, sizeof(color)}, {1, textureView}});
 
     wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
     wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass.renderPassInfo);
@@ -1441,7 +1456,6 @@ TEST_P(BindGroupTests, EmptyLayout) {
 
     wgpu::ComputePipelineDescriptor pipelineDesc;
     pipelineDesc.layout = utils::MakeBasicPipelineLayout(device, &bgl);
-    pipelineDesc.compute.entryPoint = "main";
     pipelineDesc.compute.module = utils::CreateShaderModule(device, R"(
         @compute @workgroup_size(1) fn main() {
         })");

@@ -1,16 +1,29 @@
-// Copyright 2022 The Tint Authors.
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/constant/eval.h"
 
@@ -30,7 +43,6 @@
 #include "src/tint/lang/core/number.h"
 #include "src/tint/lang/core/type/abstract_float.h"
 #include "src/tint/lang/core/type/abstract_int.h"
-#include "src/tint/lang/core/type/array.h"
 #include "src/tint/lang/core/type/bool.h"
 #include "src/tint/lang/core/type/f16.h"
 #include "src/tint/lang/core/type/f32.h"
@@ -183,16 +195,15 @@ std::string OverflowErrorMessage(NumberT lhs, const char* op, NumberT rhs) {
 template <typename VALUE_TY>
 std::string OverflowErrorMessage(VALUE_TY value, std::string_view target_ty) {
     StringStream ss;
-    ss << "value " << value << " cannot be represented as "
-       << "'" << target_ty << "'";
+    ss << "value " << value << " cannot be represented as " << "'" << target_ty << "'";
     return ss.str();
 }
 
 template <typename NumberT>
 std::string OverflowExpErrorMessage(std::string_view base, NumberT exp) {
     StringStream ss;
-    ss << base << "^" << exp << " cannot be represented as "
-       << "'" << FriendlyName<NumberT>() << "'";
+    ss << base << "^" << exp << " cannot be represented as " << "'" << FriendlyName<NumberT>()
+       << "'";
     return ss.str();
 }
 
@@ -261,7 +272,7 @@ const ScalarBase* ScalarConvert(const Scalar<T>* scalar,
         } else if constexpr (std::is_same_v<FROM, bool>) {
             // [bool -> x]
             return ctx.mgr.Get<Scalar<TO>>(target_ty, TO(scalar->value ? 1 : 0));
-        } else if (auto conv = CheckedConvert<TO>(scalar->value)) {
+        } else if (auto conv = CheckedConvert<TO>(scalar->value); conv == Success) {
             // Conversion success
             return ctx.mgr.Get<Scalar<TO>>(target_ty, conv.Get());
             // --- Below this point are the failure cases ---
@@ -269,7 +280,7 @@ const ScalarBase* ScalarConvert(const Scalar<T>* scalar,
             // [abstract-numeric -> x] - materialization failure
             auto msg = OverflowErrorMessage(scalar->value, target_ty->FriendlyName());
             if (ctx.use_runtime_semantics) {
-                ctx.diags.add_warning(tint::diag::System::Resolver, msg, ctx.source);
+                ctx.diags.AddWarning(ctx.source) << msg;
                 switch (conv.Failure()) {
                     case ConversionFailure::kExceedsNegativeLimit:
                         return ctx.mgr.Get<Scalar<TO>>(target_ty, TO::Lowest());
@@ -277,7 +288,7 @@ const ScalarBase* ScalarConvert(const Scalar<T>* scalar,
                         return ctx.mgr.Get<Scalar<TO>>(target_ty, TO::Highest());
                 }
             } else {
-                ctx.diags.add_error(tint::diag::System::Resolver, msg, ctx.source);
+                ctx.diags.AddError(ctx.source) << msg;
                 return nullptr;
             }
         } else if constexpr (IsFloatingPoint<TO>) {
@@ -285,7 +296,7 @@ const ScalarBase* ScalarConvert(const Scalar<T>* scalar,
             // https://www.w3.org/TR/WGSL/#floating-point-conversion
             auto msg = OverflowErrorMessage(scalar->value, target_ty->FriendlyName());
             if (ctx.use_runtime_semantics) {
-                ctx.diags.add_warning(tint::diag::System::Resolver, msg, ctx.source);
+                ctx.diags.AddWarning(ctx.source) << msg;
                 switch (conv.Failure()) {
                     case ConversionFailure::kExceedsNegativeLimit:
                         return ctx.mgr.Get<Scalar<TO>>(target_ty, TO::Lowest());
@@ -293,7 +304,7 @@ const ScalarBase* ScalarConvert(const Scalar<T>* scalar,
                         return ctx.mgr.Get<Scalar<TO>>(target_ty, TO::Highest());
                 }
             } else {
-                ctx.diags.add_error(tint::diag::System::Resolver, msg, ctx.source);
+                ctx.diags.AddError(ctx.source) << msg;
                 return nullptr;
             }
         } else if constexpr (IsFloatingPoint<FROM>) {
@@ -347,7 +358,7 @@ const Value* ConvertInternal(const Value* root_value,
         if (auto* build = std::get_if<ActionBuildSplat>(&next)) {
             TINT_ASSERT(value_stack.Length() >= 1);
             auto* el = value_stack.Pop();
-            value_stack.Push(ctx.mgr.Splat(build->type, el, build->count));
+            value_stack.Push(ctx.mgr.Splat(build->type, el));
             continue;
         }
 
@@ -413,7 +424,6 @@ const Value* ConvertInternal(const Value* root_value,
                         if (members[i]->Type() != target_el_ty) {
                             TINT_ICE()
                                 << "inconsistent target struct member types for SplatConvert";
-                            return false;
                         }
                     }
                 } else {
@@ -435,7 +445,6 @@ const Value* ConvertInternal(const Value* root_value,
                     if (TINT_UNLIKELY(str->Members().Length() != el_count)) {
                         TINT_ICE()
                             << "const-eval conversion of structure has mismatched element counts";
-                        return false;
                     }
                     // Struct composites can have different types for each member.
                     auto members = str->Members();
@@ -462,23 +471,22 @@ const Value* ConvertInternal(const Value* root_value,
     return value_stack.Pop();
 }
 
-namespace detail {
-/// Implementation of TransformElements
+/// TransformElements constructs a new constant of type `composite_ty` by applying the
+/// transformation function `f` on each of the most deeply nested elements of 'cs'. Assumes that all
+/// input constants `cs` are of the same arity (all scalars or all vectors of the same size).
+/// If `f`'s last argument is a `size_t`, then the index of the most deeply nested element inside
+/// the most deeply nested aggregate type will be passed in.
 template <typename F, typename... CONSTANTS>
-Eval::Result TransformElements(Manager& mgr,
-                               const core::type::Type* composite_ty,
-                               F&& f,
-                               size_t index,
-                               CONSTANTS&&... cs) {
+tint::traits::EnableIf<tint::traits::IsType<size_t, tint::traits::LastParameterType<F>>,
+                       Eval::Result>
+TransformElements(Manager& mgr,
+                  const core::type::Type* composite_ty,
+                  const F& f,
+                  size_t index,
+                  CONSTANTS&&... cs) {
     auto [el_ty, n] = First(cs...)->Type()->Elements();
     if (!el_ty) {
-        constexpr bool kHasIndexParam =
-            tint::traits::IsType<size_t, tint::traits::LastParameterType<F>>;
-        if constexpr (kHasIndexParam) {
-            return f(cs..., index);
-        } else {
-            return f(cs...);
-        }
+        return f(cs..., index);
     }
 
     auto* composite_el_ty = composite_ty->Elements(composite_ty).type;
@@ -486,41 +494,86 @@ Eval::Result TransformElements(Manager& mgr,
     Vector<const Value*, 8> els;
     els.Reserve(n);
     for (uint32_t i = 0; i < n; i++) {
-        if (auto el = detail::TransformElements(mgr, composite_el_ty, std::forward<F>(f), index + i,
-                                                cs->Index(i)...)) {
+        if (auto el = TransformElements(mgr, composite_el_ty, f, index + i, cs->Index(i)...);
+            el == Success) {
             els.Push(el.Get());
-
         } else {
             return el.Failure();
         }
     }
     return mgr.Composite(composite_ty, std::move(els));
 }
-}  // namespace detail
 
-/// TransformElements constructs a new constant of type `composite_ty` by applying the
-/// transformation function `f` on each of the most deeply nested elements of 'cs'. Assumes that all
-/// input constants `cs` are of the same arity (all scalars or all vectors of the same size).
-/// If `f`'s last argument is a `size_t`, then the index of the most deeply nested element inside
-/// the most deeply nested aggregate type will be passed in.
-template <typename F, typename... CONSTANTS>
-Eval::Result TransformElements(Manager& mgr,
-                               const core::type::Type* composite_ty,
-                               F&& f,
-                               CONSTANTS&&... cs) {
-    return detail::TransformElements(mgr, composite_ty, f, 0, cs...);
+/// Signature of a unary transformation callback
+using UnaryTransform = std::function<Eval::Result(const Value*)>;
+
+/// TransformUnaryElements constructs a new constant of type `composite_ty` by applying the
+/// transformation function 'f' on each of the most deeply nested elements of `c0`.
+Eval::Result TransformUnaryElements(Manager& mgr,
+                                    const core::type::Type* composite_ty,
+                                    const UnaryTransform& f,
+                                    const Value* c0) {
+    auto [el_ty, n] = c0->Type()->Elements();
+    if (!el_ty) {
+        return f(c0);
+    }
+
+    auto* composite_el_ty = composite_ty->Elements(composite_ty).type;
+
+    Vector<const Value*, 8> els;
+    els.Reserve(n);
+    for (uint32_t i = 0; i < n; i++) {
+        if (auto el = TransformUnaryElements(mgr, composite_el_ty, f, c0->Index(i));
+            el == Success) {
+            els.Push(el.Get());
+        } else {
+            return el.Failure();
+        }
+    }
+    return mgr.Composite(composite_ty, std::move(els));
 }
+
+/// Signature of a binary transformation callback.
+using BinaryTransform = std::function<Eval::Result(const Value*, const Value*)>;
 
 /// TransformBinaryElements constructs a new constant of type `composite_ty` by applying the
 /// transformation function 'f' on each of the most deeply nested elements of both `c0` and `c1`.
-/// Unlike TransformElements, this function handles the constants being of different arity, e.g.
-/// vector-scalar, scalar-vector.
-template <typename F>
 Eval::Result TransformBinaryElements(Manager& mgr,
                                      const core::type::Type* composite_ty,
-                                     F&& f,
+                                     const BinaryTransform& f,
                                      const Value* c0,
                                      const Value* c1) {
+    auto [el_ty, n] = c0->Type()->Elements();
+    if (!el_ty) {
+        return f(c0, c1);
+    }
+
+    TINT_ASSERT(n == c1->Type()->Elements().count);
+
+    auto* composite_el_ty = composite_ty->Elements(composite_ty).type;
+
+    Vector<const Value*, 8> els;
+    els.Reserve(n);
+    for (uint32_t i = 0; i < n; i++) {
+        if (auto el = TransformBinaryElements(mgr, composite_el_ty, f, c0->Index(i), c1->Index(i));
+            el == Success) {
+            els.Push(el.Get());
+        } else {
+            return el.Failure();
+        }
+    }
+    return mgr.Composite(composite_ty, std::move(els));
+}
+
+/// TransformBinaryDifferingArityElements constructs a new constant of type `composite_ty` by
+/// applying the transformation function 'f' on each of the most deeply nested elements of both `c0`
+/// and `c1`. Unlike TransformElements, this function handles the constants being of different
+/// arity, e.g. vector-scalar, scalar-vector.
+Eval::Result TransformBinaryDifferingArityElements(Manager& mgr,
+                                                   const core::type::Type* composite_ty,
+                                                   const BinaryTransform& f,
+                                                   const Value* c0,
+                                                   const Value* c1) {
     uint32_t n0 = c0->Type()->Elements(nullptr, 1).count;
     uint32_t n1 = c1->Type()->Elements(nullptr, 1).count;
     uint32_t max_n = std::max(n0, n1);
@@ -535,13 +588,44 @@ Eval::Result TransformBinaryElements(Manager& mgr,
     els.Reserve(max_n);
     for (uint32_t i = 0; i < max_n; i++) {
         auto nested_or_self = [&](auto* c, uint32_t num_elems) {
-            if (num_elems == 1) {
-                return c;
-            }
-            return c->Index(i);
+            return (num_elems == 1) ? c : c->Index(i);
         };
-        if (auto el = TransformBinaryElements(mgr, element_ty, std::forward<F>(f),
-                                              nested_or_self(c0, n0), nested_or_self(c1, n1))) {
+        if (auto el = TransformBinaryDifferingArityElements(
+                mgr, element_ty, f, nested_or_self(c0, n0), nested_or_self(c1, n1));
+            el == Success) {
+            els.Push(el.Get());
+        } else {
+            return el.Failure();
+        }
+    }
+    return mgr.Composite(composite_ty, std::move(els));
+}
+
+/// Signature of a ternary transformation callback
+using TernaryTransform = std::function<Eval::Result(const Value*, const Value*, const Value*)>;
+
+/// TransformTernaryElements constructs a new constant of type `composite_ty` by applying the
+/// transformation function 'f' on each of the most deeply nested elements of both `c0`, `c1`, and
+/// `c2`.
+Eval::Result TransformTernaryElements(Manager& mgr,
+                                      const core::type::Type* composite_ty,
+                                      const TernaryTransform& f,
+                                      const Value* c0,
+                                      const Value* c1,
+                                      const Value* c2) {
+    auto [el_ty, n] = c0->Type()->Elements();
+    if (!el_ty) {
+        return f(c0, c1, c2);
+    }
+
+    auto* composite_el_ty = composite_ty->Elements(composite_ty).type;
+
+    Vector<const Value*, 8> els;
+    els.Reserve(n);
+    for (uint32_t i = 0; i < n; i++) {
+        if (auto el = TransformTernaryElements(mgr, composite_el_ty, f, c0->Index(i), c1->Index(i),
+                                               c2->Index(i));
+            el == Success) {
             els.Push(el.Get());
         } else {
             return el.Failure();
@@ -561,75 +645,29 @@ Eval::Result Eval::CreateScalar(const Source& source, const core::type::Type* t,
 
     if constexpr (IsFloatingPoint<T>) {
         if (!std::isfinite(v.value)) {
-            AddError(OverflowErrorMessage(v, t->FriendlyName()), source);
+            AddError(source) << OverflowErrorMessage(v, t->FriendlyName());
             if (use_runtime_semantics_) {
-                return ZeroValue(t);
+                return mgr.Zero(t);
             } else {
-                return tint::Failure;
+                return error;
             }
         }
     }
     return mgr.Get<Scalar<T>>(t, v);
 }
 
-const Value* Eval::ZeroValue(const core::type::Type* type) {
-    return Switch(
-        type,  //
-        [&](const core::type::Vector* v) -> const Value* {
-            auto* zero_el = ZeroValue(v->type());
-            return mgr.Splat(type, zero_el, v->Width());
-        },
-        [&](const core::type::Matrix* m) -> const Value* {
-            auto* zero_el = ZeroValue(m->ColumnType());
-            return mgr.Splat(type, zero_el, m->columns());
-        },
-        [&](const core::type::Array* a) -> const Value* {
-            if (auto n = a->ConstantCount()) {
-                if (auto* zero_el = ZeroValue(a->ElemType())) {
-                    return mgr.Splat(type, zero_el, n.value());
-                }
-            }
-            return nullptr;
-        },
-        [&](const core::type::Struct* s) -> const Value* {
-            Hashmap<const core::type::Type*, const Value*, 8> zero_by_type;
-            Vector<const Value*, 4> zeros;
-            zeros.Reserve(s->Members().Length());
-            for (auto* member : s->Members()) {
-                auto* zero = zero_by_type.GetOrCreate(member->Type(),
-                                                      [&] { return ZeroValue(member->Type()); });
-                if (!zero) {
-                    return nullptr;
-                }
-                zeros.Push(zero);
-            }
-            if (zero_by_type.Count() == 1) {
-                // All members were of the same type, so the zero value is the same for all members.
-                return mgr.Splat(type, zeros[0], s->Members().Length());
-            }
-            return mgr.Composite(s, std::move(zeros));
-        },
-        [&](Default) -> const Value* {
-            return ZeroTypeDispatch(type, [&](auto zero) -> const Value* {
-                auto el = CreateScalar(Source{}, type, zero);
-                TINT_ASSERT(el);
-                return el.Get();
-            });
-        });
-}
-
 template <typename NumberT>
-tint::Result<NumberT> Eval::Add(const Source& source, NumberT a, NumberT b) {
+tint::Result<NumberT, Eval::Error> Eval::Add(const Source& source, NumberT a, NumberT b) {
     NumberT result;
     if constexpr (IsAbstract<NumberT> || IsFloatingPoint<NumberT>) {
         if (auto r = CheckedAdd(a, b)) {
             result = r->value;
         } else {
-            AddError(OverflowErrorMessage(a, "+", b), source);
+            AddError(source) << OverflowErrorMessage(a, "+", b);
             if (use_runtime_semantics_) {
                 return NumberT{0};
             } else {
-                return tint::Failure;
+                return error;
             }
         }
     } else {
@@ -649,17 +687,17 @@ tint::Result<NumberT> Eval::Add(const Source& source, NumberT a, NumberT b) {
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Sub(const Source& source, NumberT a, NumberT b) {
+tint::Result<NumberT, Eval::Error> Eval::Sub(const Source& source, NumberT a, NumberT b) {
     NumberT result;
     if constexpr (IsAbstract<NumberT> || IsFloatingPoint<NumberT>) {
         if (auto r = CheckedSub(a, b)) {
             result = r->value;
         } else {
-            AddError(OverflowErrorMessage(a, "-", b), source);
+            AddError(source) << OverflowErrorMessage(a, "-", b);
             if (use_runtime_semantics_) {
                 return NumberT{0};
             } else {
-                return tint::Failure;
+                return error;
             }
         }
     } else {
@@ -679,18 +717,18 @@ tint::Result<NumberT> Eval::Sub(const Source& source, NumberT a, NumberT b) {
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Mul(const Source& source, NumberT a, NumberT b) {
+tint::Result<NumberT, Eval::Error> Eval::Mul(const Source& source, NumberT a, NumberT b) {
     using T = UnwrapNumber<NumberT>;
     NumberT result;
     if constexpr (IsAbstract<NumberT> || IsFloatingPoint<NumberT>) {
         if (auto r = CheckedMul(a, b)) {
             result = r->value;
         } else {
-            AddError(OverflowErrorMessage(a, "*", b), source);
+            AddError(source) << OverflowErrorMessage(a, "*", b);
             if (use_runtime_semantics_) {
                 return NumberT{0};
             } else {
-                return tint::Failure;
+                return error;
             }
         }
     } else {
@@ -709,17 +747,17 @@ tint::Result<NumberT> Eval::Mul(const Source& source, NumberT a, NumberT b) {
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Div(const Source& source, NumberT a, NumberT b) {
+tint::Result<NumberT, Eval::Error> Eval::Div(const Source& source, NumberT a, NumberT b) {
     NumberT result;
     if constexpr (IsAbstract<NumberT> || IsFloatingPoint<NumberT>) {
         if (auto r = CheckedDiv(a, b)) {
             result = r->value;
         } else {
-            AddError(OverflowErrorMessage(a, "/", b), source);
+            AddError(source) << OverflowErrorMessage(a, "/", b);
             if (use_runtime_semantics_) {
                 return a;
             } else {
-                return tint::Failure;
+                return error;
             }
         }
     } else {
@@ -728,22 +766,22 @@ tint::Result<NumberT> Eval::Div(const Source& source, NumberT a, NumberT b) {
         auto rhs = b.value;
         if (rhs == 0) {
             // For integers (as for floats), lhs / 0 is an error
-            AddError(OverflowErrorMessage(a, "/", b), source);
+            AddError(source) << OverflowErrorMessage(a, "/", b);
             if (use_runtime_semantics_) {
                 return a;
             } else {
-                return tint::Failure;
+                return error;
             }
         }
         if constexpr (std::is_signed_v<T>) {
             // For signed integers, lhs / -1 where lhs is the
             // most negative value is an error
             if (rhs == -1 && lhs == std::numeric_limits<T>::min()) {
-                AddError(OverflowErrorMessage(a, "/", b), source);
+                AddError(source) << OverflowErrorMessage(a, "/", b);
                 if (use_runtime_semantics_) {
                     return a;
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
         }
@@ -753,17 +791,17 @@ tint::Result<NumberT> Eval::Div(const Source& source, NumberT a, NumberT b) {
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Mod(const Source& source, NumberT a, NumberT b) {
+tint::Result<NumberT, Eval::Error> Eval::Mod(const Source& source, NumberT a, NumberT b) {
     NumberT result;
     if constexpr (IsAbstract<NumberT> || IsFloatingPoint<NumberT>) {
         if (auto r = CheckedMod(a, b)) {
             result = r->value;
         } else {
-            AddError(OverflowErrorMessage(a, "%", b), source);
+            AddError(source) << OverflowErrorMessage(a, "%", b);
             if (use_runtime_semantics_) {
                 return NumberT{0};
             } else {
-                return tint::Failure;
+                return error;
             }
         }
     } else {
@@ -772,22 +810,22 @@ tint::Result<NumberT> Eval::Mod(const Source& source, NumberT a, NumberT b) {
         auto rhs = b.value;
         if (rhs == 0) {
             // lhs % 0 is an error
-            AddError(OverflowErrorMessage(a, "%", b), source);
+            AddError(source) << OverflowErrorMessage(a, "%", b);
             if (use_runtime_semantics_) {
                 return NumberT{0};
             } else {
-                return tint::Failure;
+                return error;
             }
         }
         if constexpr (std::is_signed_v<T>) {
             // For signed integers, lhs % -1 where lhs is the
             // most negative value is an error
             if (rhs == -1 && lhs == std::numeric_limits<T>::min()) {
-                AddError(OverflowErrorMessage(a, "%", b), source);
+                AddError(source) << OverflowErrorMessage(a, "%", b);
                 if (use_runtime_semantics_) {
                     return NumberT{0};
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
         }
@@ -797,100 +835,104 @@ tint::Result<NumberT> Eval::Mod(const Source& source, NumberT a, NumberT b) {
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Dot2(const Source& source,
-                                 NumberT a1,
-                                 NumberT a2,
-                                 NumberT b1,
-                                 NumberT b2) {
+tint::Result<NumberT, Eval::Error> Eval::Dot2(const Source& source,
+                                              NumberT a1,
+                                              NumberT a2,
+                                              NumberT b1,
+                                              NumberT b2) {
     auto r1 = Mul(source, a1, b1);
-    if (!r1) {
-        return tint::Failure;
+    if (r1 != Success) {
+        return error;
     }
     auto r2 = Mul(source, a2, b2);
-    if (!r2) {
-        return tint::Failure;
+    if (r2 != Success) {
+        return error;
     }
     auto r = Add(source, r1.Get(), r2.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     return r;
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Dot3(const Source& source,
-                                 NumberT a1,
-                                 NumberT a2,
-                                 NumberT a3,
-                                 NumberT b1,
-                                 NumberT b2,
-                                 NumberT b3) {
+tint::Result<NumberT, Eval::Error> Eval::Dot3(const Source& source,
+                                              NumberT a1,
+                                              NumberT a2,
+                                              NumberT a3,
+                                              NumberT b1,
+                                              NumberT b2,
+                                              NumberT b3) {
     auto r1 = Mul(source, a1, b1);
-    if (!r1) {
-        return tint::Failure;
+    if (r1 != Success) {
+        return error;
     }
     auto r2 = Mul(source, a2, b2);
-    if (!r2) {
-        return tint::Failure;
+    if (r2 != Success) {
+        return error;
     }
     auto r3 = Mul(source, a3, b3);
-    if (!r3) {
-        return tint::Failure;
+    if (r3 != Success) {
+        return error;
     }
     auto r = Add(source, r1.Get(), r2.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     r = Add(source, r.Get(), r3.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     return r;
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Dot4(const Source& source,
-                                 NumberT a1,
-                                 NumberT a2,
-                                 NumberT a3,
-                                 NumberT a4,
-                                 NumberT b1,
-                                 NumberT b2,
-                                 NumberT b3,
-                                 NumberT b4) {
+tint::Result<NumberT, Eval::Error> Eval::Dot4(const Source& source,
+                                              NumberT a1,
+                                              NumberT a2,
+                                              NumberT a3,
+                                              NumberT a4,
+                                              NumberT b1,
+                                              NumberT b2,
+                                              NumberT b3,
+                                              NumberT b4) {
     auto r1 = Mul(source, a1, b1);
-    if (!r1) {
-        return tint::Failure;
+    if (r1 != Success) {
+        return error;
     }
     auto r2 = Mul(source, a2, b2);
-    if (!r2) {
-        return tint::Failure;
+    if (r2 != Success) {
+        return error;
     }
     auto r3 = Mul(source, a3, b3);
-    if (!r3) {
-        return tint::Failure;
+    if (r3 != Success) {
+        return error;
     }
     auto r4 = Mul(source, a4, b4);
-    if (!r4) {
-        return tint::Failure;
+    if (r4 != Success) {
+        return error;
     }
     auto r = Add(source, r1.Get(), r2.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     r = Add(source, r.Get(), r3.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     r = Add(source, r.Get(), r4.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     return r;
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Det2(const Source& source, NumberT a, NumberT b, NumberT c, NumberT d) {
+tint::Result<NumberT, Eval::Error> Eval::Det2(const Source& source,
+                                              NumberT a,
+                                              NumberT b,
+                                              NumberT c,
+                                              NumberT d) {
     // | a c |
     // | b d |
     //
@@ -899,31 +941,31 @@ tint::Result<NumberT> Eval::Det2(const Source& source, NumberT a, NumberT b, Num
     // a * d - c * b
 
     auto r1 = Mul(source, a, d);
-    if (!r1) {
-        return tint::Failure;
+    if (r1 != Success) {
+        return error;
     }
     auto r2 = Mul(source, c, b);
-    if (!r2) {
-        return tint::Failure;
+    if (r2 != Success) {
+        return error;
     }
     auto r = Sub(source, r1.Get(), r2.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     return r;
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Det3(const Source& source,
-                                 NumberT a,
-                                 NumberT b,
-                                 NumberT c,
-                                 NumberT d,
-                                 NumberT e,
-                                 NumberT f,
-                                 NumberT g,
-                                 NumberT h,
-                                 NumberT i) {
+tint::Result<NumberT, Eval::Error> Eval::Det3(const Source& source,
+                                              NumberT a,
+                                              NumberT b,
+                                              NumberT c,
+                                              NumberT d,
+                                              NumberT e,
+                                              NumberT f,
+                                              NumberT g,
+                                              NumberT h,
+                                              NumberT i) {
     // | a d g |
     // | b e h |
     // | c f i |
@@ -934,54 +976,54 @@ tint::Result<NumberT> Eval::Det3(const Source& source,
     //   | f i |     | c i |     | c f |
 
     auto det1 = Det2(source, e, f, h, i);
-    if (!det1) {
-        return tint::Failure;
+    if (det1 != Success) {
+        return error;
     }
     auto a_det1 = Mul(source, a, det1.Get());
-    if (!a_det1) {
-        return tint::Failure;
+    if (a_det1 != Success) {
+        return error;
     }
     auto det2 = Det2(source, b, c, h, i);
-    if (!det2) {
-        return tint::Failure;
+    if (det2 != Success) {
+        return error;
     }
     auto d_det2 = Mul(source, d, det2.Get());
-    if (!d_det2) {
-        return tint::Failure;
+    if (d_det2 != Success) {
+        return error;
     }
     auto det3 = Det2(source, b, c, e, f);
-    if (!det3) {
-        return tint::Failure;
+    if (det3 != Success) {
+        return error;
     }
     auto g_det3 = Mul(source, g, det3.Get());
-    if (!g_det3) {
-        return tint::Failure;
+    if (g_det3 != Success) {
+        return error;
     }
     auto r = Sub(source, a_det1.Get(), d_det2.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     return Add(source, r.Get(), g_det3.Get());
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Det4(const Source& source,
-                                 NumberT a,
-                                 NumberT b,
-                                 NumberT c,
-                                 NumberT d,
-                                 NumberT e,
-                                 NumberT f,
-                                 NumberT g,
-                                 NumberT h,
-                                 NumberT i,
-                                 NumberT j,
-                                 NumberT k,
-                                 NumberT l,
-                                 NumberT m,
-                                 NumberT n,
-                                 NumberT o,
-                                 NumberT p) {
+tint::Result<NumberT, Eval::Error> Eval::Det4(const Source& source,
+                                              NumberT a,
+                                              NumberT b,
+                                              NumberT c,
+                                              NumberT d,
+                                              NumberT e,
+                                              NumberT f,
+                                              NumberT g,
+                                              NumberT h,
+                                              NumberT i,
+                                              NumberT j,
+                                              NumberT k,
+                                              NumberT l,
+                                              NumberT m,
+                                              NumberT n,
+                                              NumberT o,
+                                              NumberT p) {
     // | a e i m |
     // | b f j n |
     // | c g k o |
@@ -994,56 +1036,56 @@ tint::Result<NumberT> Eval::Det4(const Source& source,
     //   | h l p |     | d l p |     | d h p |     | d h l |
 
     auto det1 = Det3(source, f, g, h, j, k, l, n, o, p);
-    if (!det1) {
-        return tint::Failure;
+    if (det1 != Success) {
+        return error;
     }
     auto a_det1 = Mul(source, a, det1.Get());
-    if (!a_det1) {
-        return tint::Failure;
+    if (a_det1 != Success) {
+        return error;
     }
     auto det2 = Det3(source, b, c, d, j, k, l, n, o, p);
-    if (!det2) {
-        return tint::Failure;
+    if (det2 != Success) {
+        return error;
     }
     auto e_det2 = Mul(source, e, det2.Get());
-    if (!e_det2) {
-        return tint::Failure;
+    if (e_det2 != Success) {
+        return error;
     }
     auto det3 = Det3(source, b, c, d, f, g, h, n, o, p);
-    if (!det3) {
-        return tint::Failure;
+    if (det3 != Success) {
+        return error;
     }
     auto i_det3 = Mul(source, i, det3.Get());
-    if (!i_det3) {
-        return tint::Failure;
+    if (i_det3 != Success) {
+        return error;
     }
     auto det4 = Det3(source, b, c, d, f, g, h, j, k, l);
-    if (!det4) {
-        return tint::Failure;
+    if (det4 != Success) {
+        return error;
     }
     auto m_det4 = Mul(source, m, det4.Get());
-    if (!m_det4) {
-        return tint::Failure;
+    if (m_det4 != Success) {
+        return error;
     }
     auto r = Sub(source, a_det1.Get(), e_det2.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     r = Add(source, r.Get(), i_det3.Get());
-    if (!r) {
-        return tint::Failure;
+    if (r != Success) {
+        return error;
     }
     return Sub(source, r.Get(), m_det4.Get());
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Sqrt(const Source& source, NumberT v) {
+tint::Result<NumberT, Eval::Error> Eval::Sqrt(const Source& source, NumberT v) {
     if (v < NumberT(0)) {
-        AddError("sqrt must be called with a value >= 0", source);
+        AddError(source) << "sqrt must be called with a value >= 0";
         if (use_runtime_semantics_) {
             return NumberT{0};
         } else {
-            return tint::Failure;
+            return error;
         }
     }
     return NumberT{std::sqrt(v)};
@@ -1051,21 +1093,23 @@ tint::Result<NumberT> Eval::Sqrt(const Source& source, NumberT v) {
 
 auto Eval::SqrtFunc(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto v) -> Eval::Result {
-        if (auto r = Sqrt(source, v)) {
+        if (auto r = Sqrt(source, v); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 template <typename NumberT>
-tint::Result<NumberT> Eval::Clamp(const Source& source, NumberT e, NumberT low, NumberT high) {
+tint::Result<NumberT, Eval::Error> Eval::Clamp(const Source& source,
+                                               NumberT e,
+                                               NumberT low,
+                                               NumberT high) {
     if (low > high) {
-        StringStream ss;
-        ss << "clamp called with 'low' (" << low << ") greater than 'high' (" << high << ")";
-        AddError(ss.str(), source);
+        AddError(source) << "clamp called with 'low' (" << low << ") greater than 'high' (" << high
+                         << ")";
         if (!use_runtime_semantics_) {
-            return tint::Failure;
+            return error;
         }
     }
     return NumberT{std::min(std::max(e, low), high)};
@@ -1073,83 +1117,83 @@ tint::Result<NumberT> Eval::Clamp(const Source& source, NumberT e, NumberT low, 
 
 auto Eval::ClampFunc(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto e, auto low, auto high) -> Eval::Result {
-        if (auto r = Clamp(source, e, low, high)) {
+        if (auto r = Clamp(source, e, low, high); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::AddFunc(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a1, auto a2) -> Eval::Result {
-        if (auto r = Add(source, a1, a2)) {
+        if (auto r = Add(source, a1, a2); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::SubFunc(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a1, auto a2) -> Eval::Result {
-        if (auto r = Sub(source, a1, a2)) {
+        if (auto r = Sub(source, a1, a2); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::MulFunc(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a1, auto a2) -> Eval::Result {
-        if (auto r = Mul(source, a1, a2)) {
+        if (auto r = Mul(source, a1, a2); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::DivFunc(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a1, auto a2) -> Eval::Result {
-        if (auto r = Div(source, a1, a2)) {
+        if (auto r = Div(source, a1, a2); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::ModFunc(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a1, auto a2) -> Eval::Result {
-        if (auto r = Mod(source, a1, a2)) {
+        if (auto r = Mod(source, a1, a2); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::Dot2Func(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a1, auto a2, auto b1, auto b2) -> Eval::Result {
-        if (auto r = Dot2(source, a1, a2, b1, b2)) {
+        if (auto r = Dot2(source, a1, a2, b1, b2); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::Dot3Func(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a1, auto a2, auto a3, auto b1, auto b2, auto b3) -> Eval::Result {
-        if (auto r = Dot3(source, a1, a2, a3, b1, b2, b3)) {
+        if (auto r = Dot3(source, a1, a2, a3, b1, b2, b3); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::Dot4Func(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a1, auto a2, auto a3, auto a4, auto b1, auto b2, auto b3,
                auto b4) -> Eval::Result {
-        if (auto r = Dot4(source, a1, a2, a3, a4, b1, b2, b3, b4)) {
+        if (auto r = Dot4(source, a1, a2, a3, a4, b1, b2, b3, b4); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
@@ -1175,7 +1219,6 @@ Eval::Result Eval::Dot(const Source& source, const Value* v1, const Value* v2) {
                 v2->Index(0), v2->Index(1), v2->Index(2), v2->Index(3));
     }
     TINT_ICE() << "Expected vector";
-    return Failure;
 }
 
 Eval::Result Eval::Length(const Source& source, const core::type::Type* ty, const Value* c0) {
@@ -1191,8 +1234,8 @@ Eval::Result Eval::Length(const Source& source, const core::type::Type* ty, cons
 
     // Evaluates to sqrt(e[0]^2 + e[1]^2 + ...) if T is a vector type.
     auto d = Dot(source, c0, c0);
-    if (!d) {
-        return tint::Failure;
+    if (d != Success) {
+        return error;
     }
     return Dispatch_fa_f32_f16(SqrtFunc(source, ty), d.Get());
 }
@@ -1204,7 +1247,7 @@ Eval::Result Eval::Mul(const Source& source,
     auto transform = [&](const Value* c0, const Value* c1) {
         return Dispatch_fia_fiu32_f16(MulFunc(source, c0->Type()), c0, c1);
     };
-    return TransformBinaryElements(mgr, ty, transform, v1, v2);
+    return TransformBinaryDifferingArityElements(mgr, ty, transform, v1, v2);
 }
 
 Eval::Result Eval::Sub(const Source& source,
@@ -1214,41 +1257,41 @@ Eval::Result Eval::Sub(const Source& source,
     auto transform = [&](const Value* c0, const Value* c1) {
         return Dispatch_fia_fiu32_f16(SubFunc(source, c0->Type()), c0, c1);
     };
-    return TransformBinaryElements(mgr, ty, transform, v1, v2);
+    return TransformBinaryDifferingArityElements(mgr, ty, transform, v1, v2);
 }
 
 auto Eval::Det2Func(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a, auto b, auto c, auto d) -> Eval::Result {
-        if (auto r = Det2(source, a, b, c, d)) {
+        if (auto r = Det2(source, a, b, c, d); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::Det3Func(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a, auto b, auto c, auto d, auto e, auto f, auto g, auto h,
                auto i) -> Eval::Result {
-        if (auto r = Det3(source, a, b, c, d, e, f, g, h, i)) {
+        if (auto r = Det3(source, a, b, c, d, e, f, g, h, i); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 auto Eval::Det4Func(const Source& source, const core::type::Type* elem_ty) {
     return [=](auto a, auto b, auto c, auto d, auto e, auto f, auto g, auto h, auto i, auto j,
                auto k, auto l, auto m, auto n, auto o, auto p) -> Eval::Result {
-        if (auto r = Det4(source, a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p)) {
+        if (auto r = Det4(source, a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p); r == Success) {
             return CreateScalar(source, elem_ty, r.Get());
         }
-        return tint::Failure;
+        return error;
     };
 }
 
 Eval::Result Eval::ArrayOrStructCtor(const core::type::Type* ty, VectorRef<const Value*> args) {
     if (args.IsEmpty()) {
-        return ZeroValue(ty);
+        return mgr.Zero(ty);
     }
 
     if (args.Length() == 1 && args[0]->Type() == ty) {
@@ -1276,7 +1319,7 @@ Eval::Result Eval::Conv(const core::type::Type* ty,
 }
 
 Eval::Result Eval::Zero(const core::type::Type* ty, VectorRef<const Value*>, const Source&) {
-    return ZeroValue(ty);
+    return mgr.Zero(ty);
 }
 
 Eval::Result Eval::Identity(const core::type::Type*, VectorRef<const Value*> args, const Source&) {
@@ -1287,7 +1330,7 @@ Eval::Result Eval::VecSplat(const core::type::Type* ty,
                             VectorRef<const Value*> args,
                             const Source&) {
     if (auto* arg = args[0]) {
-        return mgr.Splat(ty, arg, static_cast<const core::type::Vector*>(ty)->Width());
+        return mgr.Splat(ty, arg);
     }
     return nullptr;
 }
@@ -1351,19 +1394,19 @@ Eval::Result Eval::Index(const Value* obj_val,
                          const core::type::Type* obj_ty,
                          const Value* idx_val,
                          const Source& idx_source) {
-    auto el = obj_ty->UnwrapRef()->Elements();
+    auto el = obj_ty->UnwrapPtrOrRef()->Elements();
 
     AInt idx = idx_val->ValueAs<AInt>();
     if (idx < 0 || (el.count > 0 && idx >= el.count)) {
-        std::string range;
+        auto& err = AddError(idx_source) << "index " << idx << " out of bounds";
         if (el.count > 0) {
-            range = " [0.." + std::to_string(el.count - 1) + "]";
+            err << " [0.." + std::to_string(el.count - 1) + "]";
         }
-        AddError("index " + std::to_string(idx) + " out of bounds" + range, idx_source);
+
         if (use_runtime_semantics_) {
-            return ZeroValue(el.type);
+            return mgr.Zero(el.type);
         } else {
-            return tint::Failure;
+            return error;
         }
     }
 
@@ -1381,7 +1424,12 @@ Eval::Result Eval::Swizzle(const core::type::Type* ty,
     return mgr.Composite(ty, std::move(values));
 }
 
-Eval::Result Eval::Bitcast(const core::type::Type* ty, const Value* value, const Source& source) {
+Eval::Result Eval::bitcast(const core::type::Type* ty,
+                           VectorRef<const Value*> args,
+                           const Source& source) {
+    auto* value = args[0];
+    bool is_abstract = value->Type()->is_abstract_integer_scalar_or_vector();
+
     // Target type
     auto dst_elements = ty->Elements(ty->DeepestElement(), 1u);
     auto dst_el_ty = dst_elements.type;
@@ -1391,15 +1439,12 @@ Eval::Result Eval::Bitcast(const core::type::Type* ty, const Value* value, const
     auto src_el_ty = src_elements.type;
     auto src_count = src_elements.count;
 
-    TINT_ASSERT(dst_count * dst_el_ty->Size() == src_count * src_el_ty->Size());
+    TINT_ASSERT(is_abstract || (dst_count * dst_el_ty->Size() == src_count * src_el_ty->Size()));
     uint32_t total_bitwidth = dst_count * dst_el_ty->Size();
     // Buffer holding the bits from source value, result value reinterpreted from it.
     Vector<std::byte, 16> buffer;
     buffer.Reserve(total_bitwidth);
 
-    // Ensure elements are of 32-bit or 16-bit numerical scalar type.
-    TINT_ASSERT(
-        (src_el_ty->IsAnyOf<core::type::F32, core::type::I32, core::type::U32, core::type::F16>()));
     // Pushes bits from source value into the buffer.
     auto push_src_element_bits = [&](const Value* element) {
         auto push_32_bits = [&](uint32_t v) {
@@ -1407,35 +1452,53 @@ Eval::Result Eval::Bitcast(const core::type::Type* ty, const Value* value, const
             buffer.Push(std::byte((v >> 8) & 0xffu));
             buffer.Push(std::byte((v >> 16) & 0xffu));
             buffer.Push(std::byte((v >> 24) & 0xffu));
+            return Success;
         };
         auto push_16_bits = [&](uint16_t v) {
             buffer.Push(std::byte(v & 0xffu));
             buffer.Push(std::byte((v >> 8) & 0xffu));
+            return Success;
         };
-        Switch(
+        return Switch(
             src_el_ty,
-            [&](const core::type::U32*) {  //
-                uint32_t r = element->ValueAs<u32>();
-                push_32_bits(r);
+            [&](const core::type::AbstractInt*) -> tint::Result<SuccessType, Error> {
+                if (element->ValueAs<AInt>() < 0) {
+                    auto res = Conv(mgr.types.i32(), Vector{element}, source);
+                    if (res != Success) {
+                        return res.Failure();
+                    }
+                    return push_32_bits(tint::Bitcast<u32>(res.Get()->ValueAs<i32>()));
+                } else {
+                    auto res = Conv(mgr.types.u32(), Vector{element}, source);
+                    if (res != Success) {
+                        return res.Failure();
+                    }
+                    return push_32_bits(res.Get()->ValueAs<u32>());
+                }
             },
-            [&](const core::type::I32*) {  //
-                uint32_t r = tint::Bitcast<u32>(element->ValueAs<i32>());
-                push_32_bits(r);
+            [&](const core::type::U32*) -> tint::Result<SuccessType, Error> {
+                return push_32_bits(element->ValueAs<u32>());
             },
-            [&](const core::type::F32*) {  //
-                uint32_t r = tint::Bitcast<u32>(element->ValueAs<f32>());
-                push_32_bits(r);
+            [&](const core::type::I32*) -> tint::Result<SuccessType, Error> {
+                return push_32_bits(tint::Bitcast<u32>(element->ValueAs<i32>()));
             },
-            [&](const core::type::F16*) {  //
-                uint16_t r = element->ValueAs<f16>().BitsRepresentation();
-                push_16_bits(r);
-            });
+            [&](const core::type::F32*) -> tint::Result<SuccessType, Error> {
+                return push_32_bits(tint::Bitcast<u32>(element->ValueAs<f32>()));
+            },
+            [&](const core::type::F16*) -> tint::Result<SuccessType, Error> {
+                return push_16_bits(element->ValueAs<f16>().BitsRepresentation());
+            },
+            TINT_ICE_ON_NO_MATCH);
     };
     if (src_count == 1) {
-        push_src_element_bits(value);
+        if (auto res = push_src_element_bits(value); res != Success) {
+            return res.Failure();
+        }
     } else {
         for (size_t i = 0; i < src_count; i++) {
-            push_src_element_bits(value->Index(i));
+            if (auto res = push_src_element_bits(value->Index(i)); res != Success) {
+                return res.Failure();
+            }
         }
     }
 
@@ -1443,7 +1506,7 @@ Eval::Result Eval::Bitcast(const core::type::Type* ty, const Value* value, const
     Vector<const Value*, 4> els;
 
     // Reinterprets the buffer bits as destination element and push the result into the vector.
-    // Return false if an error occured, otherwise return true.
+    // Return false if an error occurred, otherwise return true.
     auto push_dst_element = [&](size_t offset) -> bool {
         uint32_t v;
         if (dst_el_ty->Size() == 4) {
@@ -1460,38 +1523,43 @@ Eval::Result Eval::Bitcast(const core::type::Type* ty, const Value* value, const
             dst_el_ty,
             [&](const core::type::U32*) {  //
                 auto r = CreateScalar(source, dst_el_ty, u32(v));
-                if (r) {
-                    els.Push(r.Get());
+                if (r != Success) {
+                    return false;
                 }
-                return r;
+                els.Push(r.Get());
+                return true;
             },
             [&](const core::type::I32*) {  //
                 auto r = CreateScalar(source, dst_el_ty, tint::Bitcast<i32>(v));
-                if (r) {
-                    els.Push(r.Get());
+                if (r != Success) {
+                    return false;
                 }
-                return r;
+                els.Push(r.Get());
+                return true;
             },
             [&](const core::type::F32*) {  //
                 auto r = CreateScalar(source, dst_el_ty, tint::Bitcast<f32>(v));
-                if (r) {
-                    els.Push(r.Get());
+                if (r != Success) {
+                    return false;
                 }
-                return r;
+                els.Push(r.Get());
+                return true;
             },
             [&](const core::type::F16*) {  //
                 auto r = CreateScalar(source, dst_el_ty, f16::FromBits(static_cast<uint16_t>(v)));
-                if (r) {
-                    els.Push(r.Get());
+                if (r != Success) {
+                    return false;
                 }
-                return r;
-            });
+                els.Push(r.Get());
+                return true;
+            },
+            TINT_ICE_ON_NO_MATCH);
     };
 
     TINT_ASSERT((buffer.Length() == total_bitwidth));
     for (size_t i = 0; i < dst_count; i++) {
         if (!push_dst_element(i * dst_el_ty->Size())) {
-            return tint::Failure;
+            return error;
         }
     }
 
@@ -1510,7 +1578,7 @@ Eval::Result Eval::Complement(const core::type::Type* ty,
         };
         return Dispatch_ia_iu32(create, c);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::UnaryMinus(const core::type::Type* ty,
@@ -1535,7 +1603,7 @@ Eval::Result Eval::UnaryMinus(const core::type::Type* ty,
         };
         return Dispatch_fia_fi32_f16(create, c);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::Not(const core::type::Type* ty,
@@ -1545,7 +1613,7 @@ Eval::Result Eval::Not(const core::type::Type* ty,
         auto create = [&](auto i) { return CreateScalar(source, c->Type(), decltype(i)(!i)); };
         return Dispatch_bool(create, c);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::Plus(const core::type::Type* ty,
@@ -1555,7 +1623,7 @@ Eval::Result Eval::Plus(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16(AddFunc(source, c0->Type()), c0, c1);
     };
 
-    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryDifferingArityElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::Minus(const core::type::Type* ty,
@@ -1613,8 +1681,8 @@ Eval::Result Eval::MultiplyMatVec(const core::type::Type* ty,
     Vector<const Value*, 4> result;
     for (size_t i = 0; i < mat_ty->rows(); ++i) {
         auto r = dot(args[0], i, args[1]);  // matrix row i * vector
-        if (!r) {
-            return tint::Failure;
+        if (r != Success) {
+            return error;
         }
         result.Push(r.Get());
     }
@@ -1663,8 +1731,8 @@ Eval::Result Eval::MultiplyVecMat(const core::type::Type* ty,
     Vector<const Value*, 4> result;
     for (size_t i = 0; i < mat_ty->columns(); ++i) {
         auto r = dot(args[0], args[1], i);  // vector * matrix col i
-        if (!r) {
-            return tint::Failure;
+        if (r != Success) {
+            return error;
         }
         result.Push(r.Get());
     }
@@ -1722,8 +1790,8 @@ Eval::Result Eval::MultiplyMatMat(const core::type::Type* ty,
         Vector<const Value*, 4> col_vec;
         for (size_t r = 0; r < mat1_ty->rows(); ++r) {
             auto v = dot(mat1, r, mat2, c);  // mat1 row r * mat2 col c
-            if (!v) {
-                return tint::Failure;
+            if (v != Success) {
+                return error;
             }
             col_vec.Push(v.Get());  // mat1 row r * mat2 col c
         }
@@ -1742,7 +1810,7 @@ Eval::Result Eval::Divide(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16(DivFunc(source, c0->Type()), c0, c1);
     };
 
-    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryDifferingArityElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::Modulo(const core::type::Type* ty,
@@ -1752,7 +1820,7 @@ Eval::Result Eval::Modulo(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16(ModFunc(source, c0->Type()), c0, c1);
     };
 
-    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryDifferingArityElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::Equal(const core::type::Type* ty,
@@ -1765,7 +1833,7 @@ Eval::Result Eval::Equal(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16_bool(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::NotEqual(const core::type::Type* ty,
@@ -1778,7 +1846,7 @@ Eval::Result Eval::NotEqual(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16_bool(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::LessThan(const core::type::Type* ty,
@@ -1791,7 +1859,7 @@ Eval::Result Eval::LessThan(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::GreaterThan(const core::type::Type* ty,
@@ -1804,7 +1872,7 @@ Eval::Result Eval::GreaterThan(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::LessThanEqual(const core::type::Type* ty,
@@ -1817,7 +1885,7 @@ Eval::Result Eval::LessThanEqual(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::GreaterThanEqual(const core::type::Type* ty,
@@ -1830,7 +1898,7 @@ Eval::Result Eval::GreaterThanEqual(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::LogicalAnd(const core::type::Type* ty,
@@ -1868,7 +1936,7 @@ Eval::Result Eval::And(const core::type::Type* ty,
         return Dispatch_ia_iu32_bool(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::Or(const core::type::Type* ty,
@@ -1888,7 +1956,7 @@ Eval::Result Eval::Or(const core::type::Type* ty,
         return Dispatch_ia_iu32_bool(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::Xor(const core::type::Type* ty,
@@ -1901,7 +1969,7 @@ Eval::Result Eval::Xor(const core::type::Type* ty,
         return Dispatch_ia_iu32(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::ShiftLeft(const core::type::Type* ty,
@@ -1925,17 +1993,17 @@ Eval::Result Eval::ShiftLeft(const core::type::Type* ty,
                     UT must_match_msb = e2u + 1;
                     UT mask = ~UT{0} << (bit_width - must_match_msb);
                     if ((e1u & mask) != 0 && (e1u & mask) != mask) {
-                        AddError("shift left operation results in sign change", source);
+                        AddError(source) << "shift left operation results in sign change";
                         if (!use_runtime_semantics_) {
-                            return tint::Failure;
+                            return error;
                         }
                     }
                 } else {
                     // If shift value >= bit_width, then any non-zero value would overflow
                     if (e1 != 0) {
-                        AddError(OverflowErrorMessage(e1, "<<", e2), source);
+                        AddError(source) << OverflowErrorMessage(e1, "<<", e2);
                         if (!use_runtime_semantics_) {
-                            return tint::Failure;
+                            return error;
                         }
                     }
 
@@ -1948,14 +2016,13 @@ Eval::Result Eval::ShiftLeft(const core::type::Type* ty,
                     // At shader/pipeline-creation time, it is an error to shift by the bit width of
                     // the lhs or greater.
                     // NOTE: At runtime, we shift by e2 % (bit width of e1).
-                    AddError(
-                        "shift left value must be less than the bit width of the lhs, which is " +
-                            std::to_string(bit_width),
-                        source);
+                    AddError(source)
+                        << "shift left value must be less than the bit width of the lhs, which is "
+                        << bit_width;
                     if (use_runtime_semantics_) {
                         e2u = e2u % bit_width;
                     } else {
-                        return tint::Failure;
+                        return error;
                     }
                 }
 
@@ -1965,9 +2032,9 @@ Eval::Result Eval::ShiftLeft(const core::type::Type* ty,
                     size_t must_match_msb = e2u + 1;
                     UT mask = ~UT{0} << (bit_width - must_match_msb);
                     if ((e1u & mask) != 0 && (e1u & mask) != mask) {
-                        AddError("shift left operation results in sign change", source);
+                        AddError(source) << "shift left operation results in sign change";
                         if (!use_runtime_semantics_) {
-                            return tint::Failure;
+                            return error;
                         }
                     }
                 } else {
@@ -1977,9 +2044,9 @@ Eval::Result Eval::ShiftLeft(const core::type::Type* ty,
                         size_t must_be_zero_msb = e2u;
                         UT mask = ~UT{0} << (bit_width - must_be_zero_msb);
                         if ((e1u & mask) != 0) {
-                            AddError(OverflowErrorMessage(e1, "<<", e2), source);
+                            AddError(source) << OverflowErrorMessage(e1, "<<", e2);
                             if (!use_runtime_semantics_) {
-                                return tint::Failure;
+                                return error;
                             }
                         }
                     }
@@ -1995,10 +2062,9 @@ Eval::Result Eval::ShiftLeft(const core::type::Type* ty,
 
     if (TINT_UNLIKELY(!args[1]->Type()->DeepestElement()->Is<core::type::U32>())) {
         TINT_ICE() << "Element type of rhs of ShiftLeft must be a u32";
-        return Failure;
     }
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::ShiftRight(const core::type::Type* ty,
@@ -2038,14 +2104,13 @@ Eval::Result Eval::ShiftRight(const core::type::Type* ty,
                 if (static_cast<size_t>(e2) >= bit_width) {
                     // At shader/pipeline-creation time, it is an error to shift by the bit width of
                     // the lhs or greater. NOTE: At runtime, we shift by e2 % (bit width of e1).
-                    AddError(
-                        "shift right value must be less than the bit width of the lhs, which is " +
-                            std::to_string(bit_width),
-                        source);
+                    AddError(source)
+                        << "shift right value must be less than the bit width of the lhs, which is "
+                        << bit_width;
                     if (use_runtime_semantics_) {
                         e2u = e2u % bit_width;
                     } else {
-                        return tint::Failure;
+                        return error;
                     }
                 }
 
@@ -2062,10 +2127,9 @@ Eval::Result Eval::ShiftRight(const core::type::Type* ty,
 
     if (TINT_UNLIKELY(!args[1]->Type()->DeepestElement()->Is<core::type::U32>())) {
         TINT_ICE() << "Element type of rhs of ShiftLeft must be a u32";
-        return Failure;
     }
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::abs(const core::type::Type* ty,
@@ -2090,29 +2154,30 @@ Eval::Result Eval::abs(const core::type::Type* ty,
         };
         return Dispatch_fia_fiu32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::acos(const core::type::Type* ty,
                         VectorRef<const Value*> args,
                         const Source& source) {
-    auto transform = [&](const Value* c0) {
-        auto create = [&](auto i) -> Eval::Result {
-            using NumberT = decltype(i);
-            if (i < NumberT(-1.0) || i > NumberT(1.0)) {
-                AddError("acos must be called with a value in the range [-1 .. 1] (inclusive)",
-                         source);
-                if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
-                } else {
-                    return tint::Failure;
+    auto transform =
+        [&](const Value* c0) {
+            auto create = [&](auto i) -> Eval::Result {
+                using NumberT = decltype(i);
+                if (i < NumberT(-1.0) || i > NumberT(1.0)) {
+                    AddError(source)
+                        << "acos must be called with a value in the range [-1 .. 1] (inclusive)";
+                    if (use_runtime_semantics_) {
+                        return mgr.Zero(c0->Type());
+                    } else {
+                        return error;
+                    }
                 }
-            }
-            return CreateScalar(source, c0->Type(), NumberT(std::acos(i.value)));
+                return CreateScalar(source, c0->Type(), NumberT(std::acos(i.value)));
+            };
+            return Dispatch_fa_f32_f16(create, c0);
         };
-        return Dispatch_fa_f32_f16(create, c0);
-    };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::acosh(const core::type::Type* ty,
@@ -2122,11 +2187,11 @@ Eval::Result Eval::acosh(const core::type::Type* ty,
         auto create = [&](auto i) -> Eval::Result {
             using NumberT = decltype(i);
             if (i < NumberT(1.0)) {
-                AddError("acosh must be called with a value >= 1.0", source);
+                AddError(source) << "acosh must be called with a value >= 1.0";
                 if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
+                    return mgr.Zero(c0->Type());
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
             return CreateScalar(source, c0->Type(), NumberT(std::acosh(i.value)));
@@ -2134,7 +2199,7 @@ Eval::Result Eval::acosh(const core::type::Type* ty,
         return Dispatch_fa_f32_f16(create, c0);
     };
 
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::all(const core::type::Type* ty,
@@ -2152,23 +2217,24 @@ Eval::Result Eval::any(const core::type::Type* ty,
 Eval::Result Eval::asin(const core::type::Type* ty,
                         VectorRef<const Value*> args,
                         const Source& source) {
-    auto transform = [&](const Value* c0) {
-        auto create = [&](auto i) -> Eval::Result {
-            using NumberT = decltype(i);
-            if (i < NumberT(-1.0) || i > NumberT(1.0)) {
-                AddError("asin must be called with a value in the range [-1 .. 1] (inclusive)",
-                         source);
-                if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
-                } else {
-                    return tint::Failure;
+    auto transform =
+        [&](const Value* c0) {
+            auto create = [&](auto i) -> Eval::Result {
+                using NumberT = decltype(i);
+                if (i < NumberT(-1.0) || i > NumberT(1.0)) {
+                    AddError(source)
+                        << "asin must be called with a value in the range [-1 .. 1] (inclusive)";
+                    if (use_runtime_semantics_) {
+                        return mgr.Zero(c0->Type());
+                    } else {
+                        return error;
+                    }
                 }
-            }
-            return CreateScalar(source, c0->Type(), NumberT(std::asin(i.value)));
+                return CreateScalar(source, c0->Type(), NumberT(std::asin(i.value)));
+            };
+            return Dispatch_fa_f32_f16(create, c0);
         };
-        return Dispatch_fa_f32_f16(create, c0);
-    };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::asinh(const core::type::Type* ty,
@@ -2181,7 +2247,7 @@ Eval::Result Eval::asinh(const core::type::Type* ty,
         return Dispatch_fa_f32_f16(create, c0);
     };
 
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::atan(const core::type::Type* ty,
@@ -2193,30 +2259,31 @@ Eval::Result Eval::atan(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::atanh(const core::type::Type* ty,
                          VectorRef<const Value*> args,
                          const Source& source) {
-    auto transform = [&](const Value* c0) {
-        auto create = [&](auto i) -> Eval::Result {
-            using NumberT = decltype(i);
-            if (i <= NumberT(-1.0) || i >= NumberT(1.0)) {
-                AddError("atanh must be called with a value in the range (-1 .. 1) (exclusive)",
-                         source);
-                if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
-                } else {
-                    return tint::Failure;
+    auto transform =
+        [&](const Value* c0) {
+            auto create = [&](auto i) -> Eval::Result {
+                using NumberT = decltype(i);
+                if (i <= NumberT(-1.0) || i >= NumberT(1.0)) {
+                    AddError(source)
+                        << "atanh must be called with a value in the range (-1 .. 1) (exclusive)";
+                    if (use_runtime_semantics_) {
+                        return mgr.Zero(c0->Type());
+                    } else {
+                        return error;
+                    }
                 }
-            }
-            return CreateScalar(source, c0->Type(), NumberT(std::atanh(i.value)));
+                return CreateScalar(source, c0->Type(), NumberT(std::atanh(i.value)));
+            };
+            return Dispatch_fa_f32_f16(create, c0);
         };
-        return Dispatch_fa_f32_f16(create, c0);
-    };
 
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::atan2(const core::type::Type* ty,
@@ -2228,7 +2295,7 @@ Eval::Result Eval::atan2(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0, c1);
     };
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::ceil(const core::type::Type* ty,
@@ -2240,7 +2307,7 @@ Eval::Result Eval::ceil(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::clamp(const core::type::Type* ty,
@@ -2249,7 +2316,7 @@ Eval::Result Eval::clamp(const core::type::Type* ty,
     auto transform = [&](const Value* c0, const Value* c1, const Value* c2) {
         return Dispatch_fia_fiu32_f16(ClampFunc(source, c0->Type()), c0, c1, c2);
     };
-    return TransformElements(mgr, ty, transform, args[0], args[1], args[2]);
+    return TransformTernaryElements(mgr, ty, transform, args[0], args[1], args[2]);
 }
 
 Eval::Result Eval::cos(const core::type::Type* ty,
@@ -2262,7 +2329,7 @@ Eval::Result Eval::cos(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::cosh(const core::type::Type* ty,
@@ -2275,7 +2342,7 @@ Eval::Result Eval::cosh(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::countLeadingZeros(const core::type::Type* ty,
@@ -2290,7 +2357,7 @@ Eval::Result Eval::countLeadingZeros(const core::type::Type* ty,
         };
         return Dispatch_iu32(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::countOneBits(const core::type::Type* ty,
@@ -2314,7 +2381,7 @@ Eval::Result Eval::countOneBits(const core::type::Type* ty,
         };
         return Dispatch_iu32(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::countTrailingZeros(const core::type::Type* ty,
@@ -2329,7 +2396,7 @@ Eval::Result Eval::countTrailingZeros(const core::type::Type* ty,
         };
         return Dispatch_iu32(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::cross(const core::type::Type* ty,
@@ -2359,16 +2426,16 @@ Eval::Result Eval::cross(const core::type::Type* ty,
     auto* v2 = v->Index(2);
 
     auto x = Dispatch_fa_f32_f16(Det2Func(source, elem_ty), u1, u2, v1, v2);
-    if (!x) {
-        return tint::Failure;
+    if (x != Success) {
+        return error;
     }
     auto y = Dispatch_fa_f32_f16(Det2Func(source, elem_ty), v0, v2, u0, u2);
-    if (!y) {
-        return tint::Failure;
+    if (y != Success) {
+        return error;
     }
     auto z = Dispatch_fa_f32_f16(Det2Func(source, elem_ty), u0, u1, v0, v1);
-    if (!z) {
-        return tint::Failure;
+    if (z != Success) {
+        return error;
     }
 
     return mgr.Composite(ty, Vector<const Value*, 3>{x.Get(), y.Get(), z.Get()});
@@ -2384,20 +2451,20 @@ Eval::Result Eval::degrees(const core::type::Type* ty,
 
             auto pi = kPi<T>;
             auto scale = Div(source, NumberT(180), NumberT(pi));
-            if (!scale) {
-                AddNote("when calculating degrees", source);
-                return tint::Failure;
+            if (scale != Success) {
+                AddNote(source) << "when calculating degrees";
+                return error;
             }
             auto result = Mul(source, e, scale.Get());
-            if (!result) {
-                AddNote("when calculating degrees", source);
-                return tint::Failure;
+            if (result != Success) {
+                AddNote(source) << "when calculating degrees";
+                return error;
             }
             return CreateScalar(source, c0->Type(), result.Get());
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::determinant(const core::type::Type* ty,
@@ -2427,11 +2494,10 @@ Eval::Result Eval::determinant(const core::type::Type* ty,
                                            me(0, 3), me(1, 3), me(2, 3), me(3, 3));
         }
         TINT_ICE() << "Unexpected number of matrix rows";
-        return Failure;
     };
     auto r = calculate();
-    if (!r) {
-        AddNote("when calculating determinant", source);
+    if (r != Success) {
+        AddNote(source) << "when calculating determinant";
     }
     return r;
 }
@@ -2440,17 +2506,17 @@ Eval::Result Eval::distance(const core::type::Type* ty,
                             VectorRef<const Value*> args,
                             const Source& source) {
     auto err = [&]() -> Eval::Result {
-        AddNote("when calculating distance", source);
-        return tint::Failure;
+        AddNote(source) << "when calculating distance";
+        return error;
     };
 
     auto minus = Minus(args[0]->Type(), args, source);
-    if (!minus) {
+    if (minus != Success) {
         return err();
     }
 
     auto len = Length(source, ty, minus.Get());
-    if (!len) {
+    if (len != Success) {
         return err();
     }
     return len;
@@ -2460,10 +2526,40 @@ Eval::Result Eval::dot(const core::type::Type*,
                        VectorRef<const Value*> args,
                        const Source& source) {
     auto r = Dot(source, args[0], args[1]);
-    if (!r) {
-        AddNote("when calculating dot", source);
+    if (r != Success) {
+        AddNote(source) << "when calculating dot";
     }
     return r;
+}
+
+Eval::Result Eval::dot4I8Packed(const core::type::Type* ty,
+                                VectorRef<const Value*> args,
+                                const Source& source) {
+    uint32_t packed_int8_vec4_1 = args[0]->ValueAs<u32>();
+    uint32_t packed_int8_vec4_2 = args[1]->ValueAs<u32>();
+
+    int8_t* int8_vec4_1 = reinterpret_cast<int8_t*>(&packed_int8_vec4_1);
+    int8_t* int8_vec4_2 = reinterpret_cast<int8_t*>(&packed_int8_vec4_2);
+    int32_t result = 0;
+    for (uint8_t i = 0; i < 4; ++i) {
+        result += int8_vec4_1[i] * int8_vec4_2[i];
+    }
+    return CreateScalar(source, ty, i32(result));
+}
+
+Eval::Result Eval::dot4U8Packed(const core::type::Type* ty,
+                                VectorRef<const Value*> args,
+                                const Source& source) {
+    uint32_t packed_uint8_vec4_1 = args[0]->ValueAs<u32>();
+    uint32_t packed_uint8_vec4_2 = args[1]->ValueAs<u32>();
+
+    uint8_t* uint8_vec4_1 = reinterpret_cast<uint8_t*>(&packed_uint8_vec4_1);
+    uint8_t* uint8_vec4_2 = reinterpret_cast<uint8_t*>(&packed_uint8_vec4_2);
+    uint32_t result = 0;
+    for (uint8_t i = 0; i < 4; ++i) {
+        result += uint8_vec4_1[i] * uint8_vec4_2[i];
+    }
+    return CreateScalar(source, ty, u32(result));
 }
 
 Eval::Result Eval::exp(const core::type::Type* ty,
@@ -2474,18 +2570,18 @@ Eval::Result Eval::exp(const core::type::Type* ty,
             using NumberT = decltype(e0);
             auto val = NumberT(std::exp(e0));
             if (!std::isfinite(val.value)) {
-                AddError(OverflowExpErrorMessage("e", e0), source);
+                AddError(source) << OverflowExpErrorMessage("e", e0);
                 if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
+                    return mgr.Zero(c0->Type());
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
             return CreateScalar(source, c0->Type(), val);
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::exp2(const core::type::Type* ty,
@@ -2496,78 +2592,80 @@ Eval::Result Eval::exp2(const core::type::Type* ty,
             using NumberT = decltype(e0);
             auto val = NumberT(std::exp2(e0));
             if (!std::isfinite(val.value)) {
-                AddError(OverflowExpErrorMessage("2", e0), source);
+                AddError(source) << OverflowExpErrorMessage("2", e0);
                 if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
+                    return mgr.Zero(c0->Type());
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
             return CreateScalar(source, c0->Type(), val);
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::extractBits(const core::type::Type* ty,
                                VectorRef<const Value*> args,
                                const Source& source) {
-    auto transform = [&](const Value* c0) {
-        auto create = [&](auto in_e) -> Eval::Result {
-            using NumberT = decltype(in_e);
-            using T = UnwrapNumber<NumberT>;
-            using UT = std::make_unsigned_t<T>;
-            using NumberUT = Number<UT>;
+    auto transform =
+        [&](const Value* c0) {
+            auto create = [&](auto in_e) -> Eval::Result {
+                using NumberT = decltype(in_e);
+                using T = UnwrapNumber<NumberT>;
+                using UT = std::make_unsigned_t<T>;
+                using NumberUT = Number<UT>;
 
-            // Read args that are always scalar
-            NumberUT in_offset = args[1]->ValueAs<NumberUT>();
-            NumberUT in_count = args[2]->ValueAs<NumberUT>();
+                // Read args that are always scalar
+                NumberUT in_offset = args[1]->ValueAs<NumberUT>();
+                NumberUT in_count = args[2]->ValueAs<NumberUT>();
 
-            // Cast all to unsigned
-            UT e = static_cast<UT>(in_e);
-            UT o = static_cast<UT>(in_offset);
-            UT c = static_cast<UT>(in_count);
+                // Cast all to unsigned
+                UT e = static_cast<UT>(in_e);
+                UT o = static_cast<UT>(in_offset);
+                UT c = static_cast<UT>(in_count);
 
-            constexpr UT w = sizeof(UT) * 8;
-            if (o > w || c > w || (o + c) > w) {
-                AddError("'offset + 'count' must be less than or equal to the bit width of 'e'",
-                         source);
-                if (use_runtime_semantics_) {
-                    o = std::min(o, w);
-                    c = std::min(c, w - o);
-                } else {
-                    return tint::Failure;
-                }
-            }
-
-            NumberT result;
-            if (c == UT{0}) {
-                // The result is 0 if c is 0
-                result = NumberT{0};
-            } else if (c == w) {
-                // The result is e if c is w
-                result = NumberT{e};
-            } else {
-                // Otherwise, bits 0..c - 1 of the result are copied from bits o..o + c - 1 of e.
-                UT src_mask = ((UT{1} << c) - UT{1}) << o;
-                UT r = (e & src_mask) >> o;
-                if constexpr (IsSignedIntegral<NumberT>) {
-                    // Other bits of the result are the same as bit c - 1 of the result.
-                    // Only need to set other bits if bit at c - 1 of result is 1
-                    if ((r & (UT{1} << (c - UT{1}))) != UT{0}) {
-                        UT dst_mask = src_mask >> o;
-                        r |= (~UT{0} & ~dst_mask);
+                constexpr UT w = sizeof(UT) * 8;
+                if (o > w || c > w || (o + c) > w) {
+                    AddError(source)
+                        << "'offset + 'count' must be less than or equal to the bit width of 'e'";
+                    if (use_runtime_semantics_) {
+                        o = std::min(o, w);
+                        c = std::min(c, w - o);
+                    } else {
+                        return error;
                     }
                 }
 
-                result = NumberT{r};
-            }
-            return CreateScalar(source, c0->Type(), result);
+                NumberT result;
+                if (c == UT{0}) {
+                    // The result is 0 if c is 0
+                    result = NumberT{0};
+                } else if (c == w) {
+                    // The result is e if c is w
+                    result = NumberT{e};
+                } else {
+                    // Otherwise, bits 0..c - 1 of the result are copied from bits o..o + c - 1 of
+                    // e.
+                    UT src_mask = ((UT{1} << c) - UT{1}) << o;
+                    UT r = (e & src_mask) >> o;
+                    if constexpr (IsSignedIntegral<NumberT>) {
+                        // Other bits of the result are the same as bit c - 1 of the result.
+                        // Only need to set other bits if bit at c - 1 of result is 1
+                        if ((r & (UT{1} << (c - UT{1}))) != UT{0}) {
+                            UT dst_mask = src_mask >> o;
+                            r |= (~UT{0} & ~dst_mask);
+                        }
+                    }
+
+                    result = NumberT{r};
+                }
+                return CreateScalar(source, c0->Type(), result);
+            };
+            return Dispatch_iu32(create, c0);
         };
-        return Dispatch_iu32(create, c0);
-    };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::faceForward(const core::type::Type* ty,
@@ -2578,9 +2676,9 @@ Eval::Result Eval::faceForward(const core::type::Type* ty,
     auto* e2 = args[1];
     auto* e3 = args[2];
     auto r = Dot(source, e2, e3);
-    if (!r) {
-        AddNote("when calculating faceForward", source);
-        return tint::Failure;
+    if (r != Success) {
+        AddNote(source) << "when calculating faceForward";
+        return error;
     }
     auto is_negative = [](auto v) { return v < 0; };
     if (Dispatch_fa_f32_f16(is_negative, r.Get())) {
@@ -2630,7 +2728,7 @@ Eval::Result Eval::firstLeadingBit(const core::type::Type* ty,
         };
         return Dispatch_iu32(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::firstTrailingBit(const core::type::Type* ty,
@@ -2656,7 +2754,7 @@ Eval::Result Eval::firstTrailingBit(const core::type::Type* ty,
         };
         return Dispatch_iu32(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::floor(const core::type::Type* ty,
@@ -2668,7 +2766,7 @@ Eval::Result Eval::floor(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::fma(const core::type::Type* ty,
@@ -2677,24 +2775,24 @@ Eval::Result Eval::fma(const core::type::Type* ty,
     auto transform = [&](const Value* c1, const Value* c2, const Value* c3) {
         auto create = [&](auto e1, auto e2, auto e3) -> Eval::Result {
             auto err_msg = [&] {
-                AddNote("when calculating fma", source);
-                return tint::Failure;
+                AddNote(source) << "when calculating fma";
+                return error;
             };
 
             auto mul = Mul(source, e1, e2);
-            if (!mul) {
+            if (mul != Success) {
                 return err_msg();
             }
 
             auto val = Add(source, mul.Get(), e3);
-            if (!val) {
+            if (val != Success) {
                 return err_msg();
             }
             return CreateScalar(source, c1->Type(), val.Get());
         };
         return Dispatch_fa_f32_f16(create, c1, c2, c3);
     };
-    return TransformElements(mgr, ty, transform, args[0], args[1], args[2]);
+    return TransformTernaryElements(mgr, ty, transform, args[0], args[1], args[2]);
 }
 
 Eval::Result Eval::fract(const core::type::Type* ty,
@@ -2708,7 +2806,7 @@ Eval::Result Eval::fract(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c1);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::frexp(const core::type::Type* ty,
@@ -2744,11 +2842,7 @@ Eval::Result Eval::frexp(const core::type::Type* ty,
                     CreateScalar(source, mgr.types.AInt(), AInt(exp)),
                 };
             },
-            [&](Default) {
-                TINT_ICE() << "unhandled element type for frexp() const-eval: "
-                           << s->Type()->FriendlyName();
-                return FractExp{Failure, Failure};
-            });
+            TINT_ICE_ON_NO_MATCH);
     };
 
     if (auto* vec = arg->Type()->As<core::type::Vector>()) {
@@ -2756,8 +2850,8 @@ Eval::Result Eval::frexp(const core::type::Type* ty,
         Vector<const Value*, 4> exp_els;
         for (uint32_t i = 0; i < vec->Width(); i++) {
             auto fe = scalar(arg->Index(i));
-            if (!fe.fract || !fe.exp) {
-                return tint::Failure;
+            if (fe.fract != Success || fe.exp != Success) {
+                return error;
             }
             fract_els.Push(fe.fract.Get());
             exp_els.Push(fe.exp.Get());
@@ -2770,8 +2864,8 @@ Eval::Result Eval::frexp(const core::type::Type* ty,
                                  });
     } else {
         auto fe = scalar(arg);
-        if (!fe.fract || !fe.exp) {
-            return tint::Failure;
+        if (fe.fract != Success || fe.exp != Success) {
+            return error;
         }
         return mgr.Composite(ty, Vector<const Value*, 2>{
                                      fe.fract.Get(),
@@ -2783,58 +2877,59 @@ Eval::Result Eval::frexp(const core::type::Type* ty,
 Eval::Result Eval::insertBits(const core::type::Type* ty,
                               VectorRef<const Value*> args,
                               const Source& source) {
-    auto transform = [&](const Value* c0, const Value* c1) {
-        auto create = [&](auto in_e, auto in_newbits) -> Eval::Result {
-            using NumberT = decltype(in_e);
-            using T = UnwrapNumber<NumberT>;
-            using UT = std::make_unsigned_t<T>;
-            using NumberUT = Number<UT>;
+    auto transform =
+        [&](const Value* c0, const Value* c1) {
+            auto create = [&](auto in_e, auto in_newbits) -> Eval::Result {
+                using NumberT = decltype(in_e);
+                using T = UnwrapNumber<NumberT>;
+                using UT = std::make_unsigned_t<T>;
+                using NumberUT = Number<UT>;
 
-            // Read args that are always scalar
-            NumberUT in_offset = args[2]->ValueAs<NumberUT>();
-            NumberUT in_count = args[3]->ValueAs<NumberUT>();
+                // Read args that are always scalar
+                NumberUT in_offset = args[2]->ValueAs<NumberUT>();
+                NumberUT in_count = args[3]->ValueAs<NumberUT>();
 
-            // Cast all to unsigned
-            UT e = static_cast<UT>(in_e);
-            UT newbits = static_cast<UT>(in_newbits);
-            UT o = static_cast<UT>(in_offset);
-            UT c = static_cast<UT>(in_count);
+                // Cast all to unsigned
+                UT e = static_cast<UT>(in_e);
+                UT newbits = static_cast<UT>(in_newbits);
+                UT o = static_cast<UT>(in_offset);
+                UT c = static_cast<UT>(in_count);
 
-            constexpr UT w = sizeof(UT) * 8;
-            if (o > w || c > w || (o + c) > w) {
-                AddError("'offset + 'count' must be less than or equal to the bit width of 'e'",
-                         source);
-                if (use_runtime_semantics_) {
-                    o = std::min(o, w);
-                    c = std::min(c, w - o);
-                } else {
-                    return tint::Failure;
+                constexpr UT w = sizeof(UT) * 8;
+                if (o > w || c > w || (o + c) > w) {
+                    AddError(source)
+                        << "'offset + 'count' must be less than or equal to the bit width of 'e'";
+                    if (use_runtime_semantics_) {
+                        o = std::min(o, w);
+                        c = std::min(c, w - o);
+                    } else {
+                        return error;
+                    }
                 }
-            }
 
-            NumberT result;
-            if (c == UT{0}) {
-                // The result is e if c is 0
-                result = NumberT{e};
-            } else if (c == w) {
-                // The result is newbits if c is w
-                result = NumberT{newbits};
-            } else {
-                // Otherwise, bits o..o + c - 1 of the result are copied from bits 0..c - 1 of
-                // newbits. Other bits of the result are copied from e.
-                UT from = newbits << o;
-                UT mask = ((UT{1} << c) - UT{1}) << UT{o};
-                auto r = e;          // Start with 'e' as the result
-                r &= ~mask;          // Zero the bits in 'e' we're overwriting
-                r |= (from & mask);  // Overwrite from 'newbits' (shifted into position)
-                result = NumberT{r};
-            }
+                NumberT result;
+                if (c == UT{0}) {
+                    // The result is e if c is 0
+                    result = NumberT{e};
+                } else if (c == w) {
+                    // The result is newbits if c is w
+                    result = NumberT{newbits};
+                } else {
+                    // Otherwise, bits o..o + c - 1 of the result are copied from bits 0..c - 1 of
+                    // newbits. Other bits of the result are copied from e.
+                    UT from = newbits << o;
+                    UT mask = ((UT{1} << c) - UT{1}) << UT{o};
+                    auto r = e;          // Start with 'e' as the result
+                    r &= ~mask;          // Zero the bits in 'e' we're overwriting
+                    r |= (from & mask);  // Overwrite from 'newbits' (shifted into position)
+                    result = NumberT{r};
+                }
 
-            return CreateScalar(source, c0->Type(), result);
+                return CreateScalar(source, c0->Type(), result);
+            };
+            return Dispatch_iu32(create, c0, c1);
         };
-        return Dispatch_iu32(create, c0, c1);
-    };
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::inverseSqrt(const core::type::Type* ty,
@@ -2845,25 +2940,25 @@ Eval::Result Eval::inverseSqrt(const core::type::Type* ty,
             using NumberT = decltype(e);
 
             if (e <= NumberT(0)) {
-                AddError("inverseSqrt must be called with a value > 0", source);
+                AddError(source) << "inverseSqrt must be called with a value > 0";
                 if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
+                    return mgr.Zero(c0->Type());
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
 
             auto err = [&] {
-                AddNote("when calculating inverseSqrt", source);
-                return tint::Failure;
+                AddNote(source) << "when calculating inverseSqrt";
+                return error;
             };
 
             auto s = Sqrt(source, e);
-            if (!s) {
+            if (s != Success) {
                 return err();
             }
             auto div = Div(source, NumberT(1), s.Get());
-            if (!div) {
+            if (div != Success) {
                 return err();
             }
 
@@ -2872,7 +2967,7 @@ Eval::Result Eval::inverseSqrt(const core::type::Type* ty,
         return Dispatch_fa_f32_f16(create, c0);
     };
 
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::ldexp(const core::type::Type* ty,
@@ -2902,11 +2997,11 @@ Eval::Result Eval::ldexp(const core::type::Type* ty,
             }
 
             if (e2 > bias + 1) {
-                AddError("e2 must be less than or equal to " + std::to_string(bias + 1), source);
+                AddError(source) << "e2 must be less than or equal to " << (bias + 1);
                 if (use_runtime_semantics_) {
-                    return ZeroValue(c1->Type());
+                    return mgr.Zero(c1->Type());
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
 
@@ -2918,15 +3013,15 @@ Eval::Result Eval::ldexp(const core::type::Type* ty,
         return Dispatch_fa_f32_f16(create, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformElements(mgr, ty, transform, 0, args[0]);
 }
 
 Eval::Result Eval::length(const core::type::Type* ty,
                           VectorRef<const Value*> args,
                           const Source& source) {
     auto r = Length(source, ty, args[0]);
-    if (!r) {
-        AddNote("when calculating length", source);
+    if (r != Success) {
+        AddNote(source) << "when calculating length";
     }
     return r;
 }
@@ -2938,18 +3033,18 @@ Eval::Result Eval::log(const core::type::Type* ty,
         auto create = [&](auto v) -> Eval::Result {
             using NumberT = decltype(v);
             if (v <= NumberT(0)) {
-                AddError("log must be called with a value > 0", source);
+                AddError(source) << "log must be called with a value > 0";
                 if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
+                    return mgr.Zero(c0->Type());
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
             return CreateScalar(source, c0->Type(), NumberT(std::log(v)));
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::log2(const core::type::Type* ty,
@@ -2959,18 +3054,18 @@ Eval::Result Eval::log2(const core::type::Type* ty,
         auto create = [&](auto v) -> Eval::Result {
             using NumberT = decltype(v);
             if (v <= NumberT(0)) {
-                AddError("log2 must be called with a value > 0", source);
+                AddError(source) << "log2 must be called with a value > 0";
                 if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
+                    return mgr.Zero(c0->Type());
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
             return CreateScalar(source, c0->Type(), NumberT(std::log2(v)));
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::max(const core::type::Type* ty,
@@ -2982,7 +3077,7 @@ Eval::Result Eval::max(const core::type::Type* ty,
         };
         return Dispatch_fia_fiu32_f16(create, c0, c1);
     };
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::min(const core::type::Type* ty,
@@ -2994,7 +3089,7 @@ Eval::Result Eval::min(const core::type::Type* ty,
         };
         return Dispatch_fia_fiu32_f16(create, c0, c1);
     };
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::mix(const core::type::Type* ty,
@@ -3014,28 +3109,28 @@ Eval::Result Eval::mix(const core::type::Type* ty,
             // Implement as `e1 * (1 - e3) + e2 * e3)` instead of as `e1 + e3 * (e2 - e1)` to avoid
             // float precision loss when e1 and e2 significantly differ in magnitude.
             auto one_sub_e3 = Sub(source, NumberT{1}, e3);
-            if (!one_sub_e3) {
-                return tint::Failure;
+            if (one_sub_e3 != Success) {
+                return error;
             }
             auto e1_mul_one_sub_e3 = Mul(source, e1, one_sub_e3.Get());
-            if (!e1_mul_one_sub_e3) {
-                return tint::Failure;
+            if (e1_mul_one_sub_e3 != Success) {
+                return error;
             }
             auto e2_mul_e3 = Mul(source, e2, e3);
-            if (!e2_mul_e3) {
-                return tint::Failure;
+            if (e2_mul_e3 != Success) {
+                return error;
             }
             auto r = Add(source, e1_mul_one_sub_e3.Get(), e2_mul_e3.Get());
-            if (!r) {
-                return tint::Failure;
+            if (r != Success) {
+                return error;
             }
             return CreateScalar(source, c0->Type(), r.Get());
         };
         return Dispatch_fa_f32_f16(create, c0, c1);
     };
-    auto r = TransformElements(mgr, ty, transform, args[0], args[1]);
-    if (!r) {
-        AddNote("when calculating mix", source);
+    auto r = TransformElements(mgr, ty, transform, 0, args[0], args[1]);
+    if (r != Success) {
+        AddNote(source) << "when calculating mix";
     }
     return r;
 }
@@ -3058,16 +3153,18 @@ Eval::Result Eval::modf(const core::type::Type* ty,
 
     Vector<const Value*, 2> fields;
 
-    if (auto fract = TransformElements(mgr, args[0]->Type(), transform_fract, args[0])) {
+    if (auto fract = TransformUnaryElements(mgr, args[0]->Type(), transform_fract, args[0]);
+        fract == Success) {
         fields.Push(fract.Get());
     } else {
-        return tint::Failure;
+        return error;
     }
 
-    if (auto whole = TransformElements(mgr, args[0]->Type(), transform_whole, args[0])) {
+    if (auto whole = TransformUnaryElements(mgr, args[0]->Type(), transform_whole, args[0]);
+        whole == Success) {
         fields.Push(whole.Get());
     } else {
-        return tint::Failure;
+        return error;
     }
 
     return mgr.Composite(ty, std::move(fields));
@@ -3078,17 +3175,17 @@ Eval::Result Eval::normalize(const core::type::Type* ty,
                              const Source& source) {
     auto* len_ty = ty->DeepestElement();
     auto len = Length(source, len_ty, args[0]);
-    if (!len) {
-        AddNote("when calculating normalize", source);
-        return tint::Failure;
+    if (len != Success) {
+        AddNote(source) << "when calculating normalize";
+        return error;
     }
     auto* v = len.Get();
     if (v->AllZero()) {
-        AddError("zero length vector can not be normalized", source);
+        AddError(source) << "zero length vector can not be normalized";
         if (use_runtime_semantics_) {
-            return ZeroValue(ty);
+            return mgr.Zero(ty);
         } else {
-            return tint::Failure;
+            return error;
         }
     }
     return Divide(ty, Vector{args[0], v}, source);
@@ -3097,29 +3194,29 @@ Eval::Result Eval::normalize(const core::type::Type* ty,
 Eval::Result Eval::pack2x16float(const core::type::Type* ty,
                                  VectorRef<const Value*> args,
                                  const Source& source) {
-    auto convert = [&](f32 val) -> tint::Result<uint32_t> {
+    auto convert = [&](f32 val) -> tint::Result<uint32_t, Error> {
         auto conv = CheckedConvert<f16>(val);
-        if (!conv) {
-            AddError(OverflowErrorMessage(val, "f16"), source);
+        if (conv != Success) {
+            AddError(source) << OverflowErrorMessage(val, "f16");
             if (use_runtime_semantics_) {
                 return 0;
             } else {
-                return tint::Failure;
+                return error;
             }
         }
         uint16_t v = conv.Get().BitsRepresentation();
-        return tint::Result<uint32_t>{v};
+        return tint::Result<uint32_t, Error>{v};
     };
 
     auto* e = args[0];
     auto e0 = convert(e->Index(0)->ValueAs<f32>());
-    if (!e0) {
-        return tint::Failure;
+    if (e0 != Success) {
+        return error;
     }
 
     auto e1 = convert(e->Index(1)->ValueAs<f32>());
-    if (!e1) {
-        return tint::Failure;
+    if (e1 != Success) {
+        return error;
     }
 
     u32 ret = u32((e0.Get() & 0x0000'ffff) | (e1.Get() << 16));
@@ -3198,6 +3295,65 @@ Eval::Result Eval::pack4x8unorm(const core::type::Type* ty,
     return CreateScalar(source, ty, ret);
 }
 
+Eval::Result Eval::pack4xI8(const core::type::Type* ty,
+                            VectorRef<const Value*> args,
+                            const Source& source) {
+    auto* e = args[0];
+    auto e0 = e->Index(0)->ValueAs<i32>();
+    auto e1 = e->Index(1)->ValueAs<i32>();
+    auto e2 = e->Index(2)->ValueAs<i32>();
+    auto e3 = e->Index(3)->ValueAs<i32>();
+
+    int32_t mask = 0xff;
+    u32 ret = u32((e0 & mask) | ((e1 & mask) << 8) | ((e2 & mask) << 16) | ((e3 & mask) << 24));
+    return CreateScalar(source, ty, ret);
+}
+
+Eval::Result Eval::pack4xU8(const core::type::Type* ty,
+                            VectorRef<const Value*> args,
+                            const Source& source) {
+    auto* e = args[0];
+    auto e0 = e->Index(0)->ValueAs<u32>();
+    auto e1 = e->Index(1)->ValueAs<u32>();
+    auto e2 = e->Index(2)->ValueAs<u32>();
+    auto e3 = e->Index(3)->ValueAs<u32>();
+
+    uint32_t mask = 0xff;
+    u32 ret = u32((e0 & mask) | ((e1 & mask) << 8) | ((e2 & mask) << 16) | ((e3 & mask) << 24));
+    return CreateScalar(source, ty, ret);
+}
+
+Eval::Result Eval::pack4xI8Clamp(const core::type::Type* ty,
+                                 VectorRef<const Value*> args,
+                                 const Source& source) {
+    auto calc = [&](i32 val) -> i32 { return Clamp(source, val, i32(-128), i32(127)).Get(); };
+
+    auto* e = args[0];
+    auto e0 = calc(e->Index(0)->ValueAs<i32>());
+    auto e1 = calc(e->Index(1)->ValueAs<i32>());
+    auto e2 = calc(e->Index(2)->ValueAs<i32>());
+    auto e3 = calc(e->Index(3)->ValueAs<i32>());
+
+    int32_t mask = 0xff;
+    u32 ret = u32((e0 & mask) | ((e1 & mask) << 8) | ((e2 & mask) << 16) | ((e3 & mask) << 24));
+    return CreateScalar(source, ty, ret);
+}
+
+Eval::Result Eval::pack4xU8Clamp(const core::type::Type* ty,
+                                 VectorRef<const Value*> args,
+                                 const Source& source) {
+    auto calc = [&](u32 val) -> u32 { return Clamp(source, val, u32(0), u32(255)).Get(); };
+
+    auto* e = args[0];
+    auto e0 = calc(e->Index(0)->ValueAs<u32>());
+    auto e1 = calc(e->Index(1)->ValueAs<u32>());
+    auto e2 = calc(e->Index(2)->ValueAs<u32>());
+    auto e3 = calc(e->Index(3)->ValueAs<u32>());
+
+    u32 ret = u32(e0 | (e1 << 8) | (e2 << 16) | (e3 << 24));
+    return CreateScalar(source, ty, ret);
+}
+
 Eval::Result Eval::pow(const core::type::Type* ty,
                        VectorRef<const Value*> args,
                        const Source& source) {
@@ -3205,18 +3361,18 @@ Eval::Result Eval::pow(const core::type::Type* ty,
         auto create = [&](auto e1, auto e2) -> Eval::Result {
             auto r = CheckedPow(e1, e2);
             if (!r) {
-                AddError(OverflowErrorMessage(e1, "^", e2), source);
+                AddError(source) << OverflowErrorMessage(e1, "^", e2);
                 if (use_runtime_semantics_) {
-                    return ZeroValue(c0->Type());
+                    return mgr.Zero(c0->Type());
                 } else {
-                    return tint::Failure;
+                    return error;
                 }
             }
             return CreateScalar(source, c0->Type(), *r);
         };
         return Dispatch_fa_f32_f16(create, c0, c1);
     };
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::radians(const core::type::Type* ty,
@@ -3229,20 +3385,20 @@ Eval::Result Eval::radians(const core::type::Type* ty,
 
             auto pi = kPi<T>;
             auto scale = Div(source, NumberT(pi), NumberT(180));
-            if (!scale) {
-                AddNote("when calculating radians", source);
-                return tint::Failure;
+            if (scale != Success) {
+                AddNote(source) << "when calculating radians";
+                return error;
             }
             auto result = Mul(source, e, scale.Get());
-            if (!result) {
-                AddNote("when calculating radians", source);
-                return tint::Failure;
+            if (result != Success) {
+                AddNote(source) << "when calculating radians";
+                return error;
             }
             return CreateScalar(source, c0->Type(), result.Get());
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::reflect(const core::type::Type* ty,
@@ -3258,8 +3414,8 @@ Eval::Result Eval::reflect(const core::type::Type* ty,
 
         // dot(e2, e1)
         auto dot_e2_e1 = Dot(source, e2, e1);
-        if (!dot_e2_e1) {
-            return tint::Failure;
+        if (dot_e2_e1 != Success) {
+            return error;
         }
 
         // 2 * dot(e2, e1)
@@ -3268,22 +3424,22 @@ Eval::Result Eval::reflect(const core::type::Type* ty,
             return CreateScalar(source, el_ty, NumberT{NumberT{2} * v});
         };
         auto dot_e2_e1_2 = Dispatch_fa_f32_f16(mul2, dot_e2_e1.Get());
-        if (!dot_e2_e1_2) {
-            return tint::Failure;
+        if (dot_e2_e1_2 != Success) {
+            return error;
         }
 
         // 2 * dot(e2, e1) * e2
         auto dot_e2_e1_2_e2 = Mul(source, ty, dot_e2_e1_2.Get(), e2);
-        if (!dot_e2_e1_2_e2) {
-            return tint::Failure;
+        if (dot_e2_e1_2_e2 != Success) {
+            return error;
         }
 
         // e1 - 2 * dot(e2, e1) * e2
         return Sub(source, ty, e1, dot_e2_e1_2_e2.Get());
     };
     auto r = calculate();
-    if (!r) {
-        AddNote("when calculating reflect", source);
+    if (r != Success) {
+        AddNote(source) << "when calculating reflect";
     }
     return r;
 }
@@ -3298,24 +3454,24 @@ Eval::Result Eval::refract(const core::type::Type* ty,
         using NumberT = decltype(e3);
         // let k = 1.0 - e3 * e3 * (1.0 - dot(e2, e1) * dot(e2, e1))
         auto e3_squared = Mul(source, e3, e3);
-        if (!e3_squared) {
-            return tint::Failure;
+        if (e3_squared != Success) {
+            return error;
         }
         auto dot_e2_e1_squared = Mul(source, dot_e2_e1, dot_e2_e1);
-        if (!dot_e2_e1_squared) {
-            return tint::Failure;
+        if (dot_e2_e1_squared != Success) {
+            return error;
         }
         auto r = Sub(source, NumberT(1), dot_e2_e1_squared.Get());
-        if (!r) {
-            return tint::Failure;
+        if (r != Success) {
+            return error;
         }
         r = Mul(source, e3_squared.Get(), r.Get());
-        if (!r) {
-            return tint::Failure;
+        if (r != Success) {
+            return error;
         }
         r = Sub(source, NumberT(1), r.Get());
-        if (!r) {
-            return tint::Failure;
+        if (r != Success) {
+            return error;
         }
         return CreateScalar(source, el_ty, r.Get());
     };
@@ -3323,16 +3479,16 @@ Eval::Result Eval::refract(const core::type::Type* ty,
     auto compute_e2_scale = [&](auto e3, auto dot_e2_e1, auto k) -> Eval::Result {
         // e3 * dot(e2, e1) + sqrt(k)
         auto sqrt_k = Sqrt(source, k);
-        if (!sqrt_k) {
-            return tint::Failure;
+        if (sqrt_k != Success) {
+            return error;
         }
         auto r = Mul(source, e3, dot_e2_e1);
-        if (!r) {
-            return tint::Failure;
+        if (r != Success) {
+            return error;
         }
         r = Add(source, r.Get(), sqrt_k.Get());
-        if (!r) {
-            return tint::Failure;
+        if (r != Success) {
+            return error;
         }
         return CreateScalar(source, el_ty, r.Get());
     };
@@ -3349,39 +3505,39 @@ Eval::Result Eval::refract(const core::type::Type* ty,
 
         // dot(e2, e1)
         auto dot_e2_e1 = Dot(source, e2, e1);
-        if (!dot_e2_e1) {
-            return tint::Failure;
+        if (dot_e2_e1 != Success) {
+            return error;
         }
 
         // let k = 1.0 - e3 * e3 * (1.0 - dot(e2, e1) * dot(e2, e1))
         auto k = Dispatch_fa_f32_f16(compute_k, e3, dot_e2_e1.Get());
-        if (!k) {
-            return tint::Failure;
+        if (k != Success) {
+            return error;
         }
 
         // If k < 0.0, returns the refraction vector 0.0
         if (k.Get()->ValueAs<AFloat>() < 0) {
-            return ZeroValue(ty);
+            return mgr.Zero(ty);
         }
 
         // Otherwise return the refraction vector e3 * e1 - (e3 * dot(e2, e1) + sqrt(k)) * e2
         auto e1_scaled = Mul(source, ty, e3, e1);
-        if (!e1_scaled) {
-            return tint::Failure;
+        if (e1_scaled != Success) {
+            return error;
         }
         auto e2_scale = Dispatch_fa_f32_f16(compute_e2_scale, e3, dot_e2_e1.Get(), k.Get());
-        if (!e2_scale) {
-            return tint::Failure;
+        if (e2_scale != Success) {
+            return error;
         }
         auto e2_scaled = Mul(source, ty, e2_scale.Get(), e2);
-        if (!e2_scaled) {
-            return tint::Failure;
+        if (e2_scaled != Success) {
+            return error;
         }
         return Sub(source, ty, e1_scaled.Get(), e2_scaled.Get());
     };
     auto r = calculate();
-    if (!r) {
-        AddNote("when calculating refract", source);
+    if (r != Success) {
+        AddNote(source) << "when calculating refract";
     }
     return r;
 }
@@ -3410,7 +3566,7 @@ Eval::Result Eval::reverseBits(const core::type::Type* ty,
         };
         return Dispatch_iu32(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::round(const core::type::Type* ty,
@@ -3446,7 +3602,7 @@ Eval::Result Eval::round(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::saturate(const core::type::Type* ty,
@@ -3460,7 +3616,7 @@ Eval::Result Eval::saturate(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::select_bool(const core::type::Type* ty,
@@ -3474,7 +3630,7 @@ Eval::Result Eval::select_bool(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16_bool(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::select_boolvec(const core::type::Type* ty,
@@ -3489,7 +3645,7 @@ Eval::Result Eval::select_boolvec(const core::type::Type* ty,
         return Dispatch_fia_fiu32_f16_bool(create, c0, c1);
     };
 
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformElements(mgr, ty, transform, 0, args[0], args[1]);
 }
 
 Eval::Result Eval::sign(const core::type::Type* ty,
@@ -3511,7 +3667,7 @@ Eval::Result Eval::sign(const core::type::Type* ty,
         };
         return Dispatch_fia_fi32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::sin(const core::type::Type* ty,
@@ -3524,7 +3680,7 @@ Eval::Result Eval::sin(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::sinh(const core::type::Type* ty,
@@ -3537,7 +3693,7 @@ Eval::Result Eval::sinh(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::smoothstep(const core::type::Type* ty,
@@ -3548,19 +3704,19 @@ Eval::Result Eval::smoothstep(const core::type::Type* ty,
             using NumberT = decltype(low);
 
             auto err = [&] {
-                AddNote("when calculating smoothstep", source);
-                return tint::Failure;
+                AddNote(source) << "when calculating smoothstep";
+                return error;
             };
 
             // t = clamp((x - low) / (high - low), 0.0, 1.0)
             auto x_minus_low = Sub(source, x, low);
             auto high_minus_low = Sub(source, high, low);
-            if (!x_minus_low || !high_minus_low) {
+            if (x_minus_low != Success || high_minus_low != Success) {
                 return err();
             }
 
             auto div = Div(source, x_minus_low.Get(), high_minus_low.Get());
-            if (!div) {
+            if (div != Success) {
                 return err();
             }
 
@@ -3570,24 +3726,24 @@ Eval::Result Eval::smoothstep(const core::type::Type* ty,
             // result = t * t * (3.0 - 2.0 * t)
             auto t_times_t = Mul(source, t, t);
             auto t_times_2 = Mul(source, NumberT(2), t);
-            if (!t_times_t || !t_times_2) {
+            if (t_times_t != Success || t_times_2 != Success) {
                 return err();
             }
 
             auto three_minus_t_times_2 = Sub(source, NumberT(3), t_times_2.Get());
-            if (!three_minus_t_times_2) {
+            if (three_minus_t_times_2 != Success) {
                 return err();
             }
 
             auto result = Mul(source, t_times_t.Get(), three_minus_t_times_2.Get());
-            if (!result) {
+            if (result != Success) {
                 return err();
             }
             return CreateScalar(source, c0->Type(), result.Get());
         };
         return Dispatch_fa_f32_f16(create, c0, c1, c2);
     };
-    return TransformElements(mgr, ty, transform, args[0], args[1], args[2]);
+    return TransformTernaryElements(mgr, ty, transform, args[0], args[1], args[2]);
 }
 
 Eval::Result Eval::step(const core::type::Type* ty,
@@ -3601,7 +3757,7 @@ Eval::Result Eval::step(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0, c1);
     };
-    return TransformElements(mgr, ty, transform, args[0], args[1]);
+    return TransformBinaryElements(mgr, ty, transform, args[0], args[1]);
 }
 
 Eval::Result Eval::sqrt(const core::type::Type* ty,
@@ -3611,7 +3767,7 @@ Eval::Result Eval::sqrt(const core::type::Type* ty,
         return Dispatch_fa_f32_f16(SqrtFunc(source, c0->Type()), c0);
     };
 
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::tan(const core::type::Type* ty,
@@ -3624,7 +3780,7 @@ Eval::Result Eval::tan(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::tanh(const core::type::Type* ty,
@@ -3637,7 +3793,7 @@ Eval::Result Eval::tanh(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::transpose(const core::type::Type* ty,
@@ -3669,7 +3825,7 @@ Eval::Result Eval::trunc(const core::type::Type* ty,
         };
         return Dispatch_fa_f32_f16(create, c0);
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::unpack2x16float(const core::type::Type* ty,
@@ -3683,16 +3839,16 @@ Eval::Result Eval::unpack2x16float(const core::type::Type* ty,
     for (size_t i = 0; i < 2; ++i) {
         auto in = f16::FromBits(uint16_t((e >> (16 * i)) & 0x0000'ffff));
         auto val = CheckedConvert<f32>(in);
-        if (!val) {
-            AddError(OverflowErrorMessage(in, "f32"), source);
+        if (val != Success) {
+            AddError(source) << OverflowErrorMessage(in, "f32");
             if (use_runtime_semantics_) {
                 val = f32(0.f);
             } else {
-                return tint::Failure;
+                return error;
             }
         }
         auto el = CreateScalar(source, inner_ty, val.Get());
-        if (!el) {
+        if (el != Success) {
             return el;
         }
         els.Push(el.Get());
@@ -3712,7 +3868,7 @@ Eval::Result Eval::unpack2x16snorm(const core::type::Type* ty,
         auto val = f32(
             std::max(static_cast<float>(int16_t((e >> (16 * i)) & 0x0000'ffff)) / 32767.f, -1.f));
         auto el = CreateScalar(source, inner_ty, val);
-        if (!el) {
+        if (el != Success) {
             return el;
         }
         els.Push(el.Get());
@@ -3731,7 +3887,7 @@ Eval::Result Eval::unpack2x16unorm(const core::type::Type* ty,
     for (size_t i = 0; i < 2; ++i) {
         auto val = f32(static_cast<float>(uint16_t((e >> (16 * i)) & 0x0000'ffff)) / 65535.f);
         auto el = CreateScalar(source, inner_ty, val);
-        if (!el) {
+        if (el != Success) {
             return el;
         }
         els.Push(el.Get());
@@ -3751,7 +3907,7 @@ Eval::Result Eval::unpack4x8snorm(const core::type::Type* ty,
         auto val =
             f32(std::max(static_cast<float>(int8_t((e >> (8 * i)) & 0x0000'00ff)) / 127.f, -1.f));
         auto el = CreateScalar(source, inner_ty, val);
-        if (!el) {
+        if (el != Success) {
             return el;
         }
         els.Push(el.Get());
@@ -3770,7 +3926,48 @@ Eval::Result Eval::unpack4x8unorm(const core::type::Type* ty,
     for (size_t i = 0; i < 4; ++i) {
         auto val = f32(static_cast<float>(uint8_t((e >> (8 * i)) & 0x0000'00ff)) / 255.f);
         auto el = CreateScalar(source, inner_ty, val);
-        if (!el) {
+        if (el != Success) {
+            return el;
+        }
+        els.Push(el.Get());
+    }
+    return mgr.Composite(ty, std::move(els));
+}
+
+Eval::Result Eval::unpack4xI8(const core::type::Type* ty,
+                              VectorRef<const Value*> args,
+                              const Source& source) {
+    auto* inner_ty = ty->DeepestElement();
+    auto e = args[0]->ValueAs<u32>().value;
+
+    Vector<const Value*, 4> els;
+    els.Reserve(4);
+
+    for (size_t i = 0; i < 4; ++i) {
+        uint8_t e_i = (e >> (8 * i)) & 0xff;
+        auto val = i32(*reinterpret_cast<int8_t*>(&e_i));
+        auto el = CreateScalar(source, inner_ty, val);
+        if (el != Success) {
+            return el;
+        }
+        els.Push(el.Get());
+    }
+    return mgr.Composite(ty, std::move(els));
+}
+
+Eval::Result Eval::unpack4xU8(const core::type::Type* ty,
+                              VectorRef<const Value*> args,
+                              const Source& source) {
+    auto* inner_ty = ty->DeepestElement();
+    auto e = args[0]->ValueAs<u32>().value;
+
+    Vector<const Value*, 4> els;
+    els.Reserve(4);
+
+    for (size_t i = 0; i < 4; ++i) {
+        auto val = u32((e >> (8 * i)) & 0xff);
+        auto el = CreateScalar(source, inner_ty, val);
+        if (el != Success) {
             return el;
         }
         els.Push(el.Get());
@@ -3784,17 +3981,17 @@ Eval::Result Eval::quantizeToF16(const core::type::Type* ty,
     auto transform = [&](const Value* c) -> Eval::Result {
         auto value = c->ValueAs<f32>();
         auto conv = CheckedConvert<f32>(f16(value));
-        if (!conv) {
-            AddError(OverflowErrorMessage(value, "f16"), source);
+        if (conv != Success) {
+            AddError(source) << OverflowErrorMessage(value, "f16");
             if (use_runtime_semantics_) {
-                return ZeroValue(c->Type());
+                return mgr.Zero(c->Type());
             } else {
-                return tint::Failure;
+                return error;
             }
         }
         return CreateScalar(source, c->Type(), conv.Get());
     };
-    return TransformElements(mgr, ty, transform, args[0]);
+    return TransformUnaryElements(mgr, ty, transform, args[0]);
 }
 
 Eval::Result Eval::Convert(const core::type::Type* target_ty,
@@ -3805,23 +4002,23 @@ Eval::Result Eval::Convert(const core::type::Type* target_ty,
     }
     ConvertContext ctx{mgr, diags, source, use_runtime_semantics_};
     auto* converted = ConvertInternal(value, target_ty, ctx);
-    return converted ? Result(converted) : tint::Failure;
+    return converted ? Result(converted) : Result(error);
 }
 
-void Eval::AddError(const std::string& msg, const Source& source) const {
+diag::Diagnostic& Eval::AddError(const Source& source) const {
     if (use_runtime_semantics_) {
-        diags.add_warning(diag::System::Constant, msg, source);
+        return diags.AddWarning(source);
     } else {
-        diags.add_error(diag::System::Constant, msg, source);
+        return diags.AddError(source);
     }
 }
 
-void Eval::AddWarning(const std::string& msg, const Source& source) const {
-    diags.add_warning(diag::System::Constant, msg, source);
+diag::Diagnostic& Eval::AddWarning(const Source& source) const {
+    return diags.AddWarning(source);
 }
 
-void Eval::AddNote(const std::string& msg, const Source& source) const {
-    diags.add_note(diag::System::Constant, msg, source);
+diag::Diagnostic& Eval::AddNote(const Source& source) const {
+    return diags.AddNote(source);
 }
 
 }  // namespace tint::core::constant

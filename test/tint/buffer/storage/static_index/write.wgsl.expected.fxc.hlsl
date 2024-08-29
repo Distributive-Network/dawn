@@ -88,13 +88,13 @@ void main() {
   sb.Store(4u, asuint(0));
   sb.Store(8u, asuint(0u));
   sb.Store2(16u, asuint((0.0f).xx));
-  sb.Store2(24u, asuint((0).xx));
+  sb.Store2(24u, asuint(int2((0).xx)));
   sb.Store2(32u, asuint((0u).xx));
   sb.Store3(48u, asuint((0.0f).xxx));
-  sb.Store3(64u, asuint((0).xxx));
+  sb.Store3(64u, asuint(int3((0).xxx)));
   sb.Store3(80u, asuint((0u).xxx));
   sb.Store4(96u, asuint((0.0f).xxxx));
-  sb.Store4(112u, asuint((0).xxxx));
+  sb.Store4(112u, asuint(int4((0).xxxx)));
   sb.Store4(128u, asuint((0u).xxxx));
   sb_store_12(144u, float2x2((0.0f).xx, (0.0f).xx));
   sb_store_13(160u, float2x3((0.0f).xxx, (0.0f).xxx));
@@ -105,11 +105,11 @@ void main() {
   sb_store_18(352u, float4x2((0.0f).xx, (0.0f).xx, (0.0f).xx, (0.0f).xx));
   sb_store_19(384u, float4x3((0.0f).xxx, (0.0f).xxx, (0.0f).xxx, (0.0f).xxx));
   sb_store_20(448u, float4x4((0.0f).xxxx, (0.0f).xxxx, (0.0f).xxxx, (0.0f).xxxx));
-  const float3 tint_symbol[2] = (float3[2])0;
+  float3 tint_symbol[2] = (float3[2])0;
   sb_store_21(512u, tint_symbol);
-  const Inner tint_symbol_1 = (Inner)0;
+  Inner tint_symbol_1 = (Inner)0;
   sb_store_22(544u, tint_symbol_1);
-  const Inner tint_symbol_2[4] = (Inner[4])0;
+  Inner tint_symbol_2[4] = (Inner[4])0;
   sb_store_23(552u, tint_symbol_2);
   return;
 }

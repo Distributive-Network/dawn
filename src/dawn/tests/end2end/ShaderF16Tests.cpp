@@ -1,16 +1,29 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <vector>
 
@@ -98,9 +111,8 @@ TEST_P(ShaderF16Tests, BasicShaderF16FeaturesTest) {
         GetParam().mRequireShaderF16Feature &&
         // Adapter support the feature
         IsShaderF16SupportedOnAdapter() &&
-        // Proper toggle, allow_unsafe_apis and use_dxc if d3d12
-        // Note that "allow_unsafe_apis" is always enabled in DawnTestBase::CreateDeviceImpl.
-        HasToggleEnabled("allow_unsafe_apis") && UseDxcEnabledOrNonD3D12();
+        // Proper toggle, use_dxc if d3d12
+        UseDxcEnabledOrNonD3D12();
     const bool deviceSupportShaderF16Feature = device.HasFeature(wgpu::FeatureName::ShaderF16);
     EXPECT_EQ(deviceSupportShaderF16Feature, shouldShaderF16FeatureSupportedByDevice);
 
@@ -116,7 +128,6 @@ TEST_P(ShaderF16Tests, BasicShaderF16FeaturesTest) {
 
     wgpu::ComputePipelineDescriptor csDesc;
     csDesc.compute.module = utils::CreateShaderModule(device, computeShader);
-    csDesc.compute.entryPoint = "CSMain";
     wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&csDesc);
 
     wgpu::BindGroup bindGroup = utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0),
@@ -169,10 +180,8 @@ fn FSMain() -> @location(0) vec4<f16> {
         utils::ComboRenderPipelineDescriptor descriptor;
 
         descriptor.vertex.module = shaderModule;
-        descriptor.vertex.entryPoint = "VSMain";
 
         descriptor.cFragment.module = shaderModule;
-        descriptor.cFragment.entryPoint = "FSMain";
         descriptor.primitive.topology = wgpu::PrimitiveTopology::TriangleList;
         descriptor.cTargets[0].format = kFormat;
 
@@ -255,10 +264,8 @@ fn FSMain(fsInput: FSInput) -> @location(0) vec4f {
         utils::ComboRenderPipelineDescriptor descriptor;
 
         descriptor.vertex.module = shaderModule;
-        descriptor.vertex.entryPoint = "VSMain";
 
         descriptor.cFragment.module = shaderModule;
-        descriptor.cFragment.entryPoint = "FSMain";
         descriptor.primitive.topology = wgpu::PrimitiveTopology::TriangleList;
         descriptor.cTargets[0].format = kFormat;
 
@@ -348,7 +355,7 @@ fn FSMain(@location(0) color : vec4f) -> @location(0) vec4f {
         RGBA8(184, 108, 184, 255),
     };
 
-    ASSERT(colors.size() == kPointCount);
+    DAWN_ASSERT(colors.size() == kPointCount);
     // Color (divided by 4.0) for each point
     std::vector<float> colorData;
     for (RGBA8& color : colors) {
@@ -373,7 +380,6 @@ fn FSMain(@location(0) color : vec4f) -> @location(0) vec4f {
         utils::ComboRenderPipelineDescriptor descriptor;
 
         descriptor.vertex.module = shaderModule;
-        descriptor.vertex.entryPoint = "VSMain";
         descriptor.vertex.bufferCount = 2;
         // Interprete the vertex buffer data as Float32x2 and Float32x4, and the result should be
         // converted to vec2<f16> and vec4<f16>
@@ -393,7 +399,6 @@ fn FSMain(@location(0) color : vec4f) -> @location(0) vec4f {
         descriptor.cBuffers[1].attributes = &descriptor.cAttributes[1];
 
         descriptor.cFragment.module = shaderModule;
-        descriptor.cFragment.entryPoint = "FSMain";
         descriptor.primitive.topology = wgpu::PrimitiveTopology::PointList;
         descriptor.cTargets[0].format = kFormat;
 
@@ -446,6 +451,7 @@ DAWN_INSTANTIATE_TEST_P(ShaderF16Tests,
                             D3D12Backend(),
                             D3D12Backend({"use_dxc"}),
                             VulkanBackend(),
+                            VulkanBackend({}, {"vulkan_use_storage_input_output_16"}),
                             MetalBackend(),
                             OpenGLBackend(),
                             OpenGLESBackend(),

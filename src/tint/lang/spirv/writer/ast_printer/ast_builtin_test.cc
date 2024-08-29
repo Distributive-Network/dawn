@@ -1,18 +1,32 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/type/depth_texture.h"
+#include "src/tint/lang/core/type/input_attachment.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
 #include "src/tint/lang/spirv/writer/ast_printer/helper_test.h"
 #include "src/tint/lang/spirv/writer/common/spv_dump_test.h"
@@ -135,7 +149,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_GLSLMethod_WithLoad_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* var = GlobalVar("ident", ty.f16(), core::AddressSpace::kPrivate);
     auto* expr = Call("round", "ident");
@@ -520,7 +534,7 @@ OpFunctionEnd
 }
 
 TEST_P(Builtin_Builder_SingleParam_Float_Test, Call_Scalar_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto param = GetParam();
     // Use a variable to prevent the function being evaluated as constant.
@@ -603,7 +617,7 @@ OpFunctionEnd
 }
 
 TEST_P(Builtin_Builder_SingleParam_Float_Test, Call_Vector_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto param = GetParam();
 
@@ -709,7 +723,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Length_Scalar_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* scalar = Var("a", Expr(1_h));
     auto* expr = Call("length", scalar);
@@ -783,7 +797,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Length_Vector_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* vec = Var("a", Call<vec2<f16>>(1_h, 1_h));
     auto* expr = Call("length", vec);
@@ -859,7 +873,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Normalize_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* vec = Var("a", Call<vec2<f16>>(1_h, 1_h));
     auto* expr = Call("normalize", vec);
@@ -938,7 +952,7 @@ OpFunctionEnd
 }
 
 TEST_P(Builtin_Builder_DualParam_Float_Test, Call_Scalar_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto param = GetParam();
     auto* scalar = Var("scalar", Expr(1_h));
@@ -1020,7 +1034,7 @@ OpFunctionEnd
 }
 
 TEST_P(Builtin_Builder_DualParam_Float_Test, Call_Vector_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto param = GetParam();
     auto* vec = Var("vec", Call<vec2<f16>>(1_h, 1_h));
@@ -1109,7 +1123,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Reflect_Vector_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* vec = Var("vec", Call<vec2<f16>>(1_h, 1_h));
     auto* expr = Call("reflect", vec, vec);
@@ -1185,7 +1199,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Distance_Scalar_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* scalar = Var("scalar", Expr(1_h));
     auto* expr = Call("distance", scalar, scalar);
@@ -1261,7 +1275,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Distance_Vector_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* vec = Var("vec", Call<vec2<f16>>(1_h, 1_h));
     auto* expr = Call("distance", vec, vec);
@@ -1339,7 +1353,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Cross_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* vec = Var("vec", Call<vec3<f16>>(1_h, 1_h, 1_h));
     auto* expr = Call("cross", vec, vec);
@@ -1420,7 +1434,7 @@ OpFunctionEnd
 }
 
 TEST_P(Builtin_Builder_ThreeParam_Float_Test, Call_Scalar_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto param = GetParam();
     auto* scalar = Var("scalar", Expr(1_h));
@@ -1504,7 +1518,7 @@ OpFunctionEnd
 }
 
 TEST_P(Builtin_Builder_ThreeParam_Float_Test, Call_Vector_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto param = GetParam();
     auto* vec = Var("vec", Call<vec2<f16>>(1_h, 1_h));
@@ -1595,7 +1609,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_FaceForward_Vector_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* vec = Var("vec", Call<vec2<f16>>(1_h, 1_h));
     auto* expr = Call("faceForward", vec, vec, vec);
@@ -1688,7 +1702,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Runtime_Call_Modf_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* vec = Var("vec", Call<vec2<f16>>(1_h, 2_h));
     auto* expr = Call("modf", vec);
@@ -1709,7 +1723,6 @@ TEST_F(BuiltinSpirvASTPrinterTest, Runtime_Call_Modf_f16) {
 OpCapability Float16
 OpCapability UniformAndStorageBuffer16BitAccess
 OpCapability StorageBuffer16BitAccess
-OpCapability StorageInputOutput16
 %15 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
 OpEntryPoint Fragment %3 "a_func"
@@ -1790,7 +1803,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Const_Call_Modf_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* expr = Call("modf", Call<vec2<f16>>(1_h, 2_h));
     Func("a_func", tint::Empty, ty.void_(),
@@ -1809,7 +1822,6 @@ TEST_F(BuiltinSpirvASTPrinterTest, Const_Call_Modf_f16) {
 OpCapability Float16
 OpCapability UniformAndStorageBuffer16BitAccess
 OpCapability StorageBuffer16BitAccess
-OpCapability StorageInputOutput16
 OpMemoryModel Logical GLSL450
 OpEntryPoint Fragment %3 "a_func"
 OpExecutionMode %3 OriginUpperLeft
@@ -1894,7 +1906,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Runtime_Call_Frexp_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* vec = Var("vec", Call<vec2<f16>>(1_h, 2_h));
     auto* expr = Call("frexp", vec);
@@ -1915,7 +1927,6 @@ TEST_F(BuiltinSpirvASTPrinterTest, Runtime_Call_Frexp_f16) {
 OpCapability Float16
 OpCapability UniformAndStorageBuffer16BitAccess
 OpCapability StorageBuffer16BitAccess
-OpCapability StorageInputOutput16
 %17 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
 OpEntryPoint Fragment %3 "a_func"
@@ -2000,7 +2011,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Const_Call_Frexp_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     Func("a_func", tint::Empty, ty.void_(),
          Vector{
@@ -2018,7 +2029,6 @@ TEST_F(BuiltinSpirvASTPrinterTest, Const_Call_Frexp_f16) {
 OpCapability Float16
 OpCapability UniformAndStorageBuffer16BitAccess
 OpCapability StorageBuffer16BitAccess
-OpCapability StorageInputOutput16
 OpMemoryModel Logical GLSL450
 OpEntryPoint Fragment %3 "a_func"
 OpExecutionMode %3 OriginUpperLeft
@@ -3155,7 +3165,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Determinant_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* var = GlobalVar("var", ty.mat3x3<f16>(), core::AddressSpace::kPrivate);
     auto* expr = Call("determinant", "var");
@@ -3228,7 +3238,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Transpose_f16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* var = GlobalVar("var", ty.mat2x3<f16>(), core::AddressSpace::kPrivate);
     auto* expr = Call("transpose", "var");
@@ -3300,7 +3310,7 @@ OpReturn
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Dot_F16) {
-    Enable(core::Extension::kF16);
+    Enable(wgsl::Extension::kF16);
 
     auto* var = GlobalVar("v", ty.vec3<f16>(), core::AddressSpace::kPrivate);
     auto* expr = Call("dot", "v", "v");
@@ -4155,11 +4165,11 @@ OpReturn
 
 }  // namespace synchronization_builtin_tests
 
-// Tests for DP4A builtins, tint:1497
-namespace DP4A_builtin_tests {
+// Tests for `packed_4x8_integer_dot_product` builtins, tint:1497
+namespace Packed_4x8_integer_dot_product_builtin_tests {
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Dot4I8Packed) {
-    Enable(core::Extension::kChromiumExperimentalDp4A);
+    Require(wgsl::LanguageFeature::kPacked4X8IntegerDotProduct);
 
     auto* val1 = Var("val1", ty.u32());
     auto* val2 = Var("val2", ty.u32());
@@ -4171,7 +4181,10 @@ TEST_F(BuiltinSpirvASTPrinterTest, Call_Dot4I8Packed) {
     ASSERT_TRUE(b.GenerateFunction(func)) << b.Diagnostics();
 
     auto got = DumpModule(b.Module());
-    auto expect = R"(OpEntryPoint GLCompute %3 "test_function"
+    auto expect = R"(OpCapability DotProduct
+OpCapability DotProductInput4x8BitPacked
+OpExtension "SPV_KHR_integer_dot_product"
+OpEntryPoint GLCompute %3 "test_function"
 OpExecutionMode %3 LocalSize 1 1 1
 OpName %3 "test_function"
 OpName %5 "val1"
@@ -4196,7 +4209,7 @@ OpFunctionEnd
 }
 
 TEST_F(BuiltinSpirvASTPrinterTest, Call_Dot4U8Packed) {
-    Enable(core::Extension::kChromiumExperimentalDp4A);
+    Require(wgsl::LanguageFeature::kPacked4X8IntegerDotProduct);
 
     auto* val1 = Var("val1", ty.u32());
     auto* val2 = Var("val2", ty.u32());
@@ -4208,7 +4221,10 @@ TEST_F(BuiltinSpirvASTPrinterTest, Call_Dot4U8Packed) {
     ASSERT_TRUE(b.GenerateFunction(func)) << b.Diagnostics();
 
     auto got = DumpModule(b.Module());
-    auto expect = R"(OpEntryPoint GLCompute %3 "test_function"
+    auto expect = R"(OpCapability DotProduct
+OpCapability DotProductInput4x8BitPacked
+OpExtension "SPV_KHR_integer_dot_product"
+OpEntryPoint GLCompute %3 "test_function"
 OpExecutionMode %3 LocalSize 1 1 1
 OpName %3 "test_function"
 OpName %5 "val1"
@@ -4231,7 +4247,62 @@ OpFunctionEnd
     EXPECT_EQ(got, expect);
 }
 
-}  // namespace DP4A_builtin_tests
+}  // namespace Packed_4x8_integer_dot_product_builtin_tests
+
+namespace InputAttachments_builtin_tests {
+
+TEST_F(BuiltinSpirvASTPrinterTest, Call_InputAttachmentLoad) {
+    // enable chromium_internal_input_attachments;
+    // @group(0) @binding(0) @input_attachment_index(3)
+    // var input_tex : input_attachment<f32>;
+    // fn f() -> vec4f {
+    //    return inputAttachmentLoad(input_tex);
+    // }
+
+    Enable(wgsl::Extension::kChromiumInternalInputAttachments);
+
+    auto* input_tex = GlobalVar("input_tex", ty.input_attachment(ty.Of<f32>()),
+                                Vector{Binding(0_u), Group(0_u), InputAttachmentIndex(3_u)});
+
+    auto* func = Func("f", Empty, ty.vec4<f32>(),
+                      Vector{
+                          Return(Call("inputAttachmentLoad", "input_tex")),
+                      });
+
+    Builder& b = Build();
+
+    ASSERT_TRUE(b.GenerateExtension(wgsl::Extension::kChromiumInternalInputAttachments))
+        << b.Diagnostics();
+    ASSERT_TRUE(b.GenerateGlobalVariable(input_tex)) << b.Diagnostics();
+    ASSERT_TRUE(b.GenerateFunction(func)) << b.Diagnostics();
+
+    auto got = DumpModule(b.Module());
+    auto expect = R"(OpCapability InputAttachment
+OpName %1 "input_tex"
+OpName %7 "f"
+OpDecorate %1 Binding 0
+OpDecorate %1 DescriptorSet 0
+OpDecorate %1 InputAttachmentIndex 3
+%4 = OpTypeFloat 32
+%3 = OpTypeImage %4 SubpassData 0 0 0 2 Unknown
+%2 = OpTypePointer UniformConstant %3
+%1 = OpVariable %2 UniformConstant
+%6 = OpTypeVector %4 4
+%5 = OpTypeFunction %6
+%12 = OpTypeInt 32 1
+%11 = OpTypeVector %12 2
+%13 = OpConstantNull %11
+%7 = OpFunction %6 None %5
+%8 = OpLabel
+%10 = OpLoad %3 %1
+%9 = OpImageRead %6 %10 %13
+OpReturnValue %9
+OpFunctionEnd
+)";
+    EXPECT_EQ(got, expect);
+}
+
+}  // namespace InputAttachments_builtin_tests
 
 }  // namespace
 }  // namespace tint::spirv::writer

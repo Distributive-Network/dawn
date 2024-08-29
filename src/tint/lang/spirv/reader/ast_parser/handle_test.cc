@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <ostream>
 
@@ -943,9 +956,9 @@ TEST_P(SpvParserHandleTest_RegisterHandleUsage_SampledImage, FunctionParam) {
      OpFunctionEnd
   )";
     auto p = parser(test::Assemble(assembly));
-    ASSERT_TRUE(p->BuildInternalModule()) << p->error() << assembly << std::endl;
-    EXPECT_TRUE(p->RegisterHandleUsage()) << p->error() << assembly << std::endl;
-    EXPECT_TRUE(p->error().empty()) << p->error() << assembly << std::endl;
+    ASSERT_TRUE(p->BuildInternalModule()) << p->error() << assembly << "\n";
+    EXPECT_TRUE(p->RegisterHandleUsage()) << p->error() << assembly << "\n";
+    EXPECT_TRUE(p->error().empty()) << p->error() << assembly << "\n";
     Usage su = p->GetHandleUsage(10);
     Usage iu = p->GetHandleUsage(20);
 
@@ -2871,6 +2884,57 @@ INSTANTIATE_TEST_SUITE_P(
         // Not in WebGPU
     }));
 
+INSTANTIATE_TEST_SUITE_P(ImageQuerySize_NonArrayed_UnsignedResult,
+                         // ImageQuerySize requires storage image or multisampled
+                         // For storage image, use another instruction to indicate whether it
+                         // is readonly or writeonly.
+                         SpvParserHandleTest_SampledImageAccessTest,
+                         ::testing::ValuesIn(std::vector<ImageAccessCase>{
+                             // 1D storage image
+                             {"%float 1D 0 0 0 2 Rgba32f",
+                              "%99 = OpImageQuerySize %uint %im \n"
+                              "%98 = OpImageRead %v4float %im %i1\n",  // Implicitly mark as
+                                                                       // NonWritable
+                              R"(@group(2) @binding(1) var x_20 : texture_1d<f32>;)",
+                              R"(let x_99 = textureDimensions(x_20);)"},
+                             // 2D storage image
+                             {"%float 2D 0 0 0 2 Rgba32f",
+                              "%99 = OpImageQuerySize %v2uint %im \n"
+                              "%98 = OpImageRead %v4float %im %vi12\n",  // Implicitly mark as
+                                                                         // NonWritable
+                              R"(@group(2) @binding(1) var x_20 : texture_2d<f32>;)",
+                              R"(let x_99 = textureDimensions(x_20);)"},
+                             // 3D storage image
+                             {"%float 3D 0 0 0 2 Rgba32f",
+                              "%99 = OpImageQuerySize %v3uint %im \n"
+                              "%98 = OpImageRead %v4float %im %vi123\n",  // Implicitly mark as
+                                                                          // NonWritable
+                              R"(@group(2) @binding(1) var x_20 : texture_3d<f32>;)",
+                              R"(let x_99 = textureDimensions(x_20);)"},
+
+                             // Multisampled
+                             {"%float 2D 0 0 1 1 Unknown", "%99 = OpImageQuerySize %v2uint %im \n",
+                              R"(@group(2) @binding(1) var x_20 : texture_multisampled_2d<f32>;)",
+                              R"(let x_99 = textureDimensions(x_20);)"}}));
+
+INSTANTIATE_TEST_SUITE_P(
+    ImageQuerySize_Arrayed_UnsignedResult,
+    SpvParserHandleTest_SampledImageAccessTest,
+    ::testing::ValuesIn(std::vector<ImageAccessCase>{
+        // 1D array storage image doesn't exist.
+
+        // 2D array storage image
+        {"%float 2D 0 1 0 2 Rgba32f",
+         "%99 = OpImageQuerySize %v3uint %im \n"
+         "%98 = OpImageRead %v4float %im %vi123\n",
+         R"(@group(2) @binding(1) var x_20 : texture_2d_array<f32>;)",
+         R"(let x_99 = vec3u(textureDimensions(x_20), textureNumLayers(x_20));)"}
+        // 3D array storage image doesn't exist.
+
+        // Multisampled array
+        // Not in WebGPU
+    }));
+
 INSTANTIATE_TEST_SUITE_P(
     ImageQuerySizeLod_NonArrayed_SignedResult_SignedLevel,
     // From VUID-StandaloneSpirv-OpImageQuerySizeLod-04659:
@@ -2968,7 +3032,7 @@ INSTANTIATE_TEST_SUITE_P(
 
         {"%float 1D 0 0 0 1 Unknown", "%99 = OpImageQuerySizeLod %uint %im %i1\n",
          R"(@group(2) @binding(1) var x_20 : texture_1d<f32>;)",
-         R"(let x_99 = i32(textureDimensions(x_20, i1));)"}}));
+         R"(let x_99 = textureDimensions(x_20, i1);)"}}));
 
 INSTANTIATE_TEST_SUITE_P(ImageQueryLevels_SignedResult,
                          SpvParserHandleTest_SampledImageAccessTest,
@@ -3074,7 +3138,7 @@ inline std::ostream& operator<<(std::ostream& out, const ImageCoordsCase& c) {
     for (auto e : c.expected_expressions) {
         out << e << ",";
     }
-    out << ")" << std::endl;
+    out << ")\n";
     return out;
 }
 
@@ -4181,6 +4245,66 @@ return;
     ASSERT_EQ(expect, got);
 }
 
+TEST_F(SpvParserHandleTest, ReadWriteStorageTexture) {
+    const auto assembly = Preamble() + R"(
+               OpCapability Shader
+               OpCapability StorageImageExtendedFormats
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %100 "main"
+               OpExecutionMode %100 LocalSize 8 8 1
+               OpSource HLSL 600
+               OpName %type_2d_image "type.2d.image"
+               OpName %RWTexture2D "RWTexture2D"
+               OpName %100 "main"
+               OpDecorate %RWTexture2D DescriptorSet 0
+               OpDecorate %RWTexture2D Binding 0
+      %float = OpTypeFloat 32
+    %float_0 = OpConstant %float 0
+    %v4float = OpTypeVector %float 4
+       %uint = OpTypeInt 32 0
+     %uint_1 = OpConstant %uint 1
+     %v2uint = OpTypeVector %uint 2
+      %coord = OpConstantComposite %v2uint %uint_1 %uint_1
+%type_2d_image = OpTypeImage %float 2D 2 0 0 2 Rgba32f
+%_ptr_UniformConstant_type_2d_image = OpTypePointer UniformConstant %type_2d_image
+       %void = OpTypeVoid
+         %20 = OpTypeFunction %void
+%RWTexture2D = OpVariable %_ptr_UniformConstant_type_2d_image UniformConstant
+        %100 = OpFunction %void None %20
+         %22 = OpLabel
+         %30 = OpLoad %type_2d_image %RWTexture2D
+         %31 = OpImageRead %v4float %30 %coord None
+         %32 = OpFAdd %v4float %31 %31
+               OpImageWrite %30 %coord %32 None
+               OpReturn
+               OpFunctionEnd
+  )";
+    auto p = parser(test::Assemble(assembly));
+    EXPECT_TRUE(p->BuildAndParseInternalModule()) << p->error() << assembly;
+
+    EXPECT_TRUE(p->error().empty()) << p->error();
+    const auto got = test::ToString(p->program());
+    auto* expect =
+        R"(requires readonly_and_readwrite_storage_textures;
+
+@group(0) @binding(0) var RWTexture2D : texture_storage_2d<rgba32float, read_write>;
+
+const x_9 = vec2u(1u);
+
+fn main_1() {
+  let x_31 = textureLoad(RWTexture2D, vec2i(x_9));
+  textureStore(RWTexture2D, vec2i(x_9), (x_31 + x_31));
+  return;
+}
+
+@compute @workgroup_size(8i, 8i, 1i)
+fn main() {
+  main_1();
+}
+)";
+    ASSERT_EQ(expect, got);
+}
+
 TEST_F(SpvParserHandleTest, SimpleSelectCanSelectFromHoistedConstant) {
     // Demonstrates fix for crbug.com/tint/1642
     // The problem is an operand to a simple select can be a value
@@ -4279,6 +4403,111 @@ TEST_F(SpvParserHandleTest, OpUndef_FunctionParam) {
     auto p = parser(test::Assemble(assembly));
     EXPECT_FALSE(p->BuildAndParseInternalModule());
     EXPECT_EQ(p->error(), "invalid handle object passed as function parameter");
+}
+
+TEST_F(SpvParserHandleTest, Image_UnknownDepth_NonDepthUse) {
+    const auto assembly = R"(
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %1 "main"
+               OpExecutionMode %1 OriginUpperLeft
+               OpDecorate %7 DescriptorSet 0
+               OpDecorate %7 Binding 0
+               OpDecorate %8 DescriptorSet 0
+               OpDecorate %8 Binding 1
+      %float = OpTypeFloat 32
+    %v4float = OpTypeVector %float 4
+          %4 = OpTypeImage %float 2D 2 0 0 1 Unknown
+          %5 = OpTypeSampler
+    %v2float = OpTypeVector %float 2
+       %void = OpTypeVoid
+         %15 = OpTypeFunction %void
+          %6 = OpTypeSampledImage %4
+%_ptr_UniformConstant_4 = OpTypePointer UniformConstant %4
+          %7 = OpVariable %_ptr_UniformConstant_4 UniformConstant
+%_ptr_UniformConstant_5 = OpTypePointer UniformConstant %5
+          %8 = OpVariable %_ptr_UniformConstant_5 UniformConstant
+      %const = OpConstantNull %v2float
+          %1 = OpFunction %void None %15
+         %18 = OpLabel
+         %20 = OpLoad %4 %7
+         %21 = OpLoad %5 %8
+         %22 = OpSampledImage %6 %20 %21
+         %23 = OpImageSampleImplicitLod %v4float %22 %const None
+               OpReturn
+               OpFunctionEnd
+    )";
+    auto p = parser(test::Assemble(assembly));
+    EXPECT_TRUE(p->BuildAndParseInternalModule());
+    const auto got = test::ToString(p->program());
+    auto* expect = R"(@group(0) @binding(0) var x_7 : texture_2d<f32>;
+
+@group(0) @binding(1) var x_8 : sampler;
+
+fn main_1() {
+  let x_23 = textureSample(x_7, x_8, vec2f());
+  return;
+}
+
+@fragment
+fn main() {
+  main_1();
+}
+)";
+    ASSERT_EQ(expect, got);
+}
+
+TEST_F(SpvParserHandleTest, Image_UnknownDepth_DepthUse) {
+    const auto assembly = R"(
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %1 "main"
+               OpExecutionMode %1 OriginUpperLeft
+               OpDecorate %7 DescriptorSet 0
+               OpDecorate %7 Binding 0
+               OpDecorate %8 DescriptorSet 0
+               OpDecorate %8 Binding 1
+      %float = OpTypeFloat 32
+    %v4float = OpTypeVector %float 4
+          %4 = OpTypeImage %float 2D 2 0 0 1 Unknown
+          %5 = OpTypeSampler
+    %v2float = OpTypeVector %float 2
+       %void = OpTypeVoid
+         %15 = OpTypeFunction %void
+          %6 = OpTypeSampledImage %4
+%_ptr_UniformConstant_4 = OpTypePointer UniformConstant %4
+          %7 = OpVariable %_ptr_UniformConstant_4 UniformConstant
+%_ptr_UniformConstant_5 = OpTypePointer UniformConstant %5
+          %8 = OpVariable %_ptr_UniformConstant_5 UniformConstant
+      %const = OpConstantNull %v2float
+    %float_0 = OpConstantNull %float
+          %1 = OpFunction %void None %15
+         %18 = OpLabel
+         %20 = OpLoad %4 %7
+         %21 = OpLoad %5 %8
+         %22 = OpSampledImage %6 %20 %21
+         %23 = OpImageSampleDrefImplicitLod %v4float %22 %const %float_0 None
+               OpReturn
+               OpFunctionEnd
+    )";
+    auto p = parser(test::Assemble(assembly));
+    EXPECT_TRUE(p->BuildAndParseInternalModule());
+    const auto got = test::ToString(p->program());
+    auto* expect = R"(@group(0) @binding(0) var x_7 : texture_depth_2d;
+
+@group(0) @binding(1) var x_8 : sampler_comparison;
+
+fn main_1() {
+  let x_23 = textureSampleCompare(x_7, x_8, vec2f(), 0.0f);
+  return;
+}
+
+@fragment
+fn main() {
+  main_1();
+}
+)";
+    ASSERT_EQ(expect, got);
 }
 
 }  // namespace

@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "gmock/gmock.h"
 #include "src/tint/lang/spirv/reader/ast_parser/function.h"
@@ -1379,6 +1392,37 @@ TEST_F(SpvModuleScopeVarParserTest, RowMajorDecoration_IsError) {
         p->error(),
         Eq(R"(WGSL does not support row-major matrices: can't translate member 0 of %3 = OpTypeStruct %8)"))
         << p->error();
+}
+
+TEST_F(SpvModuleScopeVarParserTest, StorageBuffer_NonWritable_Var) {
+    // Variable should have access(read)
+    auto p = parser(test::Assemble(Preamble() + FragMain() + R"(
+     OpDecorate %s Block
+     OpDecorate %1 DescriptorSet 0
+     OpDecorate %1 Binding 0
+     OpDecorate %1 NonWritable
+     OpMemberDecorate %s 0 Offset 0
+     OpMemberDecorate %s 1 Offset 4
+     %void = OpTypeVoid
+     %voidfn = OpTypeFunction %void
+     %float = OpTypeFloat 32
+
+     %s = OpTypeStruct %float %float
+     %ptr_sb_s = OpTypePointer StorageBuffer %s
+     %1 = OpVariable %ptr_sb_s StorageBuffer
+  )" + MainBody()));
+    ASSERT_TRUE(p->BuildAndParseInternalModuleExceptFunctions()) << p->error();
+    EXPECT_TRUE(p->error().empty());
+    const auto module_str = test::ToString(p->program());
+    EXPECT_THAT(module_str, HasSubstr(R"(struct S {
+  /* @offset(0) */
+  field0 : f32,
+  /* @offset(4) */
+  field1 : f32,
+}
+
+@group(0) @binding(0) var<storage, read> x_1 : S;
+)")) << module_str;
 }
 
 TEST_F(SpvModuleScopeVarParserTest, StorageBuffer_NonWritable_AllMembers) {

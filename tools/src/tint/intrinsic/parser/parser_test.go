@@ -1,16 +1,29 @@
-// Copyright 2021 The Tint Authors.
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 package parser_test
 
@@ -72,7 +85,7 @@ func TestParser(t *testing.T) {
 			ast.AST{
 				Types: []ast.TypeDecl{{
 					Name: "T",
-					TemplateParams: ast.TemplateParams{
+					TemplateParams: []ast.TemplateParam{
 						{Name: "A"},
 						{Name: "B"},
 						{Name: "C"},
@@ -243,7 +256,7 @@ func TestParser(t *testing.T) {
 				Builtins: []ast.IntrinsicDecl{{
 					Kind: ast.Builtin,
 					Name: "F",
-					TemplateParams: ast.TemplateParams{
+					ExplicitTemplateParams: []ast.TemplateParam{
 						{
 							Name: "A", Type: ast.TemplatedName{
 								Name: "B",
@@ -263,14 +276,97 @@ func TestParser(t *testing.T) {
 				Builtins: []ast.IntrinsicDecl{{
 					Kind: ast.Builtin,
 					Name: "F",
-					TemplateParams: ast.TemplateParams{
+					ExplicitTemplateParams: []ast.TemplateParam{
 						{Name: "T"},
 					},
 					Parameters: ast.Parameters{
 						{Name: "a", Type: ast.TemplatedName{Name: "X"}},
 						{Name: "b", Type: ast.TemplatedName{
 							Name:         "Y",
-							TemplateArgs: []ast.TemplatedName{{Name: "T"}},
+							TemplateArgs: ast.TemplatedNames{{Name: "T"}},
+						}},
+					},
+				}},
+			},
+		}, { ///////////////////////////////////////////////////////////////////
+			fileutils.ThisLine(),
+			"fn F[A : B<C>]()",
+			ast.AST{
+				Builtins: []ast.IntrinsicDecl{{
+					Kind: ast.Builtin,
+					Name: "F",
+					ImplicitTemplateParams: []ast.TemplateParam{
+						{
+							Name: "A",
+							Type: ast.TemplatedName{
+								Name: "B",
+								TemplateArgs: ast.TemplatedNames{
+									{Name: "C"},
+								},
+							},
+						},
+					},
+					Parameters: ast.Parameters{},
+				}},
+			},
+		}, { ///////////////////////////////////////////////////////////////////
+			fileutils.ThisLine(),
+			"fn F[T](a: X, b: Y<T>)",
+			ast.AST{
+				Builtins: []ast.IntrinsicDecl{{
+					Kind: ast.Builtin,
+					Name: "F",
+					ImplicitTemplateParams: []ast.TemplateParam{
+						{Name: "T"},
+					},
+					Parameters: ast.Parameters{
+						{Name: "a", Type: ast.TemplatedName{Name: "X"}},
+						{Name: "b", Type: ast.TemplatedName{
+							Name:         "Y",
+							TemplateArgs: ast.TemplatedNames{{Name: "T"}},
+						}},
+					},
+				}},
+			},
+		}, { ///////////////////////////////////////////////////////////////////
+			fileutils.ThisLine(),
+			"fn F<A>[B: C<D>]()",
+			ast.AST{
+				Builtins: []ast.IntrinsicDecl{{
+					Kind: ast.Builtin,
+					Name: "F",
+					ExplicitTemplateParams: []ast.TemplateParam{
+						{Name: "A"},
+					},
+					ImplicitTemplateParams: []ast.TemplateParam{
+						{
+							Name: "B",
+							Type: ast.TemplatedName{
+								Name: "C",
+								TemplateArgs: ast.TemplatedNames{
+									{Name: "D"},
+								},
+							},
+						},
+					},
+					Parameters: ast.Parameters{},
+				}},
+			},
+		}, { ///////////////////////////////////////////////////////////////////
+			fileutils.ThisLine(),
+			"fn F[T](a: X, b: Y<T>)",
+			ast.AST{
+				Builtins: []ast.IntrinsicDecl{{
+					Kind: ast.Builtin,
+					Name: "F",
+					ImplicitTemplateParams: []ast.TemplateParam{
+						{Name: "T"},
+					},
+					Parameters: ast.Parameters{
+						{Name: "a", Type: ast.TemplatedName{Name: "X"}},
+						{Name: "b", Type: ast.TemplatedName{
+							Name:         "Y",
+							TemplateArgs: ast.TemplatedNames{{Name: "T"}},
 						}},
 					},
 				}},
@@ -295,7 +391,7 @@ func TestParser(t *testing.T) {
 					Name: "F",
 					ReturnType: &ast.TemplatedName{
 						Name:         "X",
-						TemplateArgs: []ast.TemplatedName{{Name: "T"}},
+						TemplateArgs: ast.TemplatedNames{{Name: "T"}},
 					},
 					Parameters: ast.Parameters{},
 				}},
@@ -381,7 +477,7 @@ func TestParser(t *testing.T) {
 				Operators: []ast.IntrinsicDecl{{
 					Kind: ast.Operator,
 					Name: "F",
-					TemplateParams: ast.TemplateParams{
+					ExplicitTemplateParams: []ast.TemplateParam{
 						{
 							Name: "A", Type: ast.TemplatedName{
 								Name: "B",
@@ -401,16 +497,78 @@ func TestParser(t *testing.T) {
 				Operators: []ast.IntrinsicDecl{{
 					Kind: ast.Operator,
 					Name: "F",
-					TemplateParams: ast.TemplateParams{
+					ExplicitTemplateParams: []ast.TemplateParam{
 						{Name: "T"},
 					},
 					Parameters: ast.Parameters{
 						{Name: "a", Type: ast.TemplatedName{Name: "X"}},
 						{Name: "b", Type: ast.TemplatedName{
 							Name:         "Y",
-							TemplateArgs: []ast.TemplatedName{{Name: "T"}},
+							TemplateArgs: ast.TemplatedNames{{Name: "T"}},
 						}},
 					},
+				}},
+			},
+		}, { ///////////////////////////////////////////////////////////////////
+			fileutils.ThisLine(),
+			"op F[A : B<C>]()",
+			ast.AST{
+				Operators: []ast.IntrinsicDecl{{
+					Kind: ast.Operator,
+					Name: "F",
+					ImplicitTemplateParams: []ast.TemplateParam{
+						{
+							Name: "A", Type: ast.TemplatedName{
+								Name: "B",
+								TemplateArgs: ast.TemplatedNames{
+									{Name: "C"},
+								},
+							},
+						},
+					},
+					Parameters: ast.Parameters{},
+				}},
+			},
+		}, { ///////////////////////////////////////////////////////////////////
+			fileutils.ThisLine(),
+			"op F[T](a: X, b: Y<T>)",
+			ast.AST{
+				Operators: []ast.IntrinsicDecl{{
+					Kind: ast.Operator,
+					Name: "F",
+					ImplicitTemplateParams: []ast.TemplateParam{
+						{Name: "T"},
+					},
+					Parameters: ast.Parameters{
+						{Name: "a", Type: ast.TemplatedName{Name: "X"}},
+						{Name: "b", Type: ast.TemplatedName{
+							Name:         "Y",
+							TemplateArgs: ast.TemplatedNames{{Name: "T"}},
+						}},
+					},
+				}},
+			},
+		}, { ///////////////////////////////////////////////////////////////////
+			fileutils.ThisLine(),
+			"op F<A : B<C> >[D]()",
+			ast.AST{
+				Operators: []ast.IntrinsicDecl{{
+					Kind: ast.Operator,
+					Name: "F",
+					ExplicitTemplateParams: []ast.TemplateParam{
+						{
+							Name: "A", Type: ast.TemplatedName{
+								Name: "B",
+								TemplateArgs: ast.TemplatedNames{
+									{Name: "C"},
+								},
+							},
+						},
+					},
+					ImplicitTemplateParams: []ast.TemplateParam{
+						{Name: "D"},
+					},
+					Parameters: ast.Parameters{},
 				}},
 			},
 		}, { ///////////////////////////////////////////////////////////////////
@@ -433,7 +591,7 @@ func TestParser(t *testing.T) {
 					Name: "F",
 					ReturnType: &ast.TemplatedName{
 						Name:         "X",
-						TemplateArgs: []ast.TemplatedName{{Name: "T"}},
+						TemplateArgs: ast.TemplatedNames{{Name: "T"}},
 					},
 					Parameters: ast.Parameters{},
 				}},
@@ -505,7 +663,7 @@ func TestParser(t *testing.T) {
 				Constructors: []ast.IntrinsicDecl{{
 					Kind: ast.Constructor,
 					Name: "F",
-					TemplateParams: ast.TemplateParams{
+					ExplicitTemplateParams: []ast.TemplateParam{
 						{
 							Name: "A", Type: ast.TemplatedName{
 								Name: "B",
@@ -525,14 +683,14 @@ func TestParser(t *testing.T) {
 				Constructors: []ast.IntrinsicDecl{{
 					Kind: ast.Constructor,
 					Name: "F",
-					TemplateParams: ast.TemplateParams{
+					ExplicitTemplateParams: []ast.TemplateParam{
 						{Name: "T"},
 					},
 					Parameters: ast.Parameters{
 						{Name: "a", Type: ast.TemplatedName{Name: "X"}},
 						{Name: "b", Type: ast.TemplatedName{
 							Name:         "Y",
-							TemplateArgs: []ast.TemplatedName{{Name: "T"}},
+							TemplateArgs: ast.TemplatedNames{{Name: "T"}},
 						}},
 					},
 				}},
@@ -557,7 +715,7 @@ func TestParser(t *testing.T) {
 					Name: "F",
 					ReturnType: &ast.TemplatedName{
 						Name:         "X",
-						TemplateArgs: []ast.TemplatedName{{Name: "T"}},
+						TemplateArgs: ast.TemplatedNames{{Name: "T"}},
 					},
 					Parameters: ast.Parameters{},
 				}},
@@ -629,7 +787,7 @@ func TestParser(t *testing.T) {
 				Converters: []ast.IntrinsicDecl{{
 					Kind: ast.Converter,
 					Name: "F",
-					TemplateParams: ast.TemplateParams{
+					ExplicitTemplateParams: []ast.TemplateParam{
 						{
 							Name: "A", Type: ast.TemplatedName{
 								Name: "B",
@@ -649,14 +807,14 @@ func TestParser(t *testing.T) {
 				Converters: []ast.IntrinsicDecl{{
 					Kind: ast.Converter,
 					Name: "F",
-					TemplateParams: ast.TemplateParams{
+					ExplicitTemplateParams: []ast.TemplateParam{
 						{Name: "T"},
 					},
 					Parameters: ast.Parameters{
 						{Name: "a", Type: ast.TemplatedName{Name: "X"}},
 						{Name: "b", Type: ast.TemplatedName{
 							Name:         "Y",
-							TemplateArgs: []ast.TemplatedName{{Name: "T"}},
+							TemplateArgs: ast.TemplatedNames{{Name: "T"}},
 						}},
 					},
 				}},
@@ -681,7 +839,7 @@ func TestParser(t *testing.T) {
 					Name: "F",
 					ReturnType: &ast.TemplatedName{
 						Name:         "X",
-						TemplateArgs: []ast.TemplatedName{{Name: "T"}},
+						TemplateArgs: ast.TemplatedNames{{Name: "T"}},
 					},
 					Parameters: ast.Parameters{},
 				}},

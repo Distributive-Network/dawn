@@ -15,4 +15,7 @@ fn compute_main() {
   subgroupBallot_7e6d0e();
 }
 
-Failed to generate: error: Unknown builtin method: subgroupBallot
+Failed to generate: <dawn>/test/tint/builtins/gen/var/subgroupBallot/7e6d0e.wgsl:38:8 error: GLSL backend does not support extension 'chromium_experimental_subgroups'
+enable chromium_experimental_subgroups;
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+

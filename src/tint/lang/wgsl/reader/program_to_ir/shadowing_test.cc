@@ -1,25 +1,32 @@
-// Copyright 2023 The Tint Authors.
+// Copyright 2023 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "gmock/gmock.h"
-#include "src/tint/lang/core/constant/scalar.h"
-#include "src/tint/lang/core/ir/block.h"
-#include "src/tint/lang/core/ir/constant.h"
-#include "src/tint/lang/core/ir/var.h"
-#include "src/tint/lang/wgsl/ast/case_selector.h"
-#include "src/tint/lang/wgsl/ast/int_literal_expression.h"
-#include "src/tint/lang/wgsl/helpers/ir_program_test.h"
+#include "src/tint/lang/core/ir/disassembler.h"
+#include "src/tint/lang/wgsl/reader/program_to_ir/ir_program_test.h"
 
 namespace tint::wgsl {
 namespace {
@@ -44,15 +51,14 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-S = struct @align(4) {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(S = struct @align(4) {
   i:i32 @offset(0)
 }
 
-%f = func():i32 -> %b1 {
-  %b1 = block {
+%f = func():i32 {
+  $B1: {
     %S:ptr<function, S, read_write> = var, S(0i)
     %3:ptr<function, i32, read_write> = access %S, 0u
     %4:i32 = load %3
@@ -73,15 +79,14 @@ fn f(S : S) -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-S = struct @align(4) {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(S = struct @align(4) {
   i:i32 @offset(0)
 }
 
-%f = func(%S:S):i32 -> %b1 {
-  %b1 = block {
+%f = func(%S:S):i32 {
+  $B1: {
     %3:i32 = access %S, 0u
     ret %3
   }
@@ -100,15 +105,14 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %i:ptr<private, i32, read_write> = var, 1i
 }
 
-%f = func():i32 -> %b2 {
-  %b2 = block {
+%f = func():i32 {
+  $B2: {
     %3:i32 = load %i
     %4:i32 = add %3, 1i
     store %i, %4
@@ -133,20 +137,20 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %i:ptr<private, i32, read_write> = var, 1i
 }
 
-%f = func():i32 -> %b2 {
-  %b2 = block {
+%f = func():i32 {
+  $B2: {
     %3:i32 = load %i
     %4:i32 = add %3, 1i
     store %i, %4
     %5:i32 = load %i
-    %i_1:i32 = add %5, 1i  # %i_1: 'i'
+    %6:i32 = add %5, 1i
+    %i_1:i32 = let %6  # %i_1: 'i'
     ret %i_1
   }
 }
@@ -166,14 +170,13 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    if true [t: %b2] {  # if_1
-      %b2 = block {  # true
+    if true [t: $B2] {  # if_1
+      $B2: {  # true
         %3:i32 = load %i
         %4:i32 = add %3, 1i
         store %i, %4
@@ -206,24 +209,24 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    if true [t: %b2] {  # if_1
-      %b2 = block {  # true
+    if true [t: $B2] {  # if_1
+      $B2: {  # true
         %3:i32 = load %i
         %4:i32 = add %3, 1i
         store %i, %4
         %5:i32 = load %i
-        %i_1:i32 = add %5, 1i  # %i_1: 'i'
+        %6:i32 = add %5, 1i
+        %i_1:i32 = let %6  # %i_1: 'i'
         ret %i_1
       }
     }
-    %7:i32 = load %i
-    ret %7
+    %8:i32 = load %i
+    ret %8
   }
 }
 )");
@@ -241,21 +244,20 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [b: %b2, c: %b3] {  # loop_1
-      %b2 = block {  # body
+    loop [b: $B2, c: $B3] {  # loop_1
+      $B2: {  # body
         %3:i32 = load %i
         %4:bool = lt %3, 4i
-        if %4 [t: %b4, f: %b5] {  # if_1
-          %b4 = block {  # true
+        if %4 [t: $B4, f: $B5] {  # if_1
+          $B4: {  # true
             exit_if  # if_1
           }
-          %b5 = block {  # false
+          $B5: {  # false
             exit_loop  # loop_1
           }
         }
@@ -265,8 +267,8 @@ fn f() -> i32 {
         %8:i32 = load %i_1
         ret %8
       }
-      %b3 = block {  # continuing
-        next_iteration %b2
+      $B3: {  # continuing
+        next_iteration  # -> $B2
       }
     }
     %9:i32 = load %i
@@ -288,34 +290,34 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [b: %b2, c: %b3] {  # loop_1
-      %b2 = block {  # body
+    loop [b: $B2, c: $B3] {  # loop_1
+      $B2: {  # body
         %3:i32 = load %i
         %4:bool = lt %3, 4i
-        if %4 [t: %b4, f: %b5] {  # if_1
-          %b4 = block {  # true
+        if %4 [t: $B4, f: $B5] {  # if_1
+          $B4: {  # true
             exit_if  # if_1
           }
-          %b5 = block {  # false
+          $B5: {  # false
             exit_loop  # loop_1
           }
         }
         %5:i32 = load %i
-        %i_1:i32 = add %5, 1i  # %i_1: 'i'
+        %6:i32 = add %5, 1i
+        %i_1:i32 = let %6  # %i_1: 'i'
         ret %i_1
       }
-      %b3 = block {  # continuing
-        next_iteration %b2
+      $B3: {  # continuing
+        next_iteration  # -> $B2
       }
     }
-    %7:i32 = load %i
-    ret %7
+    %8:i32 = load %i
+    ret %8
   }
 }
 )");
@@ -332,34 +334,34 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [i: %b2, b: %b3] {  # loop_1
-      %b2 = block {  # initializer
+    loop [i: $B2, b: $B3] {  # loop_1
+      $B2: {  # initializer
         %i_1:ptr<function, f32, read_write> = var, 0.0f  # %i_1: 'i'
-        next_iteration %b3
+        next_iteration  # -> $B3
       }
-      %b3 = block {  # body
+      $B3: {  # body
         %4:f32 = load %i_1
         %5:bool = lt %4, 4.0f
-        if %5 [t: %b4, f: %b5] {  # if_1
-          %b4 = block {  # true
+        if %5 [t: $B4, f: $B5] {  # if_1
+          $B4: {  # true
             exit_if  # if_1
           }
-          %b5 = block {  # false
+          $B5: {  # false
             exit_loop  # loop_1
           }
         }
-        %j:f32 = load %i_1
-        continue %b6
+        %6:f32 = load %i_1
+        %j:f32 = let %6
+        continue  # -> $B6
       }
     }
-    %7:i32 = load %i
-    ret %7
+    %8:i32 = load %i
+    ret %8
   }
 }
 )");
@@ -376,29 +378,28 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [i: %b2, b: %b3] {  # loop_1
-      %b2 = block {  # initializer
+    loop [i: $B2, b: $B3] {  # loop_1
+      $B2: {  # initializer
         %i_1:f32 = let 0.0f  # %i_1: 'i'
-        next_iteration %b3
+        next_iteration  # -> $B3
       }
-      %b3 = block {  # body
+      $B3: {  # body
         %4:bool = lt %i_1, 4.0f
-        if %4 [t: %b4, f: %b5] {  # if_1
-          %b4 = block {  # true
+        if %4 [t: $B4, f: $B5] {  # if_1
+          $B4: {  # true
             exit_if  # if_1
           }
-          %b5 = block {  # false
+          $B5: {  # false
             exit_loop  # loop_1
           }
         }
         %j:f32 = let %i_1
-        continue %b6
+        continue  # -> $B6
       }
     }
     %6:i32 = load %i
@@ -420,25 +421,24 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [i: %b2, b: %b3] {  # loop_1
-      %b2 = block {  # initializer
+    loop [i: $B2, b: $B3] {  # loop_1
+      $B2: {  # initializer
         %x:ptr<function, i32, read_write> = var, 0i
-        next_iteration %b3
+        next_iteration  # -> $B3
       }
-      %b3 = block {  # body
+      $B3: {  # body
         %4:i32 = load %i
         %5:bool = lt %4, 4i
-        if %5 [t: %b4, f: %b5] {  # if_1
-          %b4 = block {  # true
+        if %5 [t: $B4, f: $B5] {  # if_1
+          $B4: {  # true
             exit_if  # if_1
           }
-          %b5 = block {  # false
+          $B5: {  # false
             exit_loop  # loop_1
           }
         }
@@ -468,35 +468,35 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [i: %b2, b: %b3] {  # loop_1
-      %b2 = block {  # initializer
+    loop [i: $B2, b: $B3] {  # loop_1
+      $B2: {  # initializer
         %x:ptr<function, i32, read_write> = var, 0i
-        next_iteration %b3
+        next_iteration  # -> $B3
       }
-      %b3 = block {  # body
+      $B3: {  # body
         %4:i32 = load %i
         %5:bool = lt %4, 4i
-        if %5 [t: %b4, f: %b5] {  # if_1
-          %b4 = block {  # true
+        if %5 [t: $B4, f: $B5] {  # if_1
+          $B4: {  # true
             exit_if  # if_1
           }
-          %b5 = block {  # false
+          $B5: {  # false
             exit_loop  # loop_1
           }
         }
         %6:i32 = load %i
-        %i_1:i32 = add %6, 1i  # %i_1: 'i'
+        %7:i32 = add %6, 1i
+        %i_1:i32 = let %7  # %i_1: 'i'
         ret %i_1
       }
     }
-    %8:i32 = load %i
-    ret %8
+    %9:i32 = load %i
+    ret %9
   }
 }
 )");
@@ -519,18 +519,17 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [b: %b2, c: %b3] {  # loop_1
-      %b2 = block {  # body
+    loop [b: $B2, c: $B3] {  # loop_1
+      $B2: {  # body
         %3:i32 = load %i
         %4:bool = eq %3, 2i
-        if %4 [t: %b4] {  # if_1
-          %b4 = block {  # true
+        if %4 [t: $B4] {  # if_1
+          $B4: {  # true
             exit_loop  # loop_1
           }
         }
@@ -539,15 +538,15 @@ fn f() -> i32 {
         %i_1:ptr<function, i32, read_write> = var, %6  # %i_1: 'i'
         %8:i32 = load %i_1
         %9:bool = eq %8, 3i
-        if %9 [t: %b5] {  # if_2
-          %b5 = block {  # true
+        if %9 [t: $B5] {  # if_2
+          $B5: {  # true
             exit_loop  # loop_1
           }
         }
-        continue %b3
+        continue  # -> $B3
       }
-      %b3 = block {  # continuing
-        next_iteration %b2
+      $B3: {  # continuing
+        next_iteration  # -> $B2
       }
     }
     %10:i32 = load %i
@@ -574,37 +573,37 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [b: %b2, c: %b3] {  # loop_1
-      %b2 = block {  # body
+    loop [b: $B2, c: $B3] {  # loop_1
+      $B2: {  # body
         %3:i32 = load %i
         %4:bool = eq %3, 2i
-        if %4 [t: %b4] {  # if_1
-          %b4 = block {  # true
+        if %4 [t: $B4] {  # if_1
+          $B4: {  # true
             exit_loop  # loop_1
           }
         }
         %5:i32 = load %i
-        %i_1:i32 = add %5, 1i  # %i_1: 'i'
-        %7:bool = eq %i_1, 3i
-        if %7 [t: %b5] {  # if_2
-          %b5 = block {  # true
+        %6:i32 = add %5, 1i
+        %i_1:i32 = let %6  # %i_1: 'i'
+        %8:bool = eq %i_1, 3i
+        if %8 [t: $B5] {  # if_2
+          $B5: {  # true
             exit_loop  # loop_1
           }
         }
-        continue %b3
+        continue  # -> $B3
       }
-      %b3 = block {  # continuing
-        next_iteration %b2
+      $B3: {  # continuing
+        next_iteration  # -> $B2
       }
     }
-    %8:i32 = load %i
-    ret %8
+    %9:i32 = load %i
+    ret %9
   }
 }
 )");
@@ -628,30 +627,29 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [b: %b2, c: %b3] {  # loop_1
-      %b2 = block {  # body
+    loop [b: $B2, c: $B3] {  # loop_1
+      $B2: {  # body
         %3:i32 = load %i
         %4:bool = eq %3, 2i
-        if %4 [t: %b4] {  # if_1
-          %b4 = block {  # true
+        if %4 [t: $B4] {  # if_1
+          $B4: {  # true
             exit_loop  # loop_1
           }
         }
-        continue %b3
+        continue  # -> $B3
       }
-      %b3 = block {  # continuing
+      $B3: {  # continuing
         %5:i32 = load %i
         %6:i32 = add %5, 1i
         %i_1:ptr<function, i32, read_write> = var, %6  # %i_1: 'i'
         %8:i32 = load %i_1
         %9:bool = gt %8, 2i
-        break_if %9 %b2
+        break_if %9  # -> [t: exit_loop loop_1, f: $B2]
       }
     }
     %10:i32 = load %i
@@ -679,32 +677,32 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
-    loop [b: %b2, c: %b3] {  # loop_1
-      %b2 = block {  # body
+    loop [b: $B2, c: $B3] {  # loop_1
+      $B2: {  # body
         %3:i32 = load %i
         %4:bool = eq %3, 2i
-        if %4 [t: %b4] {  # if_1
-          %b4 = block {  # true
+        if %4 [t: $B4] {  # if_1
+          $B4: {  # true
             exit_loop  # loop_1
           }
         }
-        continue %b3
+        continue  # -> $B3
       }
-      %b3 = block {  # continuing
+      $B3: {  # continuing
         %5:i32 = load %i
-        %i_1:i32 = add %5, 1i  # %i_1: 'i'
-        %7:bool = gt %i_1, 2i
-        break_if %7 %b2
+        %6:i32 = add %5, 1i
+        %i_1:i32 = let %6  # %i_1: 'i'
+        %8:bool = gt %i_1, 2i
+        break_if %8  # -> [t: exit_loop loop_1, f: $B2]
       }
     }
-    %8:i32 = load %i
-    ret %8
+    %9:i32 = load %i
+    ret %9
   }
 }
 )");
@@ -729,26 +727,25 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
     %3:i32 = load %i
-    switch %3 [c: (0i, %b2), c: (1i, %b3), c: (default, %b4)] {  # switch_1
-      %b2 = block {  # case
+    switch %3 [c: (0i, $B2), c: (1i, $B3), c: (default, $B4)] {  # switch_1
+      $B2: {  # case
         %4:i32 = load %i
         ret %4
       }
-      %b3 = block {  # case
+      $B3: {  # case
         %5:i32 = load %i
         %6:i32 = add %5, 1i
         %i_1:ptr<function, i32, read_write> = var, %6  # %i_1: 'i'
         %8:i32 = load %i_1
         ret %8
       }
-      %b4 = block {  # case
+      $B4: {  # case
         %9:i32 = load %i
         ret %9
       }
@@ -778,26 +775,26 @@ fn f() -> i32 {
 }
 )");
 
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ("\n" + Disassemble(m.Get()), R"(
-%f = func():i32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%f = func():i32 {
+  $B1: {
     %i:ptr<function, i32, read_write> = var
     %3:i32 = load %i
-    switch %3 [c: (0i, %b2), c: (1i, %b3), c: (default, %b4)] {  # switch_1
-      %b2 = block {  # case
+    switch %3 [c: (0i, $B2), c: (1i, $B3), c: (default, $B4)] {  # switch_1
+      $B2: {  # case
         %4:i32 = load %i
         ret %4
       }
-      %b3 = block {  # case
+      $B3: {  # case
         %5:i32 = load %i
-        %i_1:i32 = add %5, 1i  # %i_1: 'i'
+        %6:i32 = add %5, 1i
+        %i_1:i32 = let %6  # %i_1: 'i'
         ret %i_1
       }
-      %b4 = block {  # case
-        %7:i32 = load %i
-        ret %7
+      $B4: {  # case
+        %8:i32 = load %i
+        ret %8
       }
     }
     unreachable

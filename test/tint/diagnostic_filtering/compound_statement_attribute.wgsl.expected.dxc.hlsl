@@ -1,12 +1,12 @@
-diagnostic_filtering/compound_statement_attribute.wgsl:8:11 warning: 'textureSample' must only be called from uniform control flow
+<dawn>/test/tint/diagnostic_filtering/compound_statement_attribute.wgsl:8:11 warning: 'textureSample' must only be called from uniform control flow
       _ = textureSample(t, s, vec2(0, 0));
           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-diagnostic_filtering/compound_statement_attribute.wgsl:7:5 note: control flow depends on possibly non-uniform value
+<dawn>/test/tint/diagnostic_filtering/compound_statement_attribute.wgsl:7:5 note: control flow depends on possibly non-uniform value
     if (x > 0) {
     ^^
 
-diagnostic_filtering/compound_statement_attribute.wgsl:7:9 note: user-defined input 'x' of 'main' may be non-uniform
+<dawn>/test/tint/diagnostic_filtering/compound_statement_attribute.wgsl:7:9 note: user-defined input 'x' of 'main' may be non-uniform
     if (x > 0) {
         ^
 
@@ -20,6 +20,7 @@ struct tint_symbol_1 {
 void main_inner(float x) {
   {
     if ((x > 0.0f)) {
+      float4 tint_phony = t.Sample(s, (0.0f).xx);
     }
   }
 }

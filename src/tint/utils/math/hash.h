@@ -1,16 +1,29 @@
-// Copyright 2021 The Tint Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_TINT_UTILS_MATH_HASH_H_
 #define SRC_TINT_UTILS_MATH_HASH_H_
@@ -27,72 +40,67 @@
 #include "src/tint/utils/math/crc32.h"
 
 namespace tint {
+
 namespace detail {
 
-/// Helper for obtaining a seed bias value for HashCombine with a bit-width
-/// dependent on the size of size_t.
-template <int SIZE_OF_SIZE_T>
-struct HashCombineOffset {};
+template <typename T, typename = void>
+struct HasHashCodeMember : std::false_type {};
 
-/// Specialization of HashCombineOffset for size_t == 4.
-template <>
-struct HashCombineOffset<4> {
-    /// @returns the seed bias value for HashCombine()
-    static constexpr inline uint32_t value() {
-        constexpr uint32_t base = 0x7f4a7c16;
-#ifdef TINT_HASH_SEED
-        return base ^ static_cast<uint32_t>(TINT_HASH_SEED);
-#endif
-        return base;
-    }
-};
-
-/// Specialization of HashCombineOffset for size_t == 8.
-template <>
-struct HashCombineOffset<8> {
-    /// @returns the seed bias value for HashCombine()
-    static constexpr inline uint64_t value() {
-        constexpr uint64_t base = 0x9e3779b97f4a7c16;
-#ifdef TINT_HASH_SEED
-        return base ^ static_cast<uint64_t>(TINT_HASH_SEED);
-#endif
-        return base;
-    }
+template <typename T>
+struct HasHashCodeMember<
+    T,
+    std::enable_if_t<std::is_member_function_pointer_v<decltype(&T::HashCode)>>> : std::true_type {
 };
 
 }  // namespace detail
 
+/// The type of a hash code
+using HashCode = uint32_t;
+
 /// Forward declarations (see below)
 template <typename... ARGS>
-size_t Hash(const ARGS&... values);
+HashCode Hash(const ARGS&... values);
 
 template <typename... ARGS>
-size_t HashCombine(size_t hash, const ARGS&... values);
+HashCode HashCombine(HashCode hash, const ARGS&... values);
 
 /// A STL-compatible hasher that does a more thorough job than most implementations of std::hash.
 /// Hasher has been optimized for a better quality hash at the expense of increased computation
 /// costs.
+/// Hasher is specialized for various core Tint data types. The default implementation will use a
+/// `HashCode HashCode()` method on the `T` type, and will fallback to `std::hash<T>` if
+/// `T::HashCode` is missing.
 template <typename T>
 struct Hasher {
     /// @param value the value to hash
     /// @returns a hash of the value
-    size_t operator()(const T& value) const { return std::hash<T>()(value); }
+    HashCode operator()(const T& value) const {
+        if constexpr (detail::HasHashCodeMember<T>::value) {
+            auto hash = value.HashCode();
+            static_assert(std::is_same_v<decltype(hash), HashCode>,
+                          "T::HashCode() must return HashCode");
+            return hash;
+        } else {
+            return static_cast<HashCode>(std::hash<T>()(value));
+        }
+    }
 };
 
 /// Hasher specialization for pointers
-/// std::hash<T*> typically uses a reinterpret of the pointer to a size_t.
-/// As most pointers a 4 or 16 byte aligned, this usually results in the LSBs of the hash being 0,
-/// resulting in bad hashes for hashtables. This implementation mixes up those LSBs.
 template <typename T>
 struct Hasher<T*> {
     /// @param ptr the pointer to hash
     /// @returns a hash of the pointer
-    size_t operator()(T* ptr) const {
-        auto hash = std::hash<T*>()(ptr);
+    HashCode operator()(T* ptr) const {
+        auto hash = reinterpret_cast<uintptr_t>(ptr);
 #ifdef TINT_HASH_SEED
         hash ^= static_cast<uint32_t>(TINT_HASH_SEED);
 #endif
-        return hash ^ (hash >> 4);
+        if constexpr (sizeof(hash) > 4) {
+            return static_cast<HashCode>(hash >> 4 | hash >> 32);
+        } else {
+            return static_cast<HashCode>(hash >> 4);
+        }
     }
 };
 
@@ -101,7 +109,7 @@ template <typename T>
 struct Hasher<std::vector<T>> {
     /// @param vector the vector to hash
     /// @returns a hash of the vector
-    size_t operator()(const std::vector<T>& vector) const {
+    HashCode operator()(const std::vector<T>& vector) const {
         auto hash = Hash(vector.size());
         for (auto& el : vector) {
             hash = HashCombine(hash, el);
@@ -115,7 +123,7 @@ template <typename... TYPES>
 struct Hasher<std::tuple<TYPES...>> {
     /// @param tuple the tuple to hash
     /// @returns a hash of the tuple
-    size_t operator()(const std::tuple<TYPES...>& tuple) const {
+    HashCode operator()(const std::tuple<TYPES...>& tuple) const {
         return std::apply(Hash<TYPES...>, tuple);
     }
 };
@@ -125,7 +133,9 @@ template <typename A, typename B>
 struct Hasher<std::pair<A, B>> {
     /// @param tuple the tuple to hash
     /// @returns a hash of the tuple
-    size_t operator()(const std::pair<A, B>& tuple) const { return std::apply(Hash<A, B>, tuple); }
+    HashCode operator()(const std::pair<A, B>& tuple) const {
+        return std::apply(Hash<A, B>, tuple);
+    }
 };
 
 /// Hasher specialization for std::variant
@@ -133,7 +143,7 @@ template <typename... TYPES>
 struct Hasher<std::variant<TYPES...>> {
     /// @param variant the variant to hash
     /// @returns a hash of the tuple
-    size_t operator()(const std::variant<TYPES...>& variant) const {
+    HashCode operator()(const std::variant<TYPES...>& variant) const {
         return std::visit([](auto&& val) { return Hash(val); }, variant);
     }
 };
@@ -144,20 +154,20 @@ template <>
 struct Hasher<std::string> {
     /// @param str the string to hash
     /// @returns a hash of the string
-    size_t operator()(const std::string& str) const {
-        return std::hash<std::string_view>()(std::string_view(str));
+    HashCode operator()(const std::string& str) const {
+        return static_cast<HashCode>(std::hash<std::string_view>()(std::string_view(str)));
     }
 
     /// @param str the string to hash
     /// @returns a hash of the string
-    size_t operator()(const char* str) const {
-        return std::hash<std::string_view>()(std::string_view(str));
+    HashCode operator()(const char* str) const {
+        return static_cast<HashCode>(std::hash<std::string_view>()(std::string_view(str)));
     }
 
     /// @param str the string to hash
     /// @returns a hash of the string
-    size_t operator()(const std::string_view& str) const {
-        return std::hash<std::string_view>()(str);
+    HashCode operator()(const std::string_view& str) const {
+        return static_cast<HashCode>(std::hash<std::string_view>()(str));
     }
 };
 
@@ -165,14 +175,14 @@ struct Hasher<std::string> {
 /// @returns a hash of the variadic list of arguments.
 ///          The returned hash is dependent on the order of the arguments.
 template <typename... ARGS>
-size_t Hash(const ARGS&... args) {
+HashCode Hash(const ARGS&... args) {
     if constexpr (sizeof...(ARGS) == 0) {
         return 0;
     } else if constexpr (sizeof...(ARGS) == 1) {
         using T = std::tuple_element_t<0, std::tuple<ARGS...>>;
         return Hasher<T>()(args...);
     } else {
-        size_t hash = 102931;  // seed with an arbitrary prime
+        HashCode hash = 102931;  // seed with an arbitrary prime
         return HashCombine(hash, args...);
     }
 }
@@ -182,8 +192,13 @@ size_t Hash(const ARGS&... args) {
 /// @returns a hash of the variadic list of arguments.
 ///          The returned hash is dependent on the order of the arguments.
 template <typename... ARGS>
-size_t HashCombine(size_t hash, const ARGS&... values) {
-    constexpr size_t offset = tint::detail::HashCombineOffset<sizeof(size_t)>::value();
+HashCode HashCombine(HashCode hash, const ARGS&... values) {
+#ifdef TINT_HASH_SEED
+    constexpr uint32_t offset = 0x7f4a7c16 ^ static_cast<uint32_t>(TINT_HASH_SEED);
+#else
+    constexpr uint32_t offset = 0x7f4a7c16;
+#endif
+
     ((hash ^= Hash(values) + (offset ^ (hash >> 2))), ...);
     return hash;
 }
@@ -236,7 +251,7 @@ struct UnorderedKeyWrapper {
     /// The wrapped value
     T value;
     /// The hash of value
-    size_t hash;
+    HashCode hash;
 
     /// Constructor
     /// @param v the value to wrap

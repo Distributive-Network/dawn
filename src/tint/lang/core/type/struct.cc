@@ -1,28 +1,44 @@
-// Copyright 2022 The Tint Authors.
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/type/struct.h"
 
 #include <cmath>
 #include <iomanip>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "src/tint/lang/core/type/manager.h"
 #include "src/tint/utils/math/hash.h"
 #include "src/tint/utils/symbol/symbol_table.h"
 #include "src/tint/utils/text/string_stream.h"
+#include "src/tint/utils/text/styled_text.h"
+#include "src/tint/utils/text/text_style.h"
 
 TINT_INSTANTIATE_TYPEINFO(tint::core::type::Struct);
 TINT_INSTANTIATE_TYPEINFO(tint::core::type::StructMember);
@@ -30,8 +46,8 @@ TINT_INSTANTIATE_TYPEINFO(tint::core::type::StructMember);
 namespace tint::core::type {
 namespace {
 
-core::type::Flags FlagsFrom(VectorRef<const StructMember*> members) {
-    core::type::Flags flags{
+Flags FlagsFrom(VectorRef<const StructMember*> members) {
+    Flags flags{
         Flag::kConstructable,
         Flag::kCreationFixedFootprint,
         Flag::kFixedFootprint,
@@ -52,12 +68,20 @@ core::type::Flags FlagsFrom(VectorRef<const StructMember*> members) {
 
 }  // namespace
 
+Struct::Struct(Symbol name)
+    : Base(Hash(tint::TypeCode::Of<Struct>().bits, name), type::Flags{}),
+      name_(name),
+      members_{},
+      align_(0),
+      size_(0),
+      size_no_padding_(0) {}
+
 Struct::Struct(Symbol name,
                VectorRef<const StructMember*> members,
                uint32_t align,
                uint32_t size,
                uint32_t size_no_padding)
-    : Base(Hash(tint::TypeInfo::Of<Struct>().full_hashcode, name), FlagsFrom(members)),
+    : Base(Hash(tint::TypeCode::Of<Struct>().bits, name), FlagsFrom(members)),
       name_(name),
       members_(std::move(members)),
       align_(align),
@@ -94,8 +118,15 @@ std::string Struct::FriendlyName() const {
     return name_.Name();
 }
 
-std::string Struct::Layout() const {
-    StringStream ss;
+StyledText Struct::Layout() const {
+    static constexpr auto Code = style::Code + style::NoQuote;
+    static constexpr auto Comment = style::Comment + style::NoQuote;
+    static constexpr auto Keyword = style::Keyword + style::NoQuote;
+    static constexpr auto Type = style::Type + style::NoQuote;
+    static constexpr auto Variable = style::Variable + style::NoQuote;
+    static constexpr auto Plain = style::Plain;
+
+    StyledText out;
 
     auto member_name_of = [&](const StructMember* sm) { return sm->Name().Name(); };
 
@@ -110,20 +141,23 @@ std::string Struct::Layout() const {
     const auto size_w = static_cast<int>(::log10(Size())) + 1;
     const auto align_w = static_cast<int>(::log10(Align())) + 1;
 
+    auto pad = [](int n) { return std::string(static_cast<size_t>(n), ' '); };
+
     auto print_struct_begin_line = [&](size_t align, size_t size, std::string struct_name) {
-        ss << "/*          " << std::setw(offset_w) << " "
-           << "align(" << std::setw(align_w) << align << ") size(" << std::setw(size_w) << size
-           << ") */ struct " << struct_name << " {\n";
+        out << Comment("/*          ", pad(offset_w), "align(", std::setw(align_w), align,
+                       ") size(", std::setw(size_w), size, ") */")
+            << Keyword(" struct ") << Type(struct_name) << Code(" {") << Plain("\n");
     };
 
     auto print_struct_end_line = [&] {
-        ss << "/*                         " << std::setw(offset_w + size_w + align_w) << " "
-           << "*/ };";
+        out << Comment("/*                         ", pad(offset_w + size_w + align_w), "*/")
+            << Code(" };");
     };
 
-    auto print_member_line = [&](size_t offset, size_t align, size_t size, std::string s) {
-        ss << "/* offset(" << std::setw(offset_w) << offset << ") align(" << std::setw(align_w)
-           << align << ") size(" << std::setw(size_w) << size << ") */   " << s << ";\n";
+    auto print_member_line = [&](size_t offset, size_t align, size_t size, StyledText s) {
+        out << Comment("/* offset(", std::setw(offset_w), offset, ") align(", std::setw(align_w),
+                       align, ") size(", std::setw(size_w), size, ") */ ")
+            << s << Plain("\n");
     };
 
     print_struct_begin_line(Align(), Size(), UnwrapRef()->FriendlyName());
@@ -138,26 +172,31 @@ std::string Struct::Layout() const {
             if (padding > 0) {
                 size_t padding_offset = m->Offset() - padding;
                 print_member_line(padding_offset, 1, padding,
-                                  "// -- implicit field alignment padding --");
+                                  StyledText{}
+                                      << Code("  ")
+                                      << Comment("// -- implicit field alignment padding --"));
             }
         }
 
         // Output member
         std::string member_name = member_name_of(m);
         print_member_line(m->Offset(), m->Align(), m->Size(),
-                          member_name + " : " + m->Type()->UnwrapRef()->FriendlyName());
+                          StyledText{} << Code("  ") << Variable(member_name) << Code(" : ")
+                                       << Type(m->Type()->UnwrapRef()->FriendlyName())
+                                       << Code(","));
     }
 
     // Output struct size padding, if any
     uint32_t struct_padding = Size() - last_member_struct_padding_offset;
     if (struct_padding > 0) {
-        print_member_line(last_member_struct_padding_offset, 1, struct_padding,
-                          "// -- implicit struct size padding --");
+        print_member_line(
+            last_member_struct_padding_offset, 1, struct_padding,
+            StyledText{} << Code("  ") << Comment("// -- implicit struct size padding --"));
     }
 
     print_struct_end_line();
 
-    return ss.str();
+    return out;
 }
 
 TypeAndCount Struct::Elements(const Type* type_if_invalid /* = nullptr */,

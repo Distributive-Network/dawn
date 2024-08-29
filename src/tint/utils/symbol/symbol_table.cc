@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/utils/symbol/symbol_table.h"
 
@@ -29,32 +42,22 @@ SymbolTable& SymbolTable::operator=(SymbolTable&&) = default;
 Symbol SymbolTable::Register(std::string_view name) {
     TINT_ASSERT(!name.empty());
 
-    auto it = name_to_symbol_.Find(name);
-    if (it) {
-        return *it;
-    }
-    return RegisterInternal(name);
-}
-
-Symbol SymbolTable::RegisterInternal(std::string_view name) {
-    char* name_mem = name_allocator_.Allocate(name.length() + 1);
-    if (name_mem == nullptr) {
-        return Symbol();
+    auto& it = name_to_symbol_.GetOrAddZeroEntry(name);
+    if (it.value) {
+        return Symbol{it.value, generation_id_, it.key};
     }
 
-    memcpy(name_mem, name.data(), name.length() + 1);
-    std::string_view nv(name_mem, name.length());
-
-    Symbol sym(next_symbol_, generation_id_, nv);
-    ++next_symbol_;
-    name_to_symbol_.Add(sym.NameView(), sym);
-
-    return sym;
+    auto view = Allocate(name);
+    it.key = view;
+    it.value = next_symbol_++;
+    return Symbol{it.value, generation_id_, view};
 }
 
 Symbol SymbolTable::Get(std::string_view name) const {
-    auto it = name_to_symbol_.Find(name);
-    return it ? *it : Symbol();
+    if (auto* entry = name_to_symbol_.GetEntry(name)) {
+        return Symbol{entry->value, generation_id_, entry->key};
+    }
+    return Symbol{};
 }
 
 Symbol SymbolTable::New(std::string_view prefix_view /* = "" */) {
@@ -65,30 +68,36 @@ Symbol SymbolTable::New(std::string_view prefix_view /* = "" */) {
         prefix = std::string(prefix_view);
     }
 
-    auto it = name_to_symbol_.Find(prefix);
-    if (!it) {
-        return RegisterInternal(prefix);
+    auto& it = name_to_symbol_.GetOrAddZeroEntry(prefix);
+    if (it.value == 0) {
+        // prefix is a unique name
+        auto view = Allocate(prefix);
+        it.key = view;
+        it.value = next_symbol_++;
+        return Symbol{it.value, generation_id_, view};
     }
 
-    size_t i = 0;
-    auto last_prefix = last_prefix_to_index_.Find(prefix);
-    if (last_prefix) {
-        i = *last_prefix;
-    }
-
+    size_t& i = last_prefix_to_index_.GetOrAddZero(prefix);
     std::string name;
     do {
         ++i;
         name = prefix + "_" + std::to_string(i);
     } while (name_to_symbol_.Contains(name));
 
-    auto sym = RegisterInternal(name);
-    if (last_prefix) {
-        *last_prefix = i;
-    } else {
-        last_prefix_to_index_.Add(prefix, i);
+    auto view = Allocate(name);
+    auto id = name_to_symbol_.Add(view, next_symbol_++);
+    return Symbol{id.value, generation_id_, view};
+}
+
+std::string_view SymbolTable::Allocate(std::string_view name) {
+    static_assert(sizeof(char) == 1);
+    char* name_mem = Bitcast<char*>(name_allocator_.Allocate(name.length() + 1));
+    if (name_mem == nullptr) {
+        TINT_ICE() << "failed to allocate memory for symbol's string";
     }
-    return sym;
+
+    memcpy(name_mem, name.data(), name.length() + 1);
+    return {name_mem, name.length()};
 }
 
 }  // namespace tint

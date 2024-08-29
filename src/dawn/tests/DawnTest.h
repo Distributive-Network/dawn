@@ -1,16 +1,29 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_DAWN_TESTS_DAWNTEST_H_
 #define SRC_DAWN_TESTS_DAWNTEST_H_
@@ -40,6 +53,7 @@
 #include "dawn/webgpu_cpp_print.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 // Getting data back from Dawn is done in an async manners so all expectations are "deferred"
 // until the end of the test. Also expectations use a copy to a MapRead buffer to get the data
@@ -113,7 +127,7 @@
     EXPECT_CALL(mDeviceErrorCallback,                                             \
                 Call(testing::Ne(WGPUErrorType_NoError), matcher, device.Get())); \
     statement;                                                                    \
-    device.Tick();                                                                \
+    instance.ProcessEvents();                                                     \
     FlushWire();                                                                  \
     testing::Mock::VerifyAndClearExpectations(&mDeviceErrorCallback);             \
     do {                                                                          \
@@ -247,7 +261,9 @@ class DawnTestBase {
     bool IsSwiftshader() const;
     bool IsANGLE() const;
     bool IsANGLESwiftShader() const;
+    bool IsANGLED3D11() const;
     bool IsWARP() const;
+    bool IsMesaSoftware() const;
 
     bool IsIntelGen9() const;
     bool IsIntelGen12() const;
@@ -256,6 +272,9 @@ class DawnTestBase {
     bool IsLinux() const;
     bool IsMacOS(int32_t majorVersion = -1, int32_t minorVersion = -1) const;
     bool IsAndroid() const;
+    bool IsChromeOS() const;
+
+    bool IsMesa(const std::string& mesaVersion = "") const;
 
     bool UsesWire() const;
     bool IsImplicitDeviceSyncEnabled() const;
@@ -266,8 +285,8 @@ class DawnTestBase {
 
     bool IsDXC() const;
 
-    bool IsAsan() const;
-    bool IsTsan() const;
+    static bool IsAsan();
+    static bool IsTsan();
 
     bool HasToggleEnabled(const char* workaround) const;
 
@@ -280,7 +299,7 @@ class DawnTestBase {
     bool HasBackendTypeFilter() const;
     wgpu::BackendType GetBackendTypeFilter() const;
 
-    wgpu::Instance GetInstance() const;
+    const wgpu::Instance& GetInstance() const;
     native::Adapter GetAdapter() const;
 
     virtual std::unique_ptr<platform::Platform> CreateTestPlatform();
@@ -305,19 +324,21 @@ class DawnTestBase {
     void ResolveDeferredExpectationsNow();
 
   protected:
+    wgpu::Instance instance;
+    wgpu::Adapter adapter;
     wgpu::Device device;
     wgpu::Queue queue;
 
     DawnProcTable backendProcs = {};
     WGPUDevice backendDevice = nullptr;
 
-    size_t mLastWarningCount = 0;
+    uint64_t mLastWarningCount = 0;
 
     // Mock callbacks tracking errors and destruction. These are strict mocks because any errors or
     // device loss that aren't expected should result in test failures and not just some warnings
     // printed to stdout.
     testing::StrictMock<testing::MockCallback<WGPUErrorCallback>> mDeviceErrorCallback;
-    testing::StrictMock<testing::MockCallback<WGPUDeviceLostCallback>> mDeviceLostCallback;
+    testing::StrictMock<testing::MockCallback<WGPUDeviceLostCallbackNew>> mDeviceLostCallback;
 
     // Helper methods to implement the EXPECT_ macros
     std::ostringstream& AddBufferExpectation(const char* file,
@@ -360,7 +381,7 @@ class DawnTestBase {
                                               wgpu::TextureAspect aspect = wgpu::TextureAspect::All,
                                               uint32_t bytesPerRow = 0) {
         uint32_t texelBlockSize = utils::GetTexelBlockSizeInBytes(format);
-        uint32_t texelComponentCount = utils::GetWGSLRenderableColorTextureComponentCount(format);
+        uint32_t texelComponentCount = utils::GetTextureComponentCount(format);
 
         return AddTextureExpectationImpl(
             file, line, std::move(targetDevice),
@@ -565,6 +586,11 @@ class DawnTestBase {
                                                     mipLevel, {}, &expectedStencil);
     }
 
+    void MapAsyncAndWait(const wgpu::Buffer& buffer,
+                         wgpu::MapMode mapMode,
+                         uint64_t offset,
+                         uint64_t size);
+
     void WaitABit(wgpu::Instance = nullptr);
     void FlushWire();
     void WaitForAllOperations();
@@ -587,13 +613,13 @@ class DawnTestBase {
     wgpu::SupportedLimits GetAdapterLimits();
     wgpu::SupportedLimits GetSupportedLimits();
 
+    uint64_t GetDeprecationWarningCountForTesting() const;
+
     void* GetUniqueUserdata();
 
   private:
     AdapterTestParam mParam;
     std::unique_ptr<utils::WireHelper> mWireHelper;
-    wgpu::Instance mInstance;
-    wgpu::Adapter mAdapter;
 
     // Helps generate unique userdata values passed to deviceLostUserdata.
     std::atomic<uintptr_t> mNextUniqueUserdata = 0;
@@ -617,12 +643,14 @@ class DawnTestBase {
                                                   uint32_t dataSize,
                                                   uint32_t bytesPerRow);
 
-    std::ostringstream& ExpectSampledFloatDataImpl(wgpu::TextureView textureView,
-                                                   const char* wgslTextureType,
+    std::ostringstream& ExpectSampledFloatDataImpl(wgpu::Texture texture,
                                                    uint32_t width,
                                                    uint32_t height,
                                                    uint32_t componentCount,
+                                                   uint32_t arrayLayer,
+                                                   uint32_t mipLevel,
                                                    uint32_t sampleCount,
+                                                   wgpu::TextureAspect aspect,
                                                    detail::Expectation* expectation);
 
     // MapRead buffers used to get data for the expectations
@@ -630,13 +658,12 @@ class DawnTestBase {
         wgpu::Device device;
         wgpu::Buffer buffer;
         uint64_t bufferSize;
-        const void* mappedData = nullptr;
+        raw_ptr<const void> mappedData = nullptr;
     };
     std::vector<ReadbackSlot> mReadbackSlots;
 
     // Maps all the buffers and fill ReadbackSlot::mappedData
     void MapSlotsSynchronously();
-    static void SlotMapCallback(WGPUBufferMapAsyncStatus status, void* userdata);
     std::atomic<size_t> mNumPendingMapOperations = 0;
 
     // Reserve space where the data for an expectation can be copied
@@ -693,20 +720,20 @@ class DawnTestBase {
 #define DAWN_SUPPRESS_TEST_IF(condition) \
     DAWN_SKIP_TEST_IF_BASE(!RunSuppressedTests() && condition, "suppressed", condition)
 
-#define EXPECT_DEPRECATION_WARNINGS(statement, n)                                               \
-    do {                                                                                        \
-        if (UsesWire()) {                                                                       \
-            statement;                                                                          \
-        } else {                                                                                \
-            size_t warningsBefore = native::GetDeprecationWarningCountForTesting(device.Get()); \
-            statement;                                                                          \
-            size_t warningsAfter = native::GetDeprecationWarningCountForTesting(device.Get());  \
-            EXPECT_EQ(mLastWarningCount, warningsBefore);                                       \
-            if (!HasToggleEnabled("skip_validation")) {                                         \
-                EXPECT_EQ(warningsAfter, warningsBefore + n);                                   \
-            }                                                                                   \
-            mLastWarningCount = warningsAfter;                                                  \
-        }                                                                                       \
+#define EXPECT_DEPRECATION_WARNINGS(statement, n)                             \
+    do {                                                                      \
+        if (UsesWire()) {                                                     \
+            statement;                                                        \
+        } else {                                                              \
+            uint64_t warningsBefore = GetDeprecationWarningCountForTesting(); \
+            statement;                                                        \
+            uint64_t warningsAfter = GetDeprecationWarningCountForTesting();  \
+            EXPECT_EQ(mLastWarningCount, warningsBefore);                     \
+            if (!HasToggleEnabled("skip_validation")) {                       \
+                EXPECT_EQ(warningsAfter, warningsBefore + n);                 \
+            }                                                                 \
+            mLastWarningCount = warningsAfter;                                \
+        }                                                                     \
     } while (0)
 #define EXPECT_DEPRECATION_WARNING(statement) EXPECT_DEPRECATION_WARNINGS(statement, 1)
 
@@ -726,17 +753,6 @@ DawnTestWithParams<Params>::DawnTestWithParams() : DawnTestBase(this->GetParam()
 
 using DawnTest = DawnTestWithParams<>;
 
-// Instantiate the test once for all backends in the second param. Use it like this:
-//     DAWN_INSTANTIATE_TEST_V(MyTestFixture, std::vector<BackendTestConfig>({{MetalBackend},
-//     {OpenGLBackend}})
-#define DAWN_INSTANTIATE_TEST_V(testName, testParams)                               \
-    INSTANTIATE_TEST_SUITE_P(                                                       \
-        , testName,                                                                 \
-        testing::ValuesIn(::dawn::detail::GetAvailableAdapterTestParamsForBackends( \
-            testParams.data(), testParams.size())),                                 \
-        DawnTestBase::PrintToStringParamName(#testName));                           \
-    GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(testName)
-
 // Instantiate the test once for each backend provided after the first argument. Use it like this:
 //     DAWN_INSTANTIATE_TEST(MyTestFixture, MetalBackend, OpenGLBackend)
 #define DAWN_INSTANTIATE_TEST(testName, ...)                                            \
@@ -747,6 +763,12 @@ using DawnTest = DawnTestWithParams<>;
             testName##params, sizeof(testName##params) / sizeof(testName##params[0]))), \
         DawnTestBase::PrintToStringParamName(#testName));                               \
     GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(testName)
+
+#define DAWN_INSTANTIATE_PREFIXED_TEST_P(prefix, testName, ...)                    \
+    INSTANTIATE_TEST_SUITE_P(                                                      \
+        prefix, testName,                                                          \
+        ::testing::ValuesIn(MakeParamGenerator<testName::ParamType>(__VA_ARGS__)), \
+        DawnTestBase::PrintToStringParamName(#testName))
 
 // Instantiate the test once for each backend provided in the first param list.
 // The test will be parameterized over the following param lists.
@@ -764,10 +786,14 @@ using DawnTest = DawnTestWithParams<>;
         DawnTestBase::PrintToStringParamName(#testName));                                      \
     GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(testName)
 
-// Implementation for DAWN_TEST_PARAM_STRUCT to declare/print struct fields.
-#define DAWN_TEST_PARAM_STRUCT_DECL_STRUCT_FIELD(Type) Type DAWN_PP_CONCATENATE(m, Type);
-#define DAWN_TEST_PARAM_STRUCT_PRINT_STRUCT_FIELD(Type) \
-    o << "; " << #Type << "=" << param.DAWN_PP_CONCATENATE(m, Type);
+// Basically same as DAWN_INSTANTIATE_TEST_P, except that each backend is provided in the
+// 'backends' param list.
+#define DAWN_INSTANTIATE_TEST_B(testName, backends, ...)                                     \
+    INSTANTIATE_TEST_SUITE_P(                                                                \
+        , testName,                                                                          \
+        ::testing::ValuesIn(MakeParamGenerator<testName::ParamType>(backends, __VA_ARGS__)), \
+        DawnTestBase::PrintToStringParamName(#testName));                                    \
+    GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(testName)
 
 // Usage: DAWN_TEST_PARAM_STRUCT(Foo, TypeA, TypeB, ...)
 // Generate a test param struct called Foo which extends AdapterTestParam and generated
@@ -779,29 +805,8 @@ using DawnTest = DawnTestWithParams<>;
 // Example:
 //   using MyParam = unsigned int;
 //   DAWN_TEST_PARAM_STRUCT(FooParams, MyParam);
-#define DAWN_TEST_PARAM_STRUCT(StructName, ...)                                                    \
-    struct DAWN_PP_CONCATENATE(_Dawn_, StructName) {                                               \
-        DAWN_PP_EXPAND(DAWN_PP_EXPAND(DAWN_PP_FOR_EACH)(DAWN_TEST_PARAM_STRUCT_DECL_STRUCT_FIELD,  \
-                                                        __VA_ARGS__))                              \
-    };                                                                                             \
-    std::ostream& operator<<(std::ostream& o,                                                      \
-                             const DAWN_PP_CONCATENATE(_Dawn_, StructName) & param) {              \
-        DAWN_PP_EXPAND(DAWN_PP_EXPAND(DAWN_PP_FOR_EACH)(DAWN_TEST_PARAM_STRUCT_PRINT_STRUCT_FIELD, \
-                                                        __VA_ARGS__))                              \
-        return o;                                                                                  \
-    }                                                                                              \
-    struct StructName : AdapterTestParam, DAWN_PP_CONCATENATE(_Dawn_, StructName) {                \
-        template <typename... Args>                                                                \
-        StructName(const AdapterTestParam& param, Args&&... args)                                  \
-            : AdapterTestParam(param),                                                             \
-              DAWN_PP_CONCATENATE(_Dawn_, StructName){std::forward<Args>(args)...} {}              \
-    };                                                                                             \
-    std::ostream& operator<<(std::ostream& o, const StructName& param) {                           \
-        o << static_cast<const AdapterTestParam&>(param);                                          \
-        o << "; " << static_cast<const DAWN_PP_CONCATENATE(_Dawn_, StructName)&>(param);           \
-        return o;                                                                                  \
-    }                                                                                              \
-    static_assert(true, "require semicolon")
+#define DAWN_TEST_PARAM_STRUCT(StructName, ...) \
+    DAWN_TEST_PARAM_STRUCT_BASE(AdapterTestParam, StructName, __VA_ARGS__)
 
 namespace detail {
 // Helper functions used for DAWN_INSTANTIATE_TEST
@@ -851,6 +856,7 @@ extern template class ExpectEq<uint8_t>;
 extern template class ExpectEq<int16_t>;
 extern template class ExpectEq<uint32_t>;
 extern template class ExpectEq<uint64_t>;
+extern template class ExpectEq<int32_t>;
 extern template class ExpectEq<utils::RGBA8>;
 extern template class ExpectEq<float>;
 extern template class ExpectEq<float, uint16_t>;
@@ -882,5 +888,20 @@ class CustomTextureExpectation : public Expectation {
 };
 
 }  // namespace detail
+
+template <typename Param, typename... Params>
+auto MakeParamGenerator(std::vector<BackendTestConfig>&& first,
+                        std::initializer_list<Params>&&... params) {
+    return ParamGenerator<Param, AdapterTestParam, Params...>(
+        ::dawn::detail::GetAvailableAdapterTestParamsForBackends(first.data(), first.size()),
+        std::forward<std::initializer_list<Params>&&>(params)...);
+}
+template <typename Param, typename... Params>
+auto MakeParamGenerator(std::vector<BackendTestConfig>&& first, std::vector<Params>&&... params) {
+    return ParamGenerator<Param, AdapterTestParam, Params...>(
+        ::dawn::detail::GetAvailableAdapterTestParamsForBackends(first.data(), first.size()),
+        std::forward<std::vector<Params>&&>(params)...);
+}
+
 }  // namespace dawn
 #endif  // SRC_DAWN_TESTS_DAWNTEST_H_

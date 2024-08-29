@@ -1,31 +1,52 @@
-SKIP: FAILED
+#include <metal_stdlib>
 
+using namespace metal;
 
-enable chromium_experimental_dp4a;
-
-fn dot4U8Packed_fbed7b() {
-  var arg_0 = 1u;
-  var arg_1 = 1u;
-  var res : u32 = dot4U8Packed(arg_0, arg_1);
+uint tint_dot4U8Packed(uint param_0, uint param_1) {
+  uchar4 vec1 = as_type<uchar4>(param_0);
+  uchar4 vec2 = as_type<uchar4>(param_1);
+  return vec1[0] * vec2[0] + vec1[1] * vec2[1] + vec1[2] * vec2[2] + vec1[3] * vec2[3];
 }
 
-@vertex
-fn vertex_main() -> @builtin(position) vec4<f32> {
-  dot4U8Packed_fbed7b();
-  return vec4<f32>();
+uint dot4U8Packed_fbed7b() {
+  uint arg_0 = 1u;
+  uint arg_1 = 1u;
+  uint res = tint_dot4U8Packed(arg_0, arg_1);
+  return res;
 }
 
-@fragment
-fn fragment_main() {
-  dot4U8Packed_fbed7b();
+fragment void fragment_main(device uint* tint_symbol_1 [[buffer(0)]]) {
+  *(tint_symbol_1) = dot4U8Packed_fbed7b();
+  return;
 }
 
-@compute @workgroup_size(1)
-fn compute_main() {
-  dot4U8Packed_fbed7b();
+kernel void compute_main(device uint* tint_symbol_2 [[buffer(0)]]) {
+  *(tint_symbol_2) = dot4U8Packed_fbed7b();
+  return;
 }
 
-Failed to generate: builtins/gen/var/dot4U8Packed/fbed7b.wgsl:24:8 error: MSL backend does not support extension 'chromium_experimental_dp4a'
-enable chromium_experimental_dp4a;
-       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+struct VertexOutput {
+  float4 pos;
+  uint prevent_dce;
+};
+
+struct tint_symbol {
+  uint prevent_dce [[user(locn0)]] [[flat]];
+  float4 pos [[position]];
+};
+
+VertexOutput vertex_main_inner() {
+  VertexOutput out = {};
+  out.pos = float4(0.0f);
+  out.prevent_dce = dot4U8Packed_fbed7b();
+  return out;
+}
+
+vertex tint_symbol vertex_main() {
+  VertexOutput const inner_result = vertex_main_inner();
+  tint_symbol wrapper_result = {};
+  wrapper_result.pos = inner_result.pos;
+  wrapper_result.prevent_dce = inner_result.prevent_dce;
+  return wrapper_result;
+}
 

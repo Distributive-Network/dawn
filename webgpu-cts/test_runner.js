@@ -1,27 +1,42 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import { globalTestConfig } from '../third_party/webgpu-cts/src/common/framework/test_config.js';
 import { dataCache } from '../third_party/webgpu-cts/src/common/framework/data_cache.js';
+import { getResourcePath } from '../third_party/webgpu-cts/src/common/framework/resources.js';
 import { DefaultTestFileLoader } from '../third_party/webgpu-cts/src/common/internal/file_loader.js';
 import { prettyPrintLog } from '../third_party/webgpu-cts/src/common/internal/logging/log_message.js';
 import { Logger } from '../third_party/webgpu-cts/src/common/internal/logging/logger.js';
 import { parseQuery } from '../third_party/webgpu-cts/src/common/internal/query/parseQuery.js';
 import { parseSearchParamLikeWithCTSOptions } from '../third_party/webgpu-cts/src/common/runtime/helper/options.js';
 import { setDefaultRequestAdapterOptions } from '../third_party/webgpu-cts/src/common/util/navigator_gpu.js';
+import { unreachable } from '../third_party/webgpu-cts/src/common/util/util.js';
 
-import { TestWorker } from '../third_party/webgpu-cts/src/common/runtime/helper/test_worker.js';
+import { TestDedicatedWorker, TestSharedWorker, TestServiceWorker } from '../third_party/webgpu-cts/src/common/runtime/helper/test_worker.js';
 
 // The Python-side websockets library has a max payload size of 72638. Set the
 // max allowable logs size in a single payload to a bit less than that.
@@ -101,12 +116,18 @@ async function setupWebsocket(port) {
 
 async function runCtsTestViaSocket(event) {
   let input = JSON.parse(event.data);
-  runCtsTest(input['q'], input['w']);
+  runCtsTest(input['q']);
 }
 
 dataCache.setStore({
   load: async (path) => {
-    return await (await fetch(`/third_party/webgpu-cts/cache/data/${path}`)).text();
+    const fullPath = getResourcePath(`cache/${path}`);
+    const response = await fetch(fullPath);
+    if (!response.ok) {
+      return Promise.reject(`failed to load cache file: '${fullPath}'
+reason: ${response.statusText}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
   }
 });
 
@@ -149,19 +170,44 @@ globalTestConfig.noRaceWithRejectOnTimeout = true;
 // compiler (Intel GPU) is very slow to compile rolled loops. Intel drivers for
 // linux may also suffer the same performance issues, so unroll const-eval loops
 // if we're not running on Windows.
-if (navigator.userAgent.indexOf("Windows") !== -1) {
+const isWindows = navigator.userAgent.includes("Windows");
+if (!isWindows) {
   globalTestConfig.unrollConstEvalLoops = true;
 }
 
-// MAINTENANCE_TODO(gman): remove use_worker since you can use worker=1 instead
-async function runCtsTest(queryString, use_worker) {
+let lastOptionsKey, testWorker;
+
+async function runCtsTest(queryString) {
   const { queries, options } = parseSearchParamLikeWithCTSOptions(queryString);
-  const workerEnabled = use_worker || options.worker;
-  const worker = workerEnabled ? new TestWorker(options) : undefined;
+
+  // Set up a worker with the options passed into the test, avoiding creating
+  // a new worker if one was already set up for the last test.
+  // In practice, the options probably won't change between tests in a single
+  // invocation of run_gpu_integration_test.py, but this handles if they do.
+  const currentOptionsKey = JSON.stringify(options);
+  if (currentOptionsKey !== lastOptionsKey) {
+    lastOptionsKey = currentOptionsKey;
+    testWorker =
+      options.worker === null ? null :
+      options.worker === 'dedicated' ? new TestDedicatedWorker(options) :
+      options.worker === 'shared' ? new TestSharedWorker(options) :
+      options.worker === 'service' ? new TestServiceWorker(options) :
+      unreachable();
+  }
 
   const loader = new DefaultTestFileLoader();
   const filterQuery = parseQuery(queries[0]);
-  const testcases = await loader.loadCases(filterQuery);
+  const testcases = Array.from(await loader.loadCases(filterQuery));
+
+  if (testcases.length === 0) {
+    sendMessageInfraFailure('Did not find matching test');
+    return;
+  }
+  if (testcases.length !== 1) {
+    sendMessageInfraFailure('Found more than 1 test for given query');
+    return;
+  }
+  const testcase = testcases[0];
 
   const { compatibility, powerPreference } = options;
   globalTestConfig.compatibility = compatibility;
@@ -177,27 +223,40 @@ async function runCtsTest(queryString, use_worker) {
 
   const log = new Logger();
 
-  for (const testcase of testcases) {
-    const name = testcase.query.toString();
+  const name = testcase.query.toString();
 
-    const wpt_fn = async () => {
-      sendMessageTestStarted();
-      const [rec, res] = log.record(name);
+  const wpt_fn = async () => {
+    sendMessageTestStarted();
+    const [rec, res] = log.record(name);
 
-      beginHeartbeatScope();
-      if (worker) {
-        await worker.run(rec, name, expectations);
-      } else {
-        await testcase.run(rec, expectations);
+    beginHeartbeatScope();
+    if (testWorker) {
+      await testWorker.run(rec, name, expectations);
+    } else {
+      await testcase.run(rec, expectations);
+    }
+    endHeartbeatScope();
+
+    sendMessageTestStatus(res.status, res.timems);
+    if (res.status === 'pass') {
+      // Send an "OK" log. Passing tests don't report logs to Telemetry.
+      sendMessageTestLogOK();
+    } else {
+      // Log all the logs to the console so they are visible.
+      if (res.logs) {
+        // Log the query string first as logs from multiple browsers may be interleaved and prefixed
+        // with their process id. Logging the test name lets us see what process a test ran in.
+        console.log(`Logs from ${queryString}`);
+        for (const l of res.logs) {
+          console.log(l);
+        }
       }
-      endHeartbeatScope();
-
-      sendMessageTestStatus(res.status, res.timems);
-      sendMessageTestLog(res.logs);
-      sendMessageTestFinished();
-    };
-    await wpt_fn();
-  }
+      // Report non-INFO logs to the harness so they don't show up in the LUCI failure reason.
+      sendMessageTestLog((res.logs || []).filter(l => l.name !== 'INFO'));
+    }
+    sendMessageTestFinished();
+  };
+  await wpt_fn();
 }
 
 function splitLogsForPayload(fullLogs) {
@@ -240,8 +299,12 @@ function sendMessageTestStatus(status, jsDurationMs) {
   }));
 }
 
+function sendMessageTestLogOK() {
+  socket.send('{"type":"TEST_LOG","log":"OK"}');
+}
+
 function sendMessageTestLog(logs) {
-  splitLogsForPayload((logs ?? []).map(prettyPrintLog).join('\n\n'))
+  splitLogsForPayload(logs.map(prettyPrintLog).join('\n\n'))
     .forEach((piece) => {
       socket.send(JSON.stringify({
         'type': 'TEST_LOG',
@@ -254,5 +317,11 @@ function sendMessageTestFinished() {
   socket.send('{"type":"TEST_FINISHED"}');
 }
 
-window.runCtsTest = runCtsTest;
+function sendMessageInfraFailure(message) {
+  socket.send(JSON.stringify({
+    'type': 'INFRA_FAILURE',
+    'message': message,
+  }));
+}
+
 window.setupWebsocket = setupWebsocket

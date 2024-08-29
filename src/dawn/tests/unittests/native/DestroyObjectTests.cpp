@@ -1,22 +1,36 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <gtest/gtest.h>
 
 #include <utility>
 #include <vector>
 
+#include "dawn/native/ChainUtils.h"
 #include "dawn/native/Toggles.h"
 #include "dawn/native/utils/WGPUHelpers.h"
 #include "dawn/tests/DawnNativeTest.h"
@@ -39,6 +53,7 @@
 #include "mocks/ShaderModuleMock.h"
 #include "mocks/SwapChainMock.h"
 #include "mocks/TextureMock.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::native {
 namespace {
@@ -47,11 +62,14 @@ using ::testing::_;
 using ::testing::ByMove;
 using ::testing::InSequence;
 using ::testing::Mock;
-using testing::MockCallback;
+using testing::MockCppCallback;
 using ::testing::NiceMock;
 using ::testing::Return;
 using ::testing::StrictMock;
 using ::testing::Test;
+
+using MockMapAsyncCallback =
+    StrictMock<MockCppCallback<void (*)(wgpu::MapAsyncStatus, const char*)>>;
 
 static constexpr std::string_view kComputeShader = R"(
         @compute @workgroup_size(1) fn main() {}
@@ -76,7 +94,9 @@ class ScopedRawPtrExpectation {
     ~ScopedRawPtrExpectation() { Mock::VerifyAndClearExpectations(mPtr); }
 
   private:
-    void* mPtr = nullptr;
+    // This pointer is explicitely meant to test expectations against a deleted
+    // object. So it is allowed to dangle.
+    raw_ptr<void, DisableDanglingPtrDetection> mPtr = nullptr;
 };
 
 class DestroyObjectTests : public DawnMockTest {
@@ -218,7 +238,7 @@ TEST_F(DestroyObjectTests, MappedBufferApiExplicit) {
     desc.size = 16;
     desc.usage = wgpu::BufferUsage::MapRead;
 
-    StrictMock<MockCallback<wgpu::BufferMapCallback>> cb;
+    MockMapAsyncCallback cb;
     EXPECT_CALL(cb, Call).Times(1);
     Ref<BufferMock> bufferMock = AcquireRef(new BufferMock(mDeviceMock, &desc));
     {
@@ -230,8 +250,9 @@ TEST_F(DestroyObjectTests, MappedBufferApiExplicit) {
     {
         EXPECT_CALL(*mDeviceMock, CreateBufferImpl).WillOnce(Return(ByMove(std::move(bufferMock))));
         wgpu::Buffer buffer = device.CreateBuffer(ToCppAPI(&desc));
-        buffer.MapAsync(wgpu::MapMode::Read, 0, 16, cb.Callback(), cb.MakeUserdata(this));
-        device.Tick();
+        buffer.MapAsync(wgpu::MapMode::Read, 0, 16, wgpu::CallbackMode::AllowProcessEvents,
+                        cb.Callback());
+        ProcessEvents();
 
         EXPECT_TRUE(FromAPI(buffer.Get())->IsAlive());
         buffer.Destroy();
@@ -246,7 +267,7 @@ TEST_F(DestroyObjectTests, MappedBufferImplicit) {
     desc.size = 16;
     desc.usage = wgpu::BufferUsage::MapRead;
 
-    StrictMock<MockCallback<wgpu::BufferMapCallback>> cb;
+    MockMapAsyncCallback cb;
     EXPECT_CALL(cb, Call).Times(1);
     Ref<BufferMock> bufferMock = AcquireRef(new BufferMock(mDeviceMock, &desc));
     {
@@ -260,8 +281,9 @@ TEST_F(DestroyObjectTests, MappedBufferImplicit) {
 
         EXPECT_CALL(*mDeviceMock, CreateBufferImpl).WillOnce(Return(ByMove(std::move(bufferMock))));
         wgpu::Buffer buffer = device.CreateBuffer(ToCppAPI(&desc));
-        buffer.MapAsync(wgpu::MapMode::Read, 0, 16, cb.Callback(), cb.MakeUserdata(this));
-        device.Tick();
+        buffer.MapAsync(wgpu::MapMode::Read, 0, 16, wgpu::CallbackMode::AllowProcessEvents,
+                        cb.Callback());
+        ProcessEvents();
 
         EXPECT_TRUE(FromAPI(buffer.Get())->IsAlive());
     }
@@ -269,7 +291,8 @@ TEST_F(DestroyObjectTests, MappedBufferImplicit) {
 
 TEST_F(DestroyObjectTests, CommandBufferNativeExplicit) {
     CommandEncoderDescriptor commandEncoderDesc = {};
-    Ref<CommandEncoder> commandEncoder = CommandEncoder::Create(mDeviceMock, &commandEncoderDesc);
+    Ref<CommandEncoder> commandEncoder =
+        CommandEncoder::Create(mDeviceMock, Unpack(&commandEncoderDesc));
 
     CommandBufferDescriptor commandBufferDesc = {};
 
@@ -310,7 +333,6 @@ TEST_F(DestroyObjectTests, ComputePipelineNativeExplicit) {
         ShaderModuleMock::Create(mDeviceMock, kComputeShader.data());
     ComputePipelineDescriptor desc = {};
     desc.compute.module = csModuleMock.Get();
-    desc.compute.entryPoint = "main";
 
     Ref<ComputePipelineMock> computePipelineMock = ComputePipelineMock::Create(mDeviceMock, &desc);
     EXPECT_CALL(*computePipelineMock.Get(), DestroyImpl).Times(1);
@@ -327,11 +349,10 @@ TEST_F(DestroyObjectTests, ComputePipelineImplicit) {
         ShaderModuleMock::Create(mDeviceMock, kComputeShader.data());
     ComputePipelineDescriptor desc = {};
     desc.compute.module = csModuleMock.Get();
-    desc.compute.entryPoint = "main";
 
     // Compute pipelines are initialized during their creation via the device.
     Ref<ComputePipelineMock> computePipelineMock = ComputePipelineMock::Create(mDeviceMock, &desc);
-    EXPECT_CALL(*computePipelineMock.Get(), Initialize).Times(1);
+    EXPECT_CALL(*computePipelineMock.Get(), InitializeImpl).Times(1);
     EXPECT_CALL(*computePipelineMock.Get(), DestroyImpl).Times(1);
 
     {
@@ -356,7 +377,7 @@ TEST_F(DestroyObjectTests, ExternalTextureNativeExplicit) {
     TextureViewDescriptor textureViewDesc = {};
     textureViewDesc.format = wgpu::TextureFormat::RGBA8Unorm;
     Ref<TextureViewMock> textureViewMock =
-        AcquireRef(new NiceMock<TextureViewMock>(textureMock.Get(), &textureViewDesc));
+        AcquireRef(new NiceMock<TextureViewMock>(textureMock.Get(), Unpack(&textureViewDesc)));
 
     ExternalTextureDescriptor desc = {};
     std::array<float, 12> placeholderConstantArray;
@@ -386,7 +407,7 @@ TEST_F(DestroyObjectTests, ExternalTextureApiExplicit) {
     TextureViewDescriptor textureViewDesc = {};
     textureViewDesc.format = wgpu::TextureFormat::RGBA8Unorm;
     Ref<TextureViewMock> textureViewMock =
-        AcquireRef(new NiceMock<TextureViewMock>(textureMock.Get(), &textureViewDesc));
+        AcquireRef(new NiceMock<TextureViewMock>(textureMock.Get(), Unpack(&textureViewDesc)));
 
     ExternalTextureDescriptor desc = {};
     std::array<float, 12> placeholderConstantArray;
@@ -420,7 +441,7 @@ TEST_F(DestroyObjectTests, ExternalTextureImplicit) {
     TextureViewDescriptor textureViewDesc = {};
     textureViewDesc.format = wgpu::TextureFormat::RGBA8Unorm;
     Ref<TextureViewMock> textureViewMock =
-        AcquireRef(new NiceMock<TextureViewMock>(textureMock.Get(), &textureViewDesc));
+        AcquireRef(new NiceMock<TextureViewMock>(textureMock.Get(), Unpack(&textureViewDesc)));
 
     ExternalTextureDescriptor desc = {};
     std::array<float, 12> placeholderConstantArray;
@@ -537,7 +558,6 @@ TEST_F(DestroyObjectTests, RenderPipelineNativeExplicit) {
         ShaderModuleMock::Create(mDeviceMock, kVertexShader.data());
     RenderPipelineDescriptor desc = {};
     desc.vertex.module = vsModuleMock.Get();
-    desc.vertex.entryPoint = "main";
 
     Ref<RenderPipelineMock> renderPipelineMock = RenderPipelineMock::Create(mDeviceMock, &desc);
     EXPECT_CALL(*renderPipelineMock.Get(), DestroyImpl).Times(1);
@@ -554,11 +574,10 @@ TEST_F(DestroyObjectTests, RenderPipelineImplicit) {
         ShaderModuleMock::Create(mDeviceMock, kVertexShader.data());
     RenderPipelineDescriptor desc = {};
     desc.vertex.module = vsModuleMock.Get();
-    desc.vertex.entryPoint = "main";
 
     // Render pipelines are initialized during their creation via the device.
     Ref<RenderPipelineMock> renderPipelineMock = RenderPipelineMock::Create(mDeviceMock, &desc);
-    EXPECT_CALL(*renderPipelineMock.Get(), Initialize).Times(1);
+    EXPECT_CALL(*renderPipelineMock.Get(), InitializeImpl).Times(1);
     EXPECT_CALL(*renderPipelineMock.Get(), DestroyImpl).Times(1);
 
     {
@@ -698,7 +717,7 @@ TEST_F(DestroyObjectTests, TextureViewNativeExplicit) {
     {
         // Explicitly destroy the texture view.
         Ref<TextureViewMock> textureViewMock =
-            AcquireRef(new TextureViewMock(textureMock.Get(), &desc));
+            AcquireRef(new TextureViewMock(textureMock.Get(), Unpack(&desc)));
         EXPECT_CALL(*textureViewMock.Get(), DestroyImpl).Times(1);
 
         EXPECT_TRUE(textureViewMock->IsAlive());
@@ -708,7 +727,7 @@ TEST_F(DestroyObjectTests, TextureViewNativeExplicit) {
     {
         // Destroying the owning texture should cause the view to be destroyed as well.
         Ref<TextureViewMock> textureViewMock =
-            AcquireRef(new TextureViewMock(textureMock.Get(), &desc));
+            AcquireRef(new TextureViewMock(textureMock.Get(), Unpack(&desc)));
         EXPECT_CALL(*textureViewMock.Get(), DestroyImpl).Times(1);
 
         EXPECT_TRUE(textureViewMock->IsAlive());
@@ -728,7 +747,7 @@ TEST_F(DestroyObjectTests, TextureViewApiExplicit) {
     TextureViewDescriptor viewDesc = {};
     viewDesc.format = wgpu::TextureFormat::RGBA8Unorm;
     Ref<TextureViewMock> textureViewMock =
-        AcquireRef(new TextureViewMock(textureMock.Get(), &viewDesc));
+        AcquireRef(new TextureViewMock(textureMock.Get(), Unpack(&viewDesc)));
     EXPECT_CALL(*textureViewMock.Get(), DestroyImpl).Times(1);
 
     EXPECT_CALL(*mDeviceMock, CreateTextureViewImpl(textureMock.Get(), _))
@@ -756,7 +775,7 @@ TEST_F(DestroyObjectTests, TextureViewImplicit) {
     viewDesc.format = wgpu::TextureFormat::RGBA8Unorm;
 
     Ref<TextureViewMock> textureViewMock =
-        AcquireRef(new TextureViewMock(textureMock.Get(), &viewDesc));
+        AcquireRef(new TextureViewMock(textureMock.Get(), Unpack(&viewDesc)));
     EXPECT_CALL(*textureViewMock.Get(), DestroyImpl).Times(1);
     {
         ScopedRawPtrExpectation scoped(textureViewMock.Get());
@@ -869,11 +888,10 @@ TEST_F(DestroyObjectTests, DestroyObjectsApiExplicit) {
     {
         ComputePipelineDescriptor desc = {};
         desc.compute.module = csModuleMock.Get();
-        desc.compute.entryPoint = "main";
 
         ScopedRawPtrExpectation scoped(mDeviceMock);
         computePipelineMock = ComputePipelineMock::Create(mDeviceMock, &desc);
-        EXPECT_CALL(*computePipelineMock.Get(), Initialize).Times(1);
+        EXPECT_CALL(*computePipelineMock.Get(), InitializeImpl).Times(1);
         EXPECT_CALL(*mDeviceMock, CreateUninitializedComputePipelineImpl)
             .WillOnce(Return(computePipelineMock));
         computePipeline = device.CreateComputePipeline(ToCppAPI(&desc));
@@ -912,11 +930,10 @@ TEST_F(DestroyObjectTests, DestroyObjectsApiExplicit) {
     {
         RenderPipelineDescriptor desc = {};
         desc.vertex.module = vsModuleMock.Get();
-        desc.vertex.entryPoint = "main";
 
         ScopedRawPtrExpectation scoped(mDeviceMock);
         renderPipelineMock = RenderPipelineMock::Create(mDeviceMock, &desc);
-        EXPECT_CALL(*renderPipelineMock.Get(), Initialize).Times(1);
+        EXPECT_CALL(*renderPipelineMock.Get(), InitializeImpl).Times(1);
         EXPECT_CALL(*mDeviceMock, CreateUninitializedRenderPipelineImpl)
             .WillOnce(Return(renderPipelineMock));
         renderPipeline = device.CreateRenderPipeline(ToCppAPI(&desc));
@@ -955,7 +972,7 @@ TEST_F(DestroyObjectTests, DestroyObjectsApiExplicit) {
         desc.format = wgpu::TextureFormat::RGBA8Unorm;
 
         ScopedRawPtrExpectation scoped(mDeviceMock);
-        textureViewMock = AcquireRef(new TextureViewMock(textureMock.Get(), &desc));
+        textureViewMock = AcquireRef(new TextureViewMock(textureMock.Get(), Unpack(&desc)));
         EXPECT_CALL(*mDeviceMock, CreateTextureViewImpl).WillOnce(Return(textureViewMock));
         textureView = texture.CreateView(ToCppAPI(&desc));
     }
@@ -1048,10 +1065,8 @@ TEST_F(DestroyObjectRegressionTests, LastRefInCommandRenderPipeline) {
     ::dawn::utils::ComboRenderPipelineDescriptor pipelineDesc;
     pipelineDesc.cTargets[0].writeMask = wgpu::ColorWriteMask::None;
     pipelineDesc.vertex.module = ::dawn::utils::CreateShaderModule(device, kVertexShader.data());
-    pipelineDesc.vertex.entryPoint = "main";
     pipelineDesc.cFragment.module =
         ::dawn::utils::CreateShaderModule(device, kFragmentShader.data());
-    pipelineDesc.cFragment.entryPoint = "main";
     renderEncoder.SetPipeline(device.CreateRenderPipeline(&pipelineDesc));
 
     device.Destroy();
@@ -1066,8 +1081,24 @@ TEST_F(DestroyObjectRegressionTests, LastRefInCommandComputePipeline) {
 
     wgpu::ComputePipelineDescriptor pipelineDesc;
     pipelineDesc.compute.module = ::dawn::utils::CreateShaderModule(device, kComputeShader.data());
-    pipelineDesc.compute.entryPoint = "main";
     computeEncoder.SetPipeline(device.CreateComputePipeline(&pipelineDesc));
+
+    device.Destroy();
+}
+
+// Tests that when a BindGroup's last reference is held in a command in an unfinished
+// CommandEncoder, that destroying the device still works as expected (and does not cause
+// double-free).
+TEST_F(DestroyObjectRegressionTests, LastRefInCommandBindGroup) {
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::ComputePassEncoder computeEncoder = encoder.BeginComputePass();
+
+    wgpu::Sampler sampler = device.CreateSampler();
+    wgpu::BindGroupLayout layout = ::dawn::utils::MakeBindGroupLayout(
+        device, {{0, wgpu::ShaderStage::Compute, wgpu::SamplerBindingType::Filtering}});
+    wgpu::BindGroup bindGroup = ::dawn::utils::MakeBindGroup(device, layout, {{0, sampler}});
+
+    computeEncoder.SetBindGroup(0, bindGroup);
 
     device.Destroy();
 }

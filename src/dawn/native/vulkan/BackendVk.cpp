@@ -1,16 +1,29 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/vulkan/BackendVk.h"
 
@@ -21,6 +34,7 @@
 #include "dawn/common/BitSetIterator.h"
 #include "dawn/common/Log.h"
 #include "dawn/common/SystemUtils.h"
+#include "dawn/native/ChainUtils.h"
 #include "dawn/native/Instance.h"
 #include "dawn/native/VulkanBackend.h"
 #include "dawn/native/vulkan/DeviceVk.h"
@@ -30,7 +44,7 @@
 
 // TODO(crbug.com/dawn/283): Link against the Vulkan Loader and remove this.
 #if defined(DAWN_ENABLE_SWIFTSHADER)
-#if DAWN_PLATFORM_IS(LINUX) || DAWN_PLATFORM_IS(FUSCHIA)
+#if DAWN_PLATFORM_IS(LINUX) || DAWN_PLATFORM_IS(FUCHSIA)
 constexpr char kSwiftshaderLibName[] = "libvk_swiftshader.so";
 #elif DAWN_PLATFORM_IS(WINDOWS)
 constexpr char kSwiftshaderLibName[] = "vk_swiftshader.dll";
@@ -72,6 +86,9 @@ constexpr SkippedMessage kSkippedMessages[] = {
     // so this is not expected to be worked around.
     // See http://crbug.com/dawn/1225 for more details.
     //
+    {"SYNC-HAZARD-READ-AFTER-WRITE",
+     "Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_SAMPLED_READ, prior_usage: "
+     "SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE"},
     // Depth used as storage
     {"SYNC-HAZARD-WRITE-AFTER-READ",
      "depth aspect during store with storeOp VK_ATTACHMENT_STORE_OP_STORE. Access info (usage: "
@@ -128,6 +145,23 @@ constexpr SkippedMessage kSkippedMessages[] = {
     // have a corresponding attachment
     {"UNASSIGNED-CoreValidation-Shader-OutputNotConsumed",
      "fragment shader writes to output location 0 with no matching attachment"},
+
+    // There are various VVL (and other) errors in dawn::native::vulkan::ExternalImage*. Suppress
+    // them for now as everything *should* be fixed by using SharedTextureMemory in the future.
+    // http://crbug.com/1499919
+    {"VUID-VkMemoryAllocateInfo-allocationSize-01742",
+     "vkAllocateMemory(): pAllocateInfo->allocationSize allocationSize (4096) "
+     "does not match pAllocateInfo->pNext<VkImportMemoryFdInfoKHR>"},
+    {"VUID-VkMemoryAllocateInfo-allocationSize-01742",
+     "vkAllocateMemory(): pAllocateInfo->allocationSize allocationSize (512) "
+     "does not match pAllocateInfo->pNext<VkImportMemoryFdInfoKHR>"},
+    {"VUID-VkMemoryAllocateInfo-allocationSize-01742",
+     "vkAllocateMemory(): pAllocateInfo->memoryTypeIndex memoryTypeIndex (7) "
+     "does not match pAllocateInfo->pNext<VkImportMemoryFdInfoKHR>"},
+    {"VUID-VkMemoryDedicatedAllocateInfo-image-01878",
+     "vkAllocateMemory(): pAllocateInfo->pNext<VkMemoryDedicatedAllocateInfo>"},
+    // crbug.com/324282958
+    {"NVIDIA", "vkBindImageMemory: memoryTypeIndex"},
 };
 
 namespace dawn::native::vulkan {
@@ -148,9 +182,10 @@ static constexpr ICD kICDs[] = {
 
 // Suppress validation errors that are known. Returns false in that case.
 bool ShouldReportDebugMessage(const char* messageId, const char* message) {
-    // pMessageIdName may be NULL
-    if (messageId == nullptr) {
-        return true;
+    // If a driver gives us a NULL pMessage (which would be a violation of the Vulkan spec)
+    // then ignore this message.
+    if (message == nullptr) {
+        return false;
     }
 
     // Some Vulkan drivers send "error" messages of "VK_SUCCESS" when zero devices are
@@ -162,6 +197,12 @@ bool ShouldReportDebugMessage(const char* messageId, const char* message) {
         return false;
     }
 
+    // The Vulkan spec does allow pMessageIdName to be NULL, but it may still contain a valid
+    // message. Since we can't compare it with our skipped message list allow it through.
+    if (messageId == nullptr) {
+        return true;
+    }
+
     for (const SkippedMessage& msg : kSkippedMessages) {
         if (strstr(messageId, msg.messageId) != nullptr &&
             strstr(message, msg.messageContents) != nullptr) {
@@ -169,6 +210,21 @@ bool ShouldReportDebugMessage(const char* messageId, const char* message) {
         }
     }
     return true;
+}
+
+void LogCallbackData(LogSeverity severity,
+                     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData) {
+    LogMessage log = LogMessage(severity);
+
+    // pMessageIdName may be NULL, according to the Vulkan spec. Passing NULL into an ostream is
+    // undefined behavior, so we'll handle that scenario separately.
+    if (pCallbackData->pMessageIdName != nullptr) {
+        log << pCallbackData->pMessageIdName;
+    } else {
+        log << "nullptr";
+    }
+
+    log << ": " << pCallbackData->pMessage;
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL
@@ -181,7 +237,7 @@ OnDebugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     }
 
     if (!(messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)) {
-        dawn::WarningLog() << pCallbackData->pMessageIdName << ": " << pCallbackData->pMessage;
+        LogCallbackData(LogSeverity::Warning, pCallbackData);
         return VK_FALSE;
     }
 
@@ -207,13 +263,13 @@ OnDebugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 
     // We get to this line if no device was associated with the message. Crash so that the failure
     // is loud and makes tests fail in Debug.
-    dawn::ErrorLog() << pCallbackData->pMessageIdName << ": " << pCallbackData->pMessage;
-    ASSERT(false);
+    LogCallbackData(LogSeverity::Error, pCallbackData);
+    DAWN_ASSERT(false);
 
     return VK_FALSE;
 }
 
-// A debug callback specifically for instance creation so that we don't fire an ASSERT when
+// A debug callback specifically for instance creation so that we don't fire an DAWN_ASSERT when
 // the instance fails creation in an expected manner (for example the system not having
 // Vulkan drivers).
 VKAPI_ATTR VkBool32 VKAPI_CALL
@@ -230,7 +286,7 @@ OnInstanceCreationDebugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT mess
 VulkanInstance::VulkanInstance() = default;
 
 VulkanInstance::~VulkanInstance() {
-    ASSERT(mMessageListenerDevices.empty());
+    DAWN_ASSERT(mMessageListenerDevices.empty());
 
     if (mDebugUtilsMessenger != VK_NULL_HANDLE) {
         mFunctions.DestroyDebugUtilsMessengerEXT(mInstance, mDebugUtilsMessenger, nullptr);
@@ -311,7 +367,7 @@ MaybeError VulkanInstance::Initialize(const InstanceBase* instance, ICD icd) {
             break;
 #endif  // defined(DAWN_ENABLE_SWIFTSHADER)
         // ICD::SwiftShader should not be passed if SwiftShader is not enabled.
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
         }
     }
 
@@ -407,7 +463,7 @@ ResultOrError<VulkanGlobalKnobs> VulkanInstance::CreateVkInstance(const Instance
     appInfo.pNext = nullptr;
     appInfo.pApplicationName = nullptr;
     appInfo.applicationVersion = 0;
-    appInfo.pEngineName = nullptr;
+    appInfo.pEngineName = "Dawn";
     appInfo.engineVersion = 0;
     appInfo.apiVersion = std::min(mGlobalInfo.apiVersion, VK_API_VERSION_1_3);
 
@@ -421,15 +477,15 @@ ResultOrError<VulkanGlobalKnobs> VulkanInstance::CreateVkInstance(const Instance
     createInfo.enabledExtensionCount = static_cast<uint32_t>(extensionNames.size());
     createInfo.ppEnabledExtensionNames = extensionNames.data();
 
+    VkDebugUtilsMessengerCreateInfoEXT utilsMessengerCreateInfo;
+    VkValidationFeaturesEXT validationFeatures;
     PNextChainBuilder createInfoChain(&createInfo);
 
     // Register the debug callback for instance creation so we receive message for any errors
     // (validation or other).
-    VkDebugUtilsMessengerCreateInfoEXT utilsMessengerCreateInfo;
     if (usedKnobs.HasExt(InstanceExt::DebugUtils)) {
         utilsMessengerCreateInfo.flags = 0;
-        utilsMessengerCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
-                                                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT;
+        utilsMessengerCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
         utilsMessengerCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
                                                VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
         utilsMessengerCreateInfo.pfnUserCallback = OnInstanceCreationDebugUtilsCallback;
@@ -441,7 +497,6 @@ ResultOrError<VulkanGlobalKnobs> VulkanInstance::CreateVkInstance(const Instance
 
     // Try to turn on synchronization validation if the instance was created with backend
     // validation enabled.
-    VkValidationFeaturesEXT validationFeatures;
     VkValidationFeatureEnableEXT kEnableSynchronizationValidation =
         VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
     if (instance->IsBackendValidationEnabled() &&
@@ -456,6 +511,7 @@ ResultOrError<VulkanGlobalKnobs> VulkanInstance::CreateVkInstance(const Instance
 
     DAWN_TRY(CheckVkSuccess(mFunctions.CreateInstance(&createInfo, nullptr, &mInstance),
                             "vkCreateInstance"));
+    DAWN_INVALID_IF(mInstance == VK_NULL_HANDLE, "Failed to create VkInstance");
 
     return usedKnobs;
 }
@@ -479,7 +535,7 @@ MaybeError VulkanInstance::RegisterDebugUtils() {
 
 void VulkanInstance::StartListeningForDeviceMessages(Device* device) {
     std::lock_guard<std::mutex> lock(mMessageListenerDevicesMutex);
-    mMessageListenerDevices.insert({device->GetDebugPrefix(), device});
+    mMessageListenerDevices.emplace(device->GetDebugPrefix(), device);
 }
 void VulkanInstance::StopListeningForDeviceMessages(Device* device) {
     std::lock_guard<std::mutex> lock(mMessageListenerDevicesMutex);
@@ -500,7 +556,7 @@ Backend::Backend(InstanceBase* instance) : BackendConnection(instance, wgpu::Bac
 Backend::~Backend() = default;
 
 std::vector<Ref<PhysicalDeviceBase>> Backend::DiscoverPhysicalDevices(
-    const RequestAdapterOptions* options) {
+    const UnpackedPtr<RequestAdapterOptions>& options) {
     std::vector<Ref<PhysicalDeviceBase>> physicalDevices;
     InstanceBase* instance = GetInstance();
     for (ICD icd : kICDs) {
@@ -517,10 +573,12 @@ std::vector<Ref<PhysicalDeviceBase>> Backend::DiscoverPhysicalDevices(
             if (!mVulkanInstancesCreated[icd]) {
                 mVulkanInstancesCreated.set(icd);
 
-                instance->ConsumedErrorAndWarnOnce([&]() -> MaybeError {
-                    DAWN_TRY_ASSIGN(mVulkanInstances[icd], VulkanInstance::Create(instance, icd));
-                    return {};
-                }());
+                [[maybe_unused]] bool hadError =
+                    instance->ConsumedErrorAndWarnOnce([&]() -> MaybeError {
+                        DAWN_TRY_ASSIGN(mVulkanInstances[icd],
+                                        VulkanInstance::Create(instance, icd));
+                        return {};
+                    }());
             }
 
             if (mVulkanInstances[icd] == nullptr) {
@@ -531,8 +589,8 @@ std::vector<Ref<PhysicalDeviceBase>> Backend::DiscoverPhysicalDevices(
             const std::vector<VkPhysicalDevice>& vkPhysicalDevices =
                 mVulkanInstances[icd]->GetVkPhysicalDevices();
             for (VkPhysicalDevice vkPhysicalDevice : vkPhysicalDevices) {
-                Ref<PhysicalDevice> physicalDevice = AcquireRef(
-                    new PhysicalDevice(instance, mVulkanInstances[icd].Get(), vkPhysicalDevice));
+                Ref<PhysicalDevice> physicalDevice =
+                    AcquireRef(new PhysicalDevice(mVulkanInstances[icd].Get(), vkPhysicalDevice));
                 if (instance->ConsumedErrorAndWarnOnce(physicalDevice->Initialize())) {
                     continue;
                 }
@@ -543,20 +601,6 @@ std::vector<Ref<PhysicalDeviceBase>> Backend::DiscoverPhysicalDevices(
                                mPhysicalDevices[icd].end());
     }
     return physicalDevices;
-}
-
-void Backend::ClearPhysicalDevices() {
-    for (ICD icd : kICDs) {
-        mPhysicalDevices[icd].clear();
-    }
-}
-
-size_t Backend::GetPhysicalDeviceCountForTesting() const {
-    size_t count = 0;
-    for (ICD icd : kICDs) {
-        count += mPhysicalDevices[icd].size();
-    }
-    return count;
 }
 
 BackendConnection* Connect(InstanceBase* instance) {

@@ -1,19 +1,33 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/opengl/PipelineGL.h"
 
+#include <algorithm>
 #include <set>
 #include <sstream>
 #include <string>
@@ -22,11 +36,13 @@
 #include "dawn/native/BindGroupLayoutInternal.h"
 #include "dawn/native/Device.h"
 #include "dawn/native/Pipeline.h"
+#include "dawn/native/opengl/BufferGL.h"
 #include "dawn/native/opengl/Forward.h"
 #include "dawn/native/opengl/OpenGLFunctions.h"
 #include "dawn/native/opengl/PipelineLayoutGL.h"
 #include "dawn/native/opengl/SamplerGL.h"
 #include "dawn/native/opengl/ShaderModuleGL.h"
+#include "dawn/native/opengl/TextureGL.h"
 
 namespace dawn::native::opengl {
 
@@ -36,7 +52,10 @@ PipelineGL::~PipelineGL() = default;
 
 MaybeError PipelineGL::InitializeBase(const OpenGLFunctions& gl,
                                       const PipelineLayout* layout,
-                                      const PerStage<ProgrammableStage>& stages) {
+                                      const PerStage<ProgrammableStage>& stages,
+                                      bool usesVertexIndex,
+                                      bool usesInstanceIndex,
+                                      bool usesFragDepth) {
     mProgram = gl.CreateProgram();
 
     // Compute the set of active stages.
@@ -54,20 +73,32 @@ MaybeError PipelineGL::InitializeBase(const OpenGLFunctions& gl,
     for (SingleShaderStage stage : IterateStages(activeStages)) {
         const ShaderModule* module = ToBackend(stages[stage].module.Get());
         GLuint shader;
-        DAWN_TRY_ASSIGN(shader,
-                        module->CompileShader(gl, stages[stage], stage, &combinedSamplers[stage],
-                                              layout, &needsPlaceholderSampler));
+        DAWN_TRY_ASSIGN(
+            shader, module->CompileShader(
+                        gl, stages[stage], stage, usesVertexIndex, usesInstanceIndex, usesFragDepth,
+                        &combinedSamplers[stage], layout, &needsPlaceholderSampler,
+                        &mNeedsTextureBuiltinUniformBuffer, &mBindingPointEmulatedBuiltins));
         gl.AttachShader(mProgram, shader);
         glShaders.push_back(shader);
     }
 
     if (needsPlaceholderSampler) {
         SamplerDescriptor desc = {};
-        ASSERT(desc.minFilter == wgpu::FilterMode::Nearest);
-        ASSERT(desc.magFilter == wgpu::FilterMode::Nearest);
-        ASSERT(desc.mipmapFilter == wgpu::MipmapFilterMode::Nearest);
-        mPlaceholderSampler =
-            ToBackend(layout->GetDevice()->GetOrCreateSampler(&desc).AcquireSuccess());
+        DAWN_ASSERT(desc.minFilter == wgpu::FilterMode::Nearest);
+        DAWN_ASSERT(desc.magFilter == wgpu::FilterMode::Nearest);
+        DAWN_ASSERT(desc.mipmapFilter == wgpu::MipmapFilterMode::Nearest);
+        Ref<SamplerBase> sampler;
+        DAWN_TRY_ASSIGN(sampler, layout->GetDevice()->GetOrCreateSampler(&desc));
+        mPlaceholderSampler = ToBackend(std::move(sampler));
+    }
+
+    if (!mBindingPointEmulatedBuiltins.empty()) {
+        BufferDescriptor desc = {};
+        desc.size = mBindingPointEmulatedBuiltins.size() * sizeof(uint32_t);
+        desc.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
+        Ref<BufferBase> buffer;
+        DAWN_TRY_ASSIGN(buffer, layout->GetDevice()->CreateBuffer(&desc));
+        mTextureBuiltinsBuffer = ToBackend(std::move(buffer));
     }
 
     // Link all the shaders together.
@@ -120,7 +151,8 @@ MaybeError PipelineGL::InitializeBase(const OpenGLFunctions& gl,
             GLuint textureIndex = indices[combined.textureLocation.group][bindingIndex];
             mUnitsForTextures[textureIndex].push_back(textureUnit);
 
-            shouldUseFiltering = bgl->GetBindingInfo(bindingIndex).texture.sampleType ==
+            const auto& bindingLayout = bgl->GetBindingInfo(bindingIndex).bindingLayout;
+            shouldUseFiltering = std::get<TextureBindingInfo>(bindingLayout).sampleType ==
                                  wgpu::TextureSampleType::Float;
         }
         {
@@ -144,6 +176,8 @@ MaybeError PipelineGL::InitializeBase(const OpenGLFunctions& gl,
         gl.DeleteShader(glShader);
     }
 
+    mInternalUniformBufferBinding = layout->GetInternalUniformBinding();
+
     return {};
 }
 
@@ -153,12 +187,12 @@ void PipelineGL::DeleteProgram(const OpenGLFunctions& gl) {
 
 const std::vector<PipelineGL::SamplerUnit>& PipelineGL::GetTextureUnitsForSampler(
     GLuint index) const {
-    ASSERT(index < mUnitsForSamplers.size());
+    DAWN_ASSERT(index < mUnitsForSamplers.size());
     return mUnitsForSamplers[index];
 }
 
 const std::vector<GLuint>& PipelineGL::GetTextureUnitsForTextureView(GLuint index) const {
-    ASSERT(index < mUnitsForTextures.size());
+    DAWN_ASSERT(index < mUnitsForTextures.size());
     return mUnitsForTextures[index];
 }
 
@@ -169,9 +203,22 @@ GLuint PipelineGL::GetProgramHandle() const {
 void PipelineGL::ApplyNow(const OpenGLFunctions& gl) {
     gl.UseProgram(mProgram);
     for (GLuint unit : mPlaceholderSamplerUnits) {
-        ASSERT(mPlaceholderSampler.Get() != nullptr);
+        DAWN_ASSERT(mPlaceholderSampler.Get() != nullptr);
         gl.BindSampler(unit, mPlaceholderSampler->GetNonFilteringHandle());
     }
+
+    if (mTextureBuiltinsBuffer.Get() != nullptr) {
+        gl.BindBufferBase(GL_UNIFORM_BUFFER, mInternalUniformBufferBinding,
+                          mTextureBuiltinsBuffer->GetHandle());
+    }
+}
+
+const Buffer* PipelineGL::GetInternalUniformBuffer() const {
+    return mTextureBuiltinsBuffer.Get();
+}
+
+const BindingPointToFunctionAndOffset& PipelineGL::GetBindingPointBuiltinDataInfo() const {
+    return mBindingPointEmulatedBuiltins;
 }
 
 }  // namespace dawn::native::opengl

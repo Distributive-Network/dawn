@@ -1,16 +1,29 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/BlobCache.h"
 
@@ -24,8 +37,10 @@
 
 namespace dawn::native {
 
-BlobCache::BlobCache(dawn::platform::CachingInterface* cachingInterface)
-    : mCache(cachingInterface) {}
+BlobCache::BlobCache(const dawn::native::DawnCacheDeviceDescriptor& desc)
+    : mLoadFunction(desc.loadDataFunction),
+      mStoreFunction(desc.storeDataFunction),
+      mFunctionUserdata(desc.functionUserdata) {}
 
 Blob BlobCache::Load(const CacheKey& key) {
     std::lock_guard<std::mutex> lock(mMutex);
@@ -42,30 +57,31 @@ void BlobCache::Store(const CacheKey& key, const Blob& value) {
 }
 
 Blob BlobCache::LoadInternal(const CacheKey& key) {
-    ASSERT(ValidateCacheKey(key));
-    if (mCache == nullptr) {
+    DAWN_ASSERT(ValidateCacheKey(key));
+    if (mLoadFunction == nullptr) {
         return Blob();
     }
-    const size_t expectedSize = mCache->LoadData(key.data(), key.size(), nullptr, 0);
+    const size_t expectedSize =
+        mLoadFunction(key.data(), key.size(), nullptr, 0, mFunctionUserdata);
     if (expectedSize > 0) {
         // Need to put this inside to trigger copy elision.
         Blob result = CreateBlob(expectedSize);
         const size_t actualSize =
-            mCache->LoadData(key.data(), key.size(), result.Data(), expectedSize);
-        ASSERT(expectedSize == actualSize);
+            mLoadFunction(key.data(), key.size(), result.Data(), expectedSize, mFunctionUserdata);
+        DAWN_ASSERT(expectedSize == actualSize);
         return result;
     }
     return Blob();
 }
 
 void BlobCache::StoreInternal(const CacheKey& key, size_t valueSize, const void* value) {
-    ASSERT(ValidateCacheKey(key));
-    ASSERT(value != nullptr);
-    ASSERT(valueSize > 0);
-    if (mCache == nullptr) {
+    DAWN_ASSERT(ValidateCacheKey(key));
+    DAWN_ASSERT(value != nullptr);
+    DAWN_ASSERT(valueSize > 0);
+    if (mStoreFunction == nullptr) {
         return;
     }
-    mCache->StoreData(key.data(), key.size(), value, valueSize);
+    mStoreFunction(key.data(), key.size(), value, valueSize, mFunctionUserdata);
 }
 
 bool BlobCache::ValidateCacheKey(const CacheKey& key) {

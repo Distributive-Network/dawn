@@ -8,21 +8,25 @@ float tint_workgroupUniformLoad_arg_0() {
   return result;
 }
 
+void tint_zero_workgroup_memory(uint local_idx) {
+  if ((local_idx < 1u)) {
+    arg_0 = 0.0f;
+  }
+  barrier();
+}
+
+float workgroupUniformLoad_7a857c() {
+  float res = tint_workgroupUniformLoad_arg_0();
+  return res;
+}
+
 layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
   float inner;
 } prevent_dce;
 
-void workgroupUniformLoad_7a857c() {
-  float res = tint_workgroupUniformLoad_arg_0();
-  prevent_dce.inner = res;
-}
-
 void compute_main(uint local_invocation_index) {
-  {
-    arg_0 = 0.0f;
-  }
-  barrier();
-  workgroupUniformLoad_7a857c();
+  tint_zero_workgroup_memory(local_invocation_index);
+  prevent_dce.inner = workgroupUniformLoad_7a857c();
 }
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;

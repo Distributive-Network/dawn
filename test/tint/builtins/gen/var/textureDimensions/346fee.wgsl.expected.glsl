@@ -3,9 +3,14 @@ SKIP: FAILED
 #version 310 es
 
 uniform highp usamplerCubeArray arg_0_1;
+layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
+  uvec2 inner;
+} prevent_dce;
+
 void textureDimensions_346fee() {
   uint arg_1 = 1u;
   uvec2 res = uvec2(textureSize(arg_0_1, int(arg_1)).xy);
+  prevent_dce.inner = res;
 }
 
 vec4 vertex_main() {
@@ -21,7 +26,7 @@ void main() {
   gl_Position.z = ((2.0f * gl_Position.z) - gl_Position.w);
   return;
 }
-Error parsing GLSL shader:
+error: Error parsing GLSL shader:
 ERROR: 0:3: 'usamplerCubeArray' : Reserved word. 
 ERROR: 0:3: '' : compilation terminated 
 ERROR: 2 compilation errors.  No code generated.
@@ -29,12 +34,18 @@ ERROR: 2 compilation errors.  No code generated.
 
 
 #version 310 es
-precision mediump float;
+precision highp float;
+precision highp int;
 
 uniform highp usamplerCubeArray arg_0_1;
+layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
+  uvec2 inner;
+} prevent_dce;
+
 void textureDimensions_346fee() {
   uint arg_1 = 1u;
   uvec2 res = uvec2(textureSize(arg_0_1, int(arg_1)).xy);
+  prevent_dce.inner = res;
 }
 
 void fragment_main() {
@@ -45,9 +56,9 @@ void main() {
   fragment_main();
   return;
 }
-Error parsing GLSL shader:
-ERROR: 0:4: 'usamplerCubeArray' : Reserved word. 
-ERROR: 0:4: '' : compilation terminated 
+error: Error parsing GLSL shader:
+ERROR: 0:5: 'usamplerCubeArray' : Reserved word. 
+ERROR: 0:5: '' : compilation terminated 
 ERROR: 2 compilation errors.  No code generated.
 
 
@@ -55,9 +66,14 @@ ERROR: 2 compilation errors.  No code generated.
 #version 310 es
 
 uniform highp usamplerCubeArray arg_0_1;
+layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
+  uvec2 inner;
+} prevent_dce;
+
 void textureDimensions_346fee() {
   uint arg_1 = 1u;
   uvec2 res = uvec2(textureSize(arg_0_1, int(arg_1)).xy);
+  prevent_dce.inner = res;
 }
 
 void compute_main() {
@@ -69,7 +85,7 @@ void main() {
   compute_main();
   return;
 }
-Error parsing GLSL shader:
+error: Error parsing GLSL shader:
 ERROR: 0:3: 'usamplerCubeArray' : Reserved word. 
 ERROR: 0:3: '' : compilation terminated 
 ERROR: 2 compilation errors.  No code generated.

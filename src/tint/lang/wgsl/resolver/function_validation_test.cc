@@ -1,16 +1,29 @@
-// Copyright 2021 The Tint Authors.
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/builtin_value.h"
 #include "src/tint/lang/wgsl/ast/discard_statement.h"
@@ -137,7 +150,7 @@ TEST_F(ResolverFunctionValidationTest, UnreachableCode_return) {
 
     ASSERT_TRUE(r()->Resolve());
 
-    EXPECT_EQ(r()->error(), "12:34 warning: code is unreachable");
+    EXPECT_EQ(r()->error(), R"(12:34 warning: code is unreachable)");
     EXPECT_TRUE(Sem().Get(decl_a)->IsReachable());
     EXPECT_TRUE(Sem().Get(ret)->IsReachable());
     EXPECT_FALSE(Sem().Get(assign_a)->IsReachable());
@@ -157,7 +170,7 @@ TEST_F(ResolverFunctionValidationTest, UnreachableCode_return_InBlocks) {
     Func("func", tint::Empty, ty.void_(), Vector{decl_a, Block(Block(Block(ret))), assign_a});
 
     ASSERT_TRUE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 warning: code is unreachable");
+    EXPECT_EQ(r()->error(), R"(12:34 warning: code is unreachable)");
     EXPECT_TRUE(Sem().Get(decl_a)->IsReachable());
     EXPECT_TRUE(Sem().Get(ret)->IsReachable());
     EXPECT_FALSE(Sem().Get(assign_a)->IsReachable());
@@ -194,7 +207,7 @@ TEST_F(ResolverFunctionValidationTest, DiscardCalledDirectlyFromVertexEntryPoint
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "12:34 error: discard statement cannot be used in vertex pipeline stage");
+              R"(12:34 error: discard statement cannot be used in vertex pipeline stage)");
 }
 
 TEST_F(ResolverFunctionValidationTest, DiscardCalledIndirectlyFromComputeEntryPoint) {
@@ -242,12 +255,12 @@ TEST_F(ResolverFunctionValidationTest, FunctionEndWithoutReturnStatement_Fail) {
     auto* var = Var("a", ty.i32(), Expr(2_i));
 
     Func(Source{{12, 34}}, "func", tint::Empty, ty.i32(),
-         Vector{
-             Decl(var),
-         });
+         Block(Source{Source::Range{{45, 56}, {78, 90}}}, Vector{
+                                                              Decl(var),
+                                                          }));
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: missing return at end of function");
+    EXPECT_EQ(r()->error(), R"(78:89 error: missing return at end of function)");
 }
 
 TEST_F(ResolverFunctionValidationTest, VoidFunctionEndWithoutReturnStatementEmptyBody_Pass) {
@@ -261,10 +274,11 @@ TEST_F(ResolverFunctionValidationTest, VoidFunctionEndWithoutReturnStatementEmpt
 TEST_F(ResolverFunctionValidationTest, FunctionEndWithoutReturnStatementEmptyBody_Fail) {
     // fn func() -> int {}
 
-    Func(Source{{12, 34}}, "func", tint::Empty, ty.i32(), tint::Empty);
+    Func(Source{{12, 34}}, "func", tint::Empty, ty.i32(),
+         Block(Source{Source::Range{{45, 56}, {78, 90}}}, tint::Empty));
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: missing return at end of function");
+    EXPECT_EQ(r()->error(), R"(78:89 error: missing return at end of function)");
 }
 
 TEST_F(ResolverFunctionValidationTest, FunctionTypeMustMatchReturnStatementType_Pass) {
@@ -330,7 +344,7 @@ TEST_F(ResolverFunctionValidationTest, FunctionTypeMustMatchReturnStatementType_
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: function 'v' does not return a value");
+    EXPECT_EQ(r()->error(), R"(12:34 error: function 'v' does not return a value)");
 }
 
 TEST_F(ResolverFunctionValidationTest, FunctionTypeMustMatchReturnStatementTypeMissing_fail) {
@@ -443,7 +457,7 @@ TEST_F(ResolverFunctionValidationTest, PipelineStage_MustBeUnique_Fail) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(56:78 error: duplicate stage attribute
+              R"(56:78 error: duplicate fragment attribute
 12:34 note: first attribute declared here)");
 }
 
@@ -610,8 +624,9 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_MismatchType_U32) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: workgroup_size arguments must be of the same type, either i32 or u32");
+    EXPECT_EQ(
+        r()->error(),
+        "12:34 error: '@workgroup_size' arguments must be of the same type, either 'i32' or 'u32'");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_MismatchType_I32) {
@@ -625,8 +640,9 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_MismatchType_I32) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: workgroup_size arguments must be of the same type, either i32 or u32");
+    EXPECT_EQ(
+        r()->error(),
+        "12:34 error: '@workgroup_size' arguments must be of the same type, either 'i32' or 'u32'");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_TypeMismatch) {
@@ -641,8 +657,9 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_TypeMismatch) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: workgroup_size arguments must be of the same type, either i32 or u32");
+    EXPECT_EQ(
+        r()->error(),
+        "12:34 error: '@workgroup_size' arguments must be of the same type, either 'i32' or 'u32'");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_TypeMismatch2) {
@@ -659,8 +676,9 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_TypeMismatch2) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: workgroup_size arguments must be of the same type, either i32 or u32");
+    EXPECT_EQ(
+        r()->error(),
+        "12:34 error: '@workgroup_size' arguments must be of the same type, either 'i32' or 'u32'");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Mismatch_ConstU32) {
@@ -677,8 +695,9 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Mismatch_ConstU32) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: workgroup_size arguments must be of the same type, either i32 or u32");
+    EXPECT_EQ(
+        r()->error(),
+        "12:34 error: '@workgroup_size' arguments must be of the same type, either 'i32' or 'u32'");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Literal_BadType) {
@@ -694,8 +713,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Literal_BadType) {
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(
         r()->error(),
-        "12:34 error: workgroup_size argument must be a constant or override-expression of type "
-        "abstract-integer, i32 or u32");
+        R"(12:34 error: '@workgroup_size' argument must be a constant or override-expression of type 'abstract-integer', 'i32' or 'u32')");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Literal_Negative) {
@@ -709,7 +727,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Literal_Negative) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: workgroup_size argument must be at least 1");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@workgroup_size' argument must be at least 1)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Literal_Zero) {
@@ -723,7 +741,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Literal_Zero) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: workgroup_size argument must be at least 1");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@workgroup_size' argument must be at least 1)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_BadType) {
@@ -740,8 +758,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_BadType) {
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(
         r()->error(),
-        "12:34 error: workgroup_size argument must be a constant or override-expression of type "
-        "abstract-integer, i32 or u32");
+        R"(12:34 error: '@workgroup_size' argument must be a constant or override-expression of type 'abstract-integer', 'i32' or 'u32')");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_Negative) {
@@ -756,7 +773,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_Negative) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: workgroup_size argument must be at least 1");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@workgroup_size' argument must be at least 1)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_Zero) {
@@ -771,7 +788,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_Zero) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: workgroup_size argument must be at least 1");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@workgroup_size' argument must be at least 1)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_NestedZeroValueInitializer) {
@@ -786,7 +803,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_Const_NestedZeroValueInitia
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: workgroup_size argument must be at least 1");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@workgroup_size' argument must be at least 1)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_0x100_0x100) {
@@ -799,7 +816,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_0x100_
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: total workgroup grid size cannot exceed 0xffffffff");
+    EXPECT_EQ(r()->error(), R"(12:34 error: total workgroup grid size cannot exceed 0xffffffff)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_0x10000) {
@@ -812,7 +829,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_0x1000
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: total workgroup grid size cannot exceed 0xffffffff");
+    EXPECT_EQ(r()->error(), R"(12:34 error: total workgroup grid size cannot exceed 0xffffffff)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_C_0x10000) {
@@ -827,7 +844,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_C_0x10
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: total workgroup grid size cannot exceed 0xffffffff");
+    EXPECT_EQ(r()->error(), R"(12:34 error: total workgroup grid size cannot exceed 0xffffffff)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_C) {
@@ -842,7 +859,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_C) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: total workgroup grid size cannot exceed 0xffffffff");
+    EXPECT_EQ(r()->error(), R"(12:34 error: total workgroup grid size cannot exceed 0xffffffff)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_O_0x10000) {
@@ -857,7 +874,7 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_OverflowsU32_0x10000_O_0x10
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: total workgroup grid size cannot exceed 0xffffffff");
+    EXPECT_EQ(r()->error(), R"(12:34 error: total workgroup grid size cannot exceed 0xffffffff)");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_NonConst) {
@@ -872,9 +889,9 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_NonConst) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: workgroup_size argument must be a constant or override-expression of "
-              "type abstract-integer, i32 or u32");
+    EXPECT_EQ(
+        r()->error(),
+        R"(12:34 error: '@workgroup_size' argument must be a constant or override-expression of type 'abstract-integer', 'i32' or 'u32')");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_InvalidExpr_x) {
@@ -888,9 +905,9 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_InvalidExpr_x) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: workgroup_size argument must be a constant or override-expression of "
-              "type abstract-integer, i32 or u32");
+    EXPECT_EQ(
+        r()->error(),
+        R"(12:34 error: '@workgroup_size' argument must be a constant or override-expression of type 'abstract-integer', 'i32' or 'u32')");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_InvalidExpr_y) {
@@ -904,9 +921,9 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_InvalidExpr_y) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: workgroup_size argument must be a constant or override-expression of "
-              "type abstract-integer, i32 or u32");
+    EXPECT_EQ(
+        r()->error(),
+        R"(12:34 error: '@workgroup_size' argument must be a constant or override-expression of type 'abstract-integer', 'i32' or 'u32')");
 }
 
 TEST_F(ResolverFunctionValidationTest, WorkgroupSize_InvalidExpr_z) {
@@ -920,9 +937,9 @@ TEST_F(ResolverFunctionValidationTest, WorkgroupSize_InvalidExpr_z) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: workgroup_size argument must be a constant or override-expression of "
-              "type abstract-integer, i32 or u32");
+    EXPECT_EQ(
+        r()->error(),
+        R"(12:34 error: '@workgroup_size' argument must be a constant or override-expression of type 'abstract-integer', 'i32' or 'u32')");
 }
 
 TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_NonPlain) {
@@ -930,7 +947,7 @@ TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_NonPlain) {
     Func("f", tint::Empty, ret_type, tint::Empty);
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: function return type must be a constructible type");
+    EXPECT_EQ(r()->error(), R"(12:34 error: function return type must be a constructible type)");
 }
 
 TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_AtomicInt) {
@@ -938,7 +955,7 @@ TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_AtomicInt) {
     Func("f", tint::Empty, ret_type, tint::Empty);
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: function return type must be a constructible type");
+    EXPECT_EQ(r()->error(), R"(12:34 error: function return type must be a constructible type)");
 }
 
 TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_ArrayOfAtomic) {
@@ -946,7 +963,7 @@ TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_ArrayOfAtomic) {
     Func("f", tint::Empty, ret_type, tint::Empty);
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: function return type must be a constructible type");
+    EXPECT_EQ(r()->error(), R"(12:34 error: function return type must be a constructible type)");
 }
 
 TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_StructOfAtomic) {
@@ -957,7 +974,7 @@ TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_StructOfAtomic) {
     Func("f", tint::Empty, ret_type, tint::Empty);
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: function return type must be a constructible type");
+    EXPECT_EQ(r()->error(), R"(12:34 error: function return type must be a constructible type)");
 }
 
 TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_RuntimeArray) {
@@ -965,7 +982,7 @@ TEST_F(ResolverFunctionValidationTest, ReturnIsConstructible_RuntimeArray) {
     Func("f", tint::Empty, ret_type, tint::Empty);
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: function return type must be a constructible type");
+    EXPECT_EQ(r()->error(), R"(12:34 error: function return type must be a constructible type)");
 }
 
 TEST_F(ResolverFunctionValidationTest, ParameterStoreType_NonAtomicFree) {
@@ -977,7 +994,7 @@ TEST_F(ResolverFunctionValidationTest, ParameterStoreType_NonAtomicFree) {
     Func("f", Vector{bar}, ty.void_(), tint::Empty);
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: type of function parameter must be constructible");
+    EXPECT_EQ(r()->error(), R"(12:34 error: type of function parameter must be constructible)");
 }
 
 TEST_F(ResolverFunctionValidationTest, ParameterStoreType_AtomicFree) {
@@ -1006,10 +1023,10 @@ TEST_F(ResolverFunctionValidationTest, ParametersOverLimit) {
     for (int i = 0; i < 256; i++) {
         params.Push(Param("param_" + std::to_string(i), ty.i32()));
     }
-    Func(Source{{12, 34}}, "f", params, ty.void_(), tint::Empty);
+    Func(Ident(Source{{12, 34}}, "f"), params, ty.void_(), tint::Empty);
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: function declares 256 parameters, maximum is 255");
+    EXPECT_EQ(r()->error(), R"(12:34 error: function declares 256 parameters, maximum is 255)");
 }
 
 TEST_F(ResolverFunctionValidationTest, ParameterVectorNoType) {
@@ -1019,7 +1036,7 @@ TEST_F(ResolverFunctionValidationTest, ParameterVectorNoType) {
          tint::Empty);
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: expected '<' for 'vec3'");
+    EXPECT_EQ(r()->error(), R"(12:34 error: expected '<' for 'vec3')");
 }
 
 TEST_F(ResolverFunctionValidationTest, ParameterMatrixNoType) {
@@ -1029,12 +1046,12 @@ TEST_F(ResolverFunctionValidationTest, ParameterMatrixNoType) {
          tint::Empty);
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), "12:34 error: expected '<' for 'mat3x3'");
+    EXPECT_EQ(r()->error(), R"(12:34 error: expected '<' for 'mat3x3')");
 }
 
 enum class Expectation {
     kAlwaysPass,
-    kPassWithFullPtrParameterExtension,
+    kPassWithUnrestrictedPointerParameters,
     kAlwaysFail,
     kInvalid,
 };
@@ -1046,45 +1063,57 @@ struct TestParams {
 struct TestWithParams : ResolverTestWithParam<TestParams> {};
 
 using ResolverFunctionParameterValidationTest = TestWithParams;
-TEST_P(ResolverFunctionParameterValidationTest, AddressSpaceNoExtension) {
+TEST_P(ResolverFunctionParameterValidationTest, AddressSpaceWithoutUnrestrictedPointerParameters) {
+    auto features = wgsl::AllowedFeatures::Everything();
+    features.features.erase(wgsl::LanguageFeature::kUnrestrictedPointerParameters);
+    Resolver r(this, features);
+
     auto& param = GetParam();
-    auto ptr_type = ty("ptr", Ident(Source{{12, 34}}, param.address_space), ty.i32());
+    Structure("S", Vector{Member("a", ty.i32())});
+    auto ptr_type = ty("ptr", Ident(Source{{12, 34}}, param.address_space), ty("S"));
     auto* arg = Param(Source{{12, 34}}, "p", ptr_type);
     Func("f", Vector{arg}, ty.void_(), tint::Empty);
 
+    if (param.address_space == core::AddressSpace::kPixelLocal) {
+        Enable(wgsl::Extension::kChromiumExperimentalPixelLocal);
+    }
+
     if (param.expectation == Expectation::kAlwaysPass) {
-        ASSERT_TRUE(r()->Resolve()) << r()->error();
+        ASSERT_TRUE(r.Resolve()) << r.error();
     } else {
         StringStream ss;
         ss << param.address_space;
-        EXPECT_FALSE(r()->Resolve());
+        EXPECT_FALSE(r.Resolve());
         if (param.expectation == Expectation::kInvalid) {
             std::string err = R"(12:34 error: unresolved address space '${addr_space}'
-12:34 note: Possible values: 'function', 'private', 'push_constant', 'storage', 'uniform', 'workgroup')";
+12:34 note: Possible values: 'function', 'pixel_local', 'private', 'push_constant', 'storage', 'uniform', 'workgroup')";
             err = tint::ReplaceAll(err, "${addr_space}", tint::ToString(param.address_space));
-            EXPECT_EQ(r()->error(), err);
+            EXPECT_EQ(r.error(), err);
         } else {
-            EXPECT_EQ(r()->error(),
-                      "12:34 error: function parameter of pointer type cannot be in '" +
-                          tint::ToString(param.address_space) + "' address space");
+            EXPECT_EQ(r.error(), "12:34 error: function parameter of pointer type cannot be in '" +
+                                     tint::ToString(param.address_space) + "' address space");
         }
     }
 }
-TEST_P(ResolverFunctionParameterValidationTest, AddressSpaceWithExtension) {
+TEST_P(ResolverFunctionParameterValidationTest, AddressSpaceWithUnrestrictedPointerParameters) {
     auto& param = GetParam();
-    auto ptr_type = ty("ptr", Ident(Source{{12, 34}}, param.address_space), ty.i32());
+    Structure("S", Vector{Member("a", ty.i32())});
+    auto ptr_type = ty("ptr", Ident(Source{{12, 34}}, param.address_space), ty("S"));
     auto* arg = Param(Source{{12, 34}}, "p", ptr_type);
-    Enable(core::Extension::kChromiumExperimentalFullPtrParameters);
     Func("f", Vector{arg}, ty.void_(), tint::Empty);
 
+    if (param.address_space == core::AddressSpace::kPixelLocal) {
+        Enable(wgsl::Extension::kChromiumExperimentalPixelLocal);
+    }
+
     if (param.expectation == Expectation::kAlwaysPass ||
-        param.expectation == Expectation::kPassWithFullPtrParameterExtension) {
+        param.expectation == Expectation::kPassWithUnrestrictedPointerParameters) {
         ASSERT_TRUE(r()->Resolve()) << r()->error();
     } else {
         EXPECT_FALSE(r()->Resolve());
         if (param.expectation == Expectation::kInvalid) {
             std::string err = R"(12:34 error: unresolved address space '${addr_space}'
-12:34 note: Possible values: 'function', 'private', 'push_constant', 'storage', 'uniform', 'workgroup')";
+12:34 note: Possible values: 'function', 'pixel_local', 'private', 'push_constant', 'storage', 'uniform', 'workgroup')";
             err = tint::ReplaceAll(err, "${addr_space}", tint::ToString(param.address_space));
             EXPECT_EQ(r()->error(), err);
         } else {
@@ -1097,16 +1126,19 @@ TEST_P(ResolverFunctionParameterValidationTest, AddressSpaceWithExtension) {
 INSTANTIATE_TEST_SUITE_P(
     ResolverTest,
     ResolverFunctionParameterValidationTest,
-    testing::Values(
-        TestParams{core::AddressSpace::kUndefined, Expectation::kInvalid},
-        TestParams{core::AddressSpace::kIn, Expectation::kAlwaysFail},
-        TestParams{core::AddressSpace::kOut, Expectation::kAlwaysFail},
-        TestParams{core::AddressSpace::kUniform, Expectation::kPassWithFullPtrParameterExtension},
-        TestParams{core::AddressSpace::kWorkgroup, Expectation::kPassWithFullPtrParameterExtension},
-        TestParams{core::AddressSpace::kHandle, Expectation::kInvalid},
-        TestParams{core::AddressSpace::kStorage, Expectation::kPassWithFullPtrParameterExtension},
-        TestParams{core::AddressSpace::kPrivate, Expectation::kAlwaysPass},
-        TestParams{core::AddressSpace::kFunction, Expectation::kAlwaysPass}));
+    testing::Values(TestParams{core::AddressSpace::kUndefined, Expectation::kInvalid},
+                    TestParams{core::AddressSpace::kIn, Expectation::kAlwaysFail},
+                    TestParams{core::AddressSpace::kOut, Expectation::kAlwaysFail},
+                    TestParams{core::AddressSpace::kUniform,
+                               Expectation::kPassWithUnrestrictedPointerParameters},
+                    TestParams{core::AddressSpace::kWorkgroup,
+                               Expectation::kPassWithUnrestrictedPointerParameters},
+                    TestParams{core::AddressSpace::kHandle, Expectation::kInvalid},
+                    TestParams{core::AddressSpace::kStorage,
+                               Expectation::kPassWithUnrestrictedPointerParameters},
+                    TestParams{core::AddressSpace::kPixelLocal, Expectation::kAlwaysFail},
+                    TestParams{core::AddressSpace::kPrivate, Expectation::kAlwaysPass},
+                    TestParams{core::AddressSpace::kFunction, Expectation::kAlwaysPass}));
 
 }  // namespace
 }  // namespace tint::resolver

@@ -1,22 +1,36 @@
-// Copyright 2023 The Tint Authors.
+// Copyright 2023 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // auto-submit applies the 'Commit-Queue+2' label to Gerrit changes authored by the user
 // that are ready to be submitted
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -25,9 +39,11 @@ import (
 	"strings"
 	"time"
 
+	"dawn.googlesource.com/dawn/tools/src/auth"
 	"dawn.googlesource.com/dawn/tools/src/dawn"
 	"dawn.googlesource.com/dawn/tools/src/gerrit"
 	"dawn.googlesource.com/dawn/tools/src/git"
+	"go.chromium.org/luci/auth/client/authcli"
 )
 
 const (
@@ -36,14 +52,11 @@ const (
 )
 
 var (
-	// See https://dawn-review.googlesource.com/new-password for obtaining
-	// username and password for gerrit.
-	gerritUser  = flag.String("gerrit-user", "", "gerrit authentication username")
-	gerritPass  = flag.String("gerrit-pass", "", "gerrit authentication password")
 	repoFlag    = flag.String("repo", "dawn", "the repo")
 	userFlag    = flag.String("user", defaultUser(), "user name / email")
 	verboseFlag = flag.Bool("v", false, "verbose mode")
 	dryrunFlag  = flag.Bool("dry", false, "dry mode. Don't apply any labels")
+	authFlags   = authcli.Flags{}
 )
 
 func defaultUser() string {
@@ -62,6 +75,8 @@ func defaultUser() string {
 }
 
 func main() {
+	authFlags.Register(flag.CommandLine, auth.DefaultAuthOptions())
+
 	flag.Usage = func() {
 		out := flag.CommandLine.Output()
 		fmt.Fprintf(out,
@@ -86,9 +101,13 @@ func run() error {
 		return fmt.Errorf("Missing required 'user' flag")
 	}
 
-	g, err := gerrit.New(dawn.GerritURL, gerrit.Credentials{
-		Username: *gerritUser, Password: *gerritPass,
-	})
+	ctx := context.Background()
+	auth, err := authFlags.Options()
+	if err != nil {
+		return err
+	}
+
+	g, err := gerrit.New(ctx, auth, dawn.GerritURL)
 	if err != nil {
 		return err
 	}

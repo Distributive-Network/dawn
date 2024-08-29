@@ -1,22 +1,32 @@
-// Copyright 2023 The Tint Authors.
+// Copyright 2023 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "gmock/gmock.h"
-#include "src/tint/lang/core/constant/scalar.h"
-#include "src/tint/lang/wgsl/ast/case_selector.h"
-#include "src/tint/lang/wgsl/ast/int_literal_expression.h"
-#include "src/tint/lang/wgsl/helpers/ir_program_test.h"
+#include "src/tint/lang/core/ir/disassembler.h"
+#include "src/tint/lang/wgsl/reader/program_to_ir/ir_program_test.h"
 
 namespace tint::wgsl::reader {
 namespace {
@@ -31,17 +41,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Add) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = add %3, 4u
+    %4:u32 = add %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -54,14 +65,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Increment) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, u32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = load %v1
     %4:u32 = add %3, 1u
     store %v1, %4
@@ -77,14 +88,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundAdd) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, u32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = load %v1
     %4:u32 = add %3, 1u
     store %v1, %4
@@ -100,17 +111,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Subtract) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = sub %3, 4u
+    %4:u32 = sub %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -123,14 +135,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Decrement) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, i32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:i32 = load %v1
     %4:i32 = sub %3, 1i
     store %v1, %4
@@ -146,14 +158,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundSubtract) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, u32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = load %v1
     %4:u32 = sub %3, 1u
     store %v1, %4
@@ -169,17 +181,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Multiply) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = mul %3, 4u
+    %4:u32 = mul %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -192,14 +205,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundMultiply) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, u32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = load %v1
     %4:u32 = mul %3, 1u
     store %v1, %4
@@ -215,17 +228,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Div) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = div %3, 4u
+    %4:u32 = div %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -238,14 +252,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundDiv) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, u32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = load %v1
     %4:u32 = div %3, 1u
     store %v1, %4
@@ -261,17 +275,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Modulo) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = mod %3, 4u
+    %4:u32 = mod %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -284,14 +299,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundModulo) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, u32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = load %v1
     %4:u32 = mod %3, 1u
     store %v1, %4
@@ -307,17 +322,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_And) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = and %3, 4u
+    %4:u32 = and %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -330,14 +346,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundAnd) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, bool, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:bool = load %v1
     %4:bool = and %3, false
     store %v1, %4
@@ -353,17 +369,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Or) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = or %3, 4u
+    %4:u32 = or %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -376,14 +393,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundOr) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, bool, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:bool = load %v1
     %4:bool = or %3, false
     store %v1, %4
@@ -399,17 +416,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Xor) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = xor %3, 4u
+    %4:u32 = xor %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -422,14 +440,14 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundXor) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, u32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = load %v1
     %4:u32 = xor %3, 1u
     store %v1, %4
@@ -446,26 +464,27 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_LogicalAnd) {
     WrapInFunction(let, expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():bool -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():bool {
+  $B1: {
     ret true
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:bool = call %my_func
-    %logical_and:bool = if %3 [t: %b3, f: %b4] {  # if_1
-      %b3 = block {  # true
+    %4:bool = if %3 [t: $B3, f: $B4] {  # if_1
+      $B3: {  # true
         exit_if false  # if_1
       }
-      %b4 = block {  # false
+      $B4: {  # false
         exit_if false  # if_1
       }
     }
-    if %logical_and [t: %b5] {  # if_2
-      %b5 = block {  # true
+    %logical_and:bool = let %4
+    if %logical_and [t: $B5] {  # if_2
+      $B5: {  # true
         exit_if  # if_2
       }
     }
@@ -482,26 +501,27 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_LogicalOr) {
     WrapInFunction(let, expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():bool -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():bool {
+  $B1: {
     ret true
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:bool = call %my_func
-    %logical_or:bool = if %3 [t: %b3, f: %b4] {  # if_1
-      %b3 = block {  # true
+    %4:bool = if %3 [t: $B3, f: $B4] {  # if_1
+      $B3: {  # true
         exit_if true  # if_1
       }
-      %b4 = block {  # false
+      $B4: {  # false
         exit_if true  # if_1
       }
     }
-    if %logical_or [t: %b5] {  # if_2
-      %b5 = block {  # true
+    %logical_or:bool = let %4
+    if %logical_or [t: $B5] {  # if_2
+      $B5: {  # true
         exit_if  # if_2
       }
     }
@@ -517,17 +537,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Equal) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:bool = eq %3, 4u
+    %4:bool = eq %3, 4u
+    %tint_symbol:bool = let %4
     ret
   }
 }
@@ -540,17 +561,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_NotEqual) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:bool = neq %3, 4u
+    %4:bool = neq %3, 4u
+    %tint_symbol:bool = let %4
     ret
   }
 }
@@ -563,17 +585,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_LessThan) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:bool = lt %3, 4u
+    %4:bool = lt %3, 4u
+    %tint_symbol:bool = let %4
     ret
   }
 }
@@ -586,17 +609,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_GreaterThan) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:bool = gt %3, 4u
+    %4:bool = gt %3, 4u
+    %tint_symbol:bool = let %4
     ret
   }
 }
@@ -609,17 +633,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_LessThanEqual) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:bool = lte %3, 4u
+    %4:bool = lte %3, 4u
+    %tint_symbol:bool = let %4
     ret
   }
 }
@@ -632,17 +657,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_GreaterThanEqual) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:bool = gte %3, 4u
+    %4:bool = gte %3, 4u
+    %tint_symbol:bool = let %4
     ret
   }
 }
@@ -655,17 +681,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_ShiftLeft) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = shiftl %3, 4u
+    %4:u32 = shl %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -678,16 +705,16 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundShiftLeft) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, u32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = load %v1
-    %4:u32 = shiftl %3, 1u
+    %4:u32 = shl %3, 1u
     store %v1, %4
     ret
   }
@@ -701,17 +728,18 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_ShiftRight) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():u32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():u32 {
+  $B1: {
     ret 0u
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = call %my_func
-    %tint_symbol:u32 = shiftr %3, 4u
+    %4:u32 = shr %3, 4u
+    %tint_symbol:u32 = let %4
     ret
   }
 }
@@ -724,16 +752,16 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_CompoundShiftRight) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%b1 = block {  # root
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"($B1: {  # root
   %v1:ptr<private, u32, read_write> = var
 }
 
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:u32 = load %v1
-    %4:u32 = shiftr %3, 1u
+    %4:u32 = shr %3, 1u
     store %v1, %4
     ret
   }
@@ -749,19 +777,19 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Compound) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func():f32 -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func():f32 {
+  $B1: {
     ret 0.0f
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
     %3:f32 = call %my_func
     %4:bool = lt %3, 2.0f
-    %tint_symbol:bool = if %4 [t: %b3, f: %b4] {  # if_1
-      %b3 = block {  # true
+    %5:bool = if %4 [t: $B3, f: $B4] {  # if_1
+      $B3: {  # true
         %6:f32 = call %my_func
         %7:f32 = call %my_func
         %8:f32 = mul 2.29999995231628417969f, %7
@@ -769,10 +797,11 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Compound) {
         %10:bool = gt 2.5f, %9
         exit_if %10  # if_1
       }
-      %b4 = block {  # false
+      $B4: {  # false
         exit_if false  # if_1
       }
     }
+    %tint_symbol:bool = let %5
     ret
   }
 }
@@ -786,16 +815,17 @@ TEST_F(ProgramToIRBinaryTest, EmitExpression_Binary_Compound_WithConstEval) {
     WrapInFunction(expr);
 
     auto m = Build();
-    ASSERT_TRUE(m) << (!m ? m.Failure() : "");
+    ASSERT_EQ(m, Success);
 
-    EXPECT_EQ(Disassemble(m.Get()), R"(%my_func = func(%p:bool):bool -> %b1 {
-  %b1 = block {
+    EXPECT_EQ(core::ir::Disassembler(m.Get()).Plain(), R"(%my_func = func(%p:bool):bool {
+  $B1: {
     ret true
   }
 }
-%test_function = @compute @workgroup_size(1, 1, 1) func():void -> %b2 {
-  %b2 = block {
-    %tint_symbol:bool = call %my_func, false
+%test_function = @compute @workgroup_size(1, 1, 1) func():void {
+  $B2: {
+    %4:bool = call %my_func, false
+    %tint_symbol:bool = let %4
     ret
   }
 }

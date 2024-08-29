@@ -1,16 +1,29 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <utility>
 
@@ -161,61 +174,6 @@ TEST(BlobTests, MoveAssignOver) {
     EXPECT_EQ(b2.Size(), 10u);
     ASSERT_NE(b2.Data(), nullptr);
     EXPECT_EQ(memcmp(b2.Data(), data, sizeof(data)), 0);
-}
-
-// Test that an empty blob can be requested to have a particular alignment.
-TEST(BlobTests, EmptyAlignTo) {
-    for (size_t alignment : {1, 2, 4, 8, 16, 32}) {
-        Blob b;
-        EXPECT_TRUE(b.Empty());
-        EXPECT_EQ(b.Size(), 0u);
-        EXPECT_EQ(b.Data(), nullptr);
-        b.AlignTo(alignment);
-        // After aligning, it is still empty.
-        EXPECT_TRUE(b.Empty());
-        EXPECT_EQ(b.Size(), 0u);
-        EXPECT_EQ(b.Data(), nullptr);
-    }
-}
-
-// Test that AlignTo makes a blob have a particular alignment.
-TEST(BlobTests, AlignTo) {
-    uint8_t data[64];
-    for (uint8_t i = 0; i < sizeof(data); ++i) {
-        data[i] = i;
-    }
-    // Test multiple alignments.
-    for (size_t alignment : {1, 2, 4, 8, 16, 32}) {
-        for (size_t offset = 0; offset < alignment; ++offset) {
-            // Make a blob pointing to |data| starting at |offset|.
-            size_t size = sizeof(data) - offset;
-            testing::StrictMock<testing::MockFunction<void()>> mockDeleter;
-            Blob b =
-                Blob::UnsafeCreateWithDeleter(&data[offset], size, [&] { mockDeleter.Call(); });
-            bool alreadyAligned = IsPtrAligned(&data[offset], alignment);
-
-            // The backing store should be deleted at the end of the scope, or because it was
-            // replaced.
-            EXPECT_CALL(mockDeleter, Call());
-
-            b.AlignTo(alignment);
-            if (!alreadyAligned) {
-                // If the Blob is not aligned, its data will be deleted and replaced by AlignTo.
-                testing::Mock::VerifyAndClearExpectations(&mockDeleter);
-            }
-            // The blob should not have changed in size.
-            EXPECT_EQ(b.Size(), size) << "alignment = " << alignment << " offset = " << offset;
-            // The data should be aligned.
-            EXPECT_TRUE(IsPtrAligned(b.Data(), alignment))
-                << "alignment = " << alignment << " offset = " << offset;
-            // The contents should be the same.
-            EXPECT_EQ(memcmp(b.Data(), &data[offset], size), 0)
-                << "alignment = " << alignment << " offset = " << offset;
-            // If the data was already aligned, the blob should point to the same memory.
-            EXPECT_EQ(alreadyAligned, b.Data() == &data[offset])
-                << "alignment = " << alignment << " offset = " << offset;
-        }
-    }
 }
 
 }  // namespace

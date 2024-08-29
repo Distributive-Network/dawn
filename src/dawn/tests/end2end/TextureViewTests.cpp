@@ -1,16 +1,29 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
 #include <array>
@@ -31,37 +44,50 @@ constexpr static unsigned int kRTSize = 64;
 constexpr wgpu::TextureFormat kDefaultFormat = wgpu::TextureFormat::RGBA8Unorm;
 constexpr uint32_t kBytesPerTexel = 4;
 
-wgpu::Texture Create2DTexture(wgpu::Device device,
-                              uint32_t width,
-                              uint32_t height,
-                              uint32_t arrayLayerCount,
-                              uint32_t mipLevelCount,
-                              wgpu::TextureUsage usage) {
-    wgpu::TextureDescriptor descriptor;
-    descriptor.dimension = wgpu::TextureDimension::e2D;
-    descriptor.size.width = width;
-    descriptor.size.height = height;
-    descriptor.size.depthOrArrayLayers = arrayLayerCount;
-    descriptor.sampleCount = 1;
-    descriptor.format = kDefaultFormat;
-    descriptor.mipLevelCount = mipLevelCount;
-    descriptor.usage = usage;
-    return device.CreateTexture(&descriptor);
-}
+class TextureViewTestBase : public DawnTest {
+  protected:
+    wgpu::Texture Create2DTexture(uint32_t width,
+                                  uint32_t height,
+                                  uint32_t arrayLayerCount,
+                                  uint32_t mipLevelCount,
+                                  wgpu::TextureUsage usage,
+                                  wgpu::TextureViewDimension textureBindingViewDimension =
+                                      wgpu::TextureViewDimension::e2DArray) {
+        wgpu::TextureDescriptor descriptor;
+        descriptor.dimension = wgpu::TextureDimension::e2D;
+        descriptor.size.width = width;
+        descriptor.size.height = height;
+        descriptor.size.depthOrArrayLayers = arrayLayerCount;
+        descriptor.sampleCount = 1;
+        descriptor.format = kDefaultFormat;
+        descriptor.mipLevelCount = mipLevelCount;
+        descriptor.usage = usage;
 
-wgpu::Texture Create3DTexture(wgpu::Device device,
-                              wgpu::Extent3D size,
-                              uint32_t mipLevelCount,
-                              wgpu::TextureUsage usage) {
-    wgpu::TextureDescriptor descriptor;
-    descriptor.dimension = wgpu::TextureDimension::e3D;
-    descriptor.size = size;
-    descriptor.sampleCount = 1;
-    descriptor.format = kDefaultFormat;
-    descriptor.mipLevelCount = mipLevelCount;
-    descriptor.usage = usage;
-    return device.CreateTexture(&descriptor);
-}
+        // Only set the textureBindingViewDimension in compat mode. It's not needed
+        // nor used in non-compat.
+        wgpu::TextureBindingViewDimensionDescriptor textureBindingViewDimensionDesc;
+        if (IsCompatibilityMode()) {
+            textureBindingViewDimensionDesc.textureBindingViewDimension =
+                textureBindingViewDimension;
+            descriptor.nextInChain = &textureBindingViewDimensionDesc;
+        }
+
+        return device.CreateTexture(&descriptor);
+    }
+
+    wgpu::Texture Create3DTexture(wgpu::Extent3D size,
+                                  uint32_t mipLevelCount,
+                                  wgpu::TextureUsage usage) {
+        wgpu::TextureDescriptor descriptor;
+        descriptor.dimension = wgpu::TextureDimension::e3D;
+        descriptor.size = size;
+        descriptor.sampleCount = 1;
+        descriptor.format = kDefaultFormat;
+        descriptor.mipLevelCount = mipLevelCount;
+        descriptor.usage = usage;
+        return device.CreateTexture(&descriptor);
+    }
+};
 
 wgpu::ShaderModule CreateDefaultVertexShaderModule(wgpu::Device device) {
     return utils::CreateShaderModule(device, R"(
@@ -94,7 +120,7 @@ wgpu::ShaderModule CreateDefaultVertexShaderModule(wgpu::Device device) {
         )");
 }
 
-class TextureViewSamplingTest : public DawnTest {
+class TextureViewSamplingTest : public TextureViewTestBase {
   protected:
     // Generates an arbitrary pixel value per-layer-per-level, used for the "actual" uploaded
     // textures and the "expected" results.
@@ -107,31 +133,31 @@ class TextureViewSamplingTest : public DawnTest {
 
         mRenderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
-        wgpu::FilterMode kFilterMode = wgpu::FilterMode::Nearest;
-        wgpu::MipmapFilterMode kMipmapFilterMode = wgpu::MipmapFilterMode::Nearest;
-        wgpu::AddressMode kAddressMode = wgpu::AddressMode::ClampToEdge;
-
         wgpu::SamplerDescriptor samplerDescriptor = {};
-        samplerDescriptor.minFilter = kFilterMode;
-        samplerDescriptor.magFilter = kFilterMode;
-        samplerDescriptor.mipmapFilter = kMipmapFilterMode;
-        samplerDescriptor.addressModeU = kAddressMode;
-        samplerDescriptor.addressModeV = kAddressMode;
-        samplerDescriptor.addressModeW = kAddressMode;
+        // (Off-topic) spot-test for defaulting of these six fields.
+        samplerDescriptor.minFilter = wgpu::FilterMode::Undefined;
+        samplerDescriptor.magFilter = wgpu::FilterMode::Undefined;
+        samplerDescriptor.mipmapFilter = wgpu::MipmapFilterMode::Undefined;
+        samplerDescriptor.addressModeU = wgpu::AddressMode::Undefined;
+        samplerDescriptor.addressModeV = wgpu::AddressMode::Undefined;
+        samplerDescriptor.addressModeW = wgpu::AddressMode::Undefined;
         mSampler = device.CreateSampler(&samplerDescriptor);
 
         mVSModule = CreateDefaultVertexShaderModule(device);
     }
 
-    void InitTexture(uint32_t arrayLayerCount, uint32_t mipLevelCount) {
-        ASSERT(arrayLayerCount > 0 && mipLevelCount > 0);
+    void InitTexture(uint32_t arrayLayerCount,
+                     uint32_t mipLevelCount,
+                     wgpu::TextureViewDimension textureBindingViewDimension =
+                         wgpu::TextureViewDimension::e2DArray) {
+        DAWN_ASSERT(arrayLayerCount > 0 && mipLevelCount > 0);
 
         const uint32_t textureWidthLevel0 = 1 << mipLevelCount;
         const uint32_t textureHeightLevel0 = 1 << mipLevelCount;
         constexpr wgpu::TextureUsage kUsage =
             wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::TextureBinding;
-        mTexture = Create2DTexture(device, textureWidthLevel0, textureHeightLevel0, arrayLayerCount,
-                                   mipLevelCount, kUsage);
+        mTexture = Create2DTexture(textureWidthLevel0, textureHeightLevel0, arrayLayerCount,
+                                   mipLevelCount, kUsage, textureBindingViewDimension);
 
         mDefaultTextureViewDescriptor.dimension = wgpu::TextureViewDimension::e2DArray;
         mDefaultTextureViewDescriptor.format = kDefaultFormat;
@@ -209,10 +235,10 @@ class TextureViewSamplingTest : public DawnTest {
                            uint32_t textureMipLevels,
                            uint32_t textureViewBaseLayer,
                            uint32_t textureViewBaseMipLevel) {
-        ASSERT(textureViewBaseLayer < textureArrayLayers);
-        ASSERT(textureViewBaseMipLevel < textureMipLevels);
+        DAWN_ASSERT(textureViewBaseLayer < textureArrayLayers);
+        DAWN_ASSERT(textureViewBaseMipLevel < textureMipLevels);
 
-        InitTexture(textureArrayLayers, textureMipLevels);
+        InitTexture(textureArrayLayers, textureMipLevels, wgpu::TextureViewDimension::e2D);
 
         wgpu::TextureViewDescriptor descriptor = mDefaultTextureViewDescriptor;
         descriptor.dimension = wgpu::TextureViewDimension::e2D;
@@ -240,15 +266,15 @@ class TextureViewSamplingTest : public DawnTest {
                                 uint32_t textureMipLevels,
                                 uint32_t textureViewBaseLayer,
                                 uint32_t textureViewBaseMipLevel) {
-        ASSERT(textureViewBaseLayer < textureArrayLayers);
-        ASSERT(textureViewBaseMipLevel < textureMipLevels);
+        DAWN_ASSERT(textureViewBaseLayer < textureArrayLayers);
+        DAWN_ASSERT(textureViewBaseMipLevel < textureMipLevels);
 
         // We always set the layer count of the texture view to be 3 to match the fragment shader in
         // this test.
         constexpr uint32_t kTextureViewLayerCount = 3;
-        ASSERT(textureArrayLayers >= textureViewBaseLayer + kTextureViewLayerCount);
+        DAWN_ASSERT(textureArrayLayers >= textureViewBaseLayer + kTextureViewLayerCount);
 
-        InitTexture(textureArrayLayers, textureMipLevels);
+        InitTexture(textureArrayLayers, textureMipLevels, wgpu::TextureViewDimension::e2DArray);
 
         wgpu::TextureViewDescriptor descriptor = mDefaultTextureViewDescriptor;
         descriptor.dimension = wgpu::TextureViewDimension::e2DArray;
@@ -318,17 +344,17 @@ class TextureViewSamplingTest : public DawnTest {
                             uint32_t textureViewBaseLayer,
                             uint32_t textureViewLayerCount,
                             bool isCubeMapArray) {
-        // TODO(crbug.com/dawn/1300): OpenGLES does not support cube map arrays.
+        // Cube map arrays are unsupported in Compatbility mode.
         DAWN_TEST_UNSUPPORTED_IF(isCubeMapArray && IsCompatibilityMode());
-
-        constexpr uint32_t kMipLevels = 1u;
-        InitTexture(textureArrayLayers, kMipLevels);
 
         ASSERT_TRUE((textureViewLayerCount == 6) ||
                     (isCubeMapArray && textureViewLayerCount % 6 == 0));
         wgpu::TextureViewDimension dimension = (isCubeMapArray)
                                                    ? wgpu::TextureViewDimension::CubeArray
                                                    : wgpu::TextureViewDimension::Cube;
+
+        constexpr uint32_t kMipLevels = 1u;
+        InitTexture(textureArrayLayers, kMipLevels, dimension);
 
         wgpu::TextureViewDescriptor descriptor = mDefaultTextureViewDescriptor;
         descriptor.dimension = dimension;
@@ -364,6 +390,8 @@ TEST_P(TextureViewSamplingTest, Default2DArrayTexture) {
     InitTexture(kLayers, kMipLevels);
 
     wgpu::TextureViewDescriptor descriptor;
+    // (Off-topic) spot-test for defaulting of .aspect.
+    descriptor.aspect = wgpu::TextureAspect::Undefined;
     descriptor.dimension = wgpu::TextureViewDimension::e2DArray;
     wgpu::TextureView textureView = mTexture.CreateView(&descriptor);
 
@@ -386,11 +414,13 @@ TEST_P(TextureViewSamplingTest, Default2DArrayTexture) {
 
 // Test sampling from a 2D texture view created on a 2D array texture.
 TEST_P(TextureViewSamplingTest, Texture2DViewOn2DArrayTexture) {
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
     Texture2DViewTest(6, 1, 4, 0);
 }
 
 // Test sampling from a 2D array texture view created on a 2D array texture.
 TEST_P(TextureViewSamplingTest, Texture2DArrayViewOn2DArrayTexture) {
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
     Texture2DArrayViewTest(6, 1, 2, 0);
 }
 
@@ -405,6 +435,8 @@ TEST_P(TextureViewSamplingTest, Texture2DArrayViewOnSingleLayer2DTexture) {
     descriptor.arrayLayerCount = 1;
     descriptor.baseMipLevel = 0;
     descriptor.mipLevelCount = 1;
+    // (Off-topic) spot-test for defaulting of .aspect.
+    descriptor.aspect = wgpu::TextureAspect::Undefined;
     wgpu::TextureView textureView = mTexture.CreateView(&descriptor);
 
     const char* fragmentShader = R"(
@@ -428,19 +460,21 @@ TEST_P(TextureViewSamplingTest, Texture2DViewOnOneLevelOf2DTexture) {
 
 // Test sampling from a 2D texture view created on a mipmap level of a 2D array texture layer.
 TEST_P(TextureViewSamplingTest, Texture2DViewOnOneLevelOf2DArrayTexture) {
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
     Texture2DViewTest(6, 6, 3, 4);
 }
 
 // Test sampling from a 2D array texture view created on a mipmap level of a 2D array texture.
 TEST_P(TextureViewSamplingTest, Texture2DArrayViewOnOneLevelOf2DArrayTexture) {
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
     Texture2DArrayViewTest(6, 6, 2, 4);
 }
 
 // Test that an RGBA8 texture may be interpreted as RGBA8UnormSrgb and sampled from.
 // More extensive color value checks and format tests are left for the CTS.
 TEST_P(TextureViewSamplingTest, SRGBReinterpretation) {
-    // TODO(crbug.com/dawn/1360): OpenGLES doesn't support view format reinterpretation.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
+    // View format reinterpretation is unsupported in Compatibility mode.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
 
     wgpu::TextureViewDescriptor viewDesc = {};
     viewDesc.format = wgpu::TextureFormat::RGBA8UnormSrgb;
@@ -536,6 +570,7 @@ TEST_P(TextureViewSamplingTest, TextureCubeMapOnWholeTexture) {
 
 // Test sampling from a cube map texture view that covers a sub part of a 2D array texture.
 TEST_P(TextureViewSamplingTest, TextureCubeMapViewOnPartOfTexture) {
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
     // TODO(dawn:1935): Total layers have to be at least 12 on Intel D3D11 Gen12.
     DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsIntelGen12());
 
@@ -544,6 +579,8 @@ TEST_P(TextureViewSamplingTest, TextureCubeMapViewOnPartOfTexture) {
 
 // Test sampling from a cube map texture view that covers the last layer of a 2D array texture.
 TEST_P(TextureViewSamplingTest, TextureCubeMapViewCoveringLastLayer) {
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
+
     // TODO(dawn:1812): the test fails with DXGI_ERROR_DEVICE_HUNG on Intel D3D11 driver.
     DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsIntel());
 
@@ -576,7 +613,7 @@ TEST_P(TextureViewSamplingTest, TextureCubeMapArrayViewSingleCubeMap) {
     TextureCubeMapTest(20, 7, 6, true);
 }
 
-class TextureViewRenderingTest : public DawnTest {
+class TextureViewRenderingTest : public TextureViewTestBase {
   protected:
     void TextureLayerAsColorAttachmentTest(wgpu::TextureViewDimension dimension,
                                            uint32_t layerCount,
@@ -585,15 +622,17 @@ class TextureViewRenderingTest : public DawnTest {
                                            uint32_t textureViewBaseLevel,
                                            uint32_t textureWidthLevel0,
                                            uint32_t textureHeightLevel0) {
-        ASSERT(dimension == wgpu::TextureViewDimension::e2D ||
-               dimension == wgpu::TextureViewDimension::e2DArray);
+        DAWN_ASSERT(dimension == wgpu::TextureViewDimension::e2D ||
+                    dimension == wgpu::TextureViewDimension::e2DArray);
         ASSERT_LT(textureViewBaseLayer, layerCount);
         ASSERT_LT(textureViewBaseLevel, levelCount);
 
         constexpr wgpu::TextureUsage kUsage =
             wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc;
-        wgpu::Texture texture = Create2DTexture(device, textureWidthLevel0, textureHeightLevel0,
-                                                layerCount, levelCount, kUsage);
+        wgpu::Texture texture =
+            Create2DTexture(textureWidthLevel0, textureHeightLevel0, layerCount, levelCount, kUsage,
+                            layerCount > 1 ? wgpu::TextureViewDimension::e2DArray
+                                           : wgpu::TextureViewDimension::e2D);
 
         wgpu::TextureViewDescriptor descriptor;
         descriptor.format = kDefaultFormat;
@@ -773,8 +812,8 @@ TEST_P(TextureViewRenderingTest, Texture2DArrayViewOnALayerOf2DArrayTextureAsCol
 // Test that an RGBA8 texture may be interpreted as RGBA8UnormSrgb and rendered to.
 // More extensive color value checks and format tests are left for the CTS.
 TEST_P(TextureViewRenderingTest, SRGBReinterpretationRenderAttachment) {
-    // TODO(crbug.com/dawn/1360): OpenGLES doesn't support view format reinterpretation.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
+    // View format reinterpretation is unsupported in Compatibility mode.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
 
     // Test will render into an SRGB view
     wgpu::TextureViewDescriptor viewDesc = {};
@@ -879,8 +918,8 @@ TEST_P(TextureViewRenderingTest, SRGBReinterpretationRenderAttachment) {
 // This test samples the RGBA8Unorm texture into an RGBA8Unorm multisample texture viewed as SRGB,
 // and resolves it into an RGBA8Unorm texture, viewed as SRGB.
 TEST_P(TextureViewRenderingTest, SRGBReinterpretionResolveAttachment) {
-    // TODO(crbug.com/dawn/1360): OpenGLES doesn't support view format reinterpretation.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
+    // View format reinterpretation is unsupported in Compatibility mode.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
 
     // Test will resolve into an SRGB view
     wgpu::TextureViewDescriptor viewDesc = {};
@@ -1047,12 +1086,11 @@ DAWN_INSTANTIATE_TEST(TextureViewTest,
                       OpenGLESBackend(),
                       VulkanBackend());
 
-class TextureView3DTest : public DawnTest {};
+class TextureView3DTest : public TextureViewTestBase {};
 
 // Test that 3D textures and 3D texture views can be created successfully
 TEST_P(TextureView3DTest, BasicTest) {
-    wgpu::Texture texture =
-        Create3DTexture(device, {4, 4, 4}, 3, wgpu::TextureUsage::TextureBinding);
+    wgpu::Texture texture = Create3DTexture({4, 4, 4}, 3, wgpu::TextureUsage::TextureBinding);
     wgpu::TextureView view = texture.CreateView();
 }
 
@@ -1102,9 +1140,7 @@ TEST_P(TextureView1DTest, Sampling) {
     )");
     utils::ComboRenderPipelineDescriptor pDesc;
     pDesc.vertex.module = module;
-    pDesc.vertex.entryPoint = "vs";
     pDesc.cFragment.module = module;
-    pDesc.cFragment.entryPoint = "fs";
     pDesc.cTargets[0].format = wgpu::TextureFormat::RGBA8Unorm;
     wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&pDesc);
 

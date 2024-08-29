@@ -1,61 +1,90 @@
-// Copyright 2023 The Dawn Authors
+// Copyright 2023 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/ExecutionQueue.h"
+
+#include <atomic>
 
 namespace dawn::native {
 
 ExecutionSerial ExecutionQueueBase::GetPendingCommandSerial() const {
-    return mLastSubmittedSerial + ExecutionSerial(1);
+    return ExecutionSerial(mLastSubmittedSerial.load(std::memory_order_acquire) + 1);
 }
 
 ExecutionSerial ExecutionQueueBase::GetLastSubmittedCommandSerial() const {
-    return mLastSubmittedSerial;
+    return ExecutionSerial(mLastSubmittedSerial.load(std::memory_order_acquire));
 }
 
 ExecutionSerial ExecutionQueueBase::GetCompletedCommandSerial() const {
-    return mCompletedSerial;
+    return ExecutionSerial(mCompletedSerial.load(std::memory_order_acquire));
 }
 
 MaybeError ExecutionQueueBase::CheckPassedSerials() {
     ExecutionSerial completedSerial;
     DAWN_TRY_ASSIGN(completedSerial, CheckAndUpdateCompletedSerials());
 
-    ASSERT(completedSerial <= mLastSubmittedSerial);
-    // completedSerial should not be less than mCompletedSerial unless it is 0.
-    // It can be 0 when there's no fences to check.
-    ASSERT(completedSerial >= mCompletedSerial || completedSerial == ExecutionSerial(0));
+    DAWN_ASSERT(completedSerial <=
+                ExecutionSerial(mLastSubmittedSerial.load(std::memory_order_acquire)));
 
-    if (completedSerial > mCompletedSerial) {
-        mCompletedSerial = completedSerial;
+    // Atomically set mCompletedSerial to completedSerial if completedSerial is larger.
+    uint64_t current = mCompletedSerial.load(std::memory_order_acquire);
+    while (uint64_t(completedSerial) > current &&
+           !mCompletedSerial.compare_exchange_weak(current, uint64_t(completedSerial),
+                                                   std::memory_order_acq_rel)) {
     }
+    return {};
+}
 
+MaybeError ExecutionQueueBase::EnsureCommandsFlushed(ExecutionSerial serial) {
+    DAWN_ASSERT(serial <= GetPendingCommandSerial());
+    if (serial > GetLastSubmittedCommandSerial()) {
+        ForceEventualFlushOfCommands();
+        DAWN_TRY(SubmitPendingCommands());
+        DAWN_ASSERT(serial <= GetLastSubmittedCommandSerial());
+    }
     return {};
 }
 
 void ExecutionQueueBase::AssumeCommandsComplete() {
     // Bump serials so any pending callbacks can be fired.
-    mLastSubmittedSerial++;
-    mCompletedSerial = mLastSubmittedSerial;
+    // TODO(crbug.com/dawn/831): This is called during device destroy, which is not
+    // thread-safe yet. Two threads calling destroy would race setting these serials.
+    uint64_t prev = mLastSubmittedSerial.fetch_add(1u, std::memory_order_release);
+    mCompletedSerial.store(prev + 1u, std::memory_order_release);
 }
 
 void ExecutionQueueBase::IncrementLastSubmittedCommandSerial() {
-    mLastSubmittedSerial++;
+    mLastSubmittedSerial.fetch_add(1u, std::memory_order_release);
 }
 
 bool ExecutionQueueBase::HasScheduledCommands() const {
-    return mLastSubmittedSerial > mCompletedSerial || HasPendingCommands();
+    return mLastSubmittedSerial.load(std::memory_order_acquire) >
+               mCompletedSerial.load(std::memory_order_acquire) ||
+           HasPendingCommands();
 }
 
 // All prevously submitted works at the moment will supposedly complete at this serial.

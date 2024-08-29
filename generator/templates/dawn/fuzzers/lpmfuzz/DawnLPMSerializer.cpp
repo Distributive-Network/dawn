@@ -1,16 +1,29 @@
-// Copyright 2023 The Dawn Authors
+// Copyright 2023 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/fuzzers/lpmfuzz/DawnLPMConstants_autogen.h"
 #include "dawn/fuzzers/lpmfuzz/DawnLPMFuzzer.h"
@@ -56,7 +69,10 @@ namespace dawn::wire {
     {% elif member.type.name.get() == "ObjectId" %}
         {{ convert_objectid(member, in, out, access) }}
     {% elif member.type.name.get() == "ObjectHandle" %}
-        {{ convert_objecthandle(member, in, out, in_access) }}
+        //* Only convert the handle if it maps to an object. Otherwise don't serialize it at all.
+        {% if member.handle_type %}
+            {{ convert_objecthandle(member, in, out, in_access) }}
+        {% endif %}
     {% else %}
         {{out}} = {{in}}({{in_access}});
     {% endif %}
@@ -91,7 +107,9 @@ namespace dawn::wire {
     if (objectStores[ObjectType::{{ member.handle_type.name.CamelCase() }}].Size() < DawnLPMFuzzer::k{{ member.handle_type.name.CamelCase() }}Limit) {
         {{ out }} = objectStores[ObjectType::{{ member.handle_type.name.CamelCase() }}].ReserveHandle();
     } else {
-        {{ out }} = {0, 0};
+        // Return failure in this case to guide the fuzzer away from generating too many
+        // objects of this type
+        return WireResult::FatalError;
     }
 {%- endmacro %}
 
@@ -119,10 +137,8 @@ namespace dawn::wire {
 
     WireResult {{WGPU}}{{name}}ProtoConvert(fuzzing::{{ name }} proto_record, {{WGPU}}{{ name }}{{ Cmd }} const *record, SerializeBuffer* serializeBuffer, PerObjectType<DawnLPMObjectStore> &objectStores) {
 
-        {{WGPU}}{{ name }}{{ Cmd }} *mutable_record = const_cast<{{WGPU}}{{ name }}{{ Cmd }} *>(record);
-
-        //* Some commands don't set any members.
-        DAWN_UNUSED(mutable_record);
+        //* maybe_unused because some commands don't set any members.
+        [[maybe_unused]] {{WGPU}}{{ name }}{{ Cmd }} *mutable_record = const_cast<{{WGPU}}{{ name }}{{ Cmd }} *>(record);
 
         //* Clear the entire structure to make optional handling simpler.
         memset(mutable_record, 0, sizeof({{WGPU}}{{ name }}{{ Cmd }}));

@@ -1,16 +1,29 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
 #include <cstring>
@@ -29,6 +42,7 @@
 #include "dawn/utils/WireHelper.h"
 #include "dawn/wire/WireClient.h"
 #include "dawn/wire/WireServer.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::utils {
 
@@ -54,7 +68,7 @@ class WireServerTraceLayer : public dawn::wire::CommandHandler {
         // Prepend the filename with the directory.
         filename = mDir + filename;
 
-        ASSERT(!mFile.is_open());
+        DAWN_ASSERT(!mFile.is_open());
         mFile.open(filename, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
         // Write the initial 8 bytes. This means the fuzzer should never inject an
@@ -72,17 +86,30 @@ class WireServerTraceLayer : public dawn::wire::CommandHandler {
 
   private:
     std::string mDir;
-    dawn::wire::CommandHandler* mHandler;
+    raw_ptr<dawn::wire::CommandHandler> mHandler;
     std::ofstream mFile;
 };
 
 class WireHelperDirect : public WireHelper {
   public:
-    explicit WireHelperDirect(const DawnProcTable& procs) { dawnProcSetProcs(&procs); }
+    explicit WireHelperDirect(const DawnProcTable& procs) : mProcs(procs) {
+        dawnProcSetProcs(&procs);
+    }
 
-    wgpu::Instance RegisterInstance(WGPUInstance backendInstance) override {
-        ASSERT(backendInstance != nullptr);
+    wgpu::Instance RegisterInstance(WGPUInstance backendInstance,
+                                    const WGPUInstanceDescriptor* wireDesc) override {
+        DAWN_ASSERT(backendInstance != nullptr);
         return wgpu::Instance(backendInstance);
+    }
+
+    wgpu::SwapChain CreateSwapChain(WGPUSurface backendSurface,
+                                    WGPUDevice backendDevice,
+                                    WGPUDevice apiDevice,
+                                    const WGPUSwapChainDescriptor* descriptor) override {
+        DAWN_ASSERT(backendDevice == apiDevice);
+        WGPUSwapChain cSwapChain =
+            mProcs.deviceCreateSwapChain(backendDevice, backendSurface, descriptor);
+        return wgpu::SwapChain::Acquire(cSwapChain);
     }
 
     void BeginWireTrace(const char* name) override {}
@@ -90,11 +117,17 @@ class WireHelperDirect : public WireHelper {
     bool FlushClient() override { return true; }
 
     bool FlushServer() override { return true; }
+
+    bool IsIdle() override { return true; }
+
+  private:
+    const DawnProcTable& mProcs;
 };
 
 class WireHelperProxy : public WireHelper {
   public:
-    explicit WireHelperProxy(const char* wireTraceDir, const DawnProcTable& procs) {
+    explicit WireHelperProxy(const char* wireTraceDir, const DawnProcTable& procs)
+        : mBackendProcs(procs) {
         mC2sBuf = std::make_unique<dawn::utils::TerribleCommandBuffer>();
         mS2cBuf = std::make_unique<dawn::utils::TerribleCommandBuffer>();
 
@@ -118,13 +151,32 @@ class WireHelperProxy : public WireHelper {
         dawnProcSetProcs(&dawn::wire::client::GetProcs());
     }
 
-    wgpu::Instance RegisterInstance(WGPUInstance backendInstance) override {
-        ASSERT(backendInstance != nullptr);
+    ~WireHelperProxy() override {
+        mC2sBuf->SetHandler(nullptr);
+        mS2cBuf->SetHandler(nullptr);
+    }
 
-        auto reservation = mWireClient->ReserveInstance();
-        mWireServer->InjectInstance(backendInstance, reservation.id, reservation.generation);
+    wgpu::Instance RegisterInstance(WGPUInstance backendInstance,
+                                    const WGPUInstanceDescriptor* wireDesc) override {
+        DAWN_ASSERT(backendInstance != nullptr);
 
-        return wgpu::Instance::Acquire(reservation.instance);
+        auto reserved = mWireClient->ReserveInstance(wireDesc);
+        mWireServer->InjectInstance(backendInstance, reserved.handle);
+
+        return wgpu::Instance::Acquire(reserved.instance);
+    }
+
+    wgpu::SwapChain CreateSwapChain(WGPUSurface backendSurface,
+                                    WGPUDevice backendDevice,
+                                    WGPUDevice apiDevice,
+                                    const WGPUSwapChainDescriptor* descriptor) override {
+        WGPUSwapChain cSwapChain =
+            mBackendProcs.deviceCreateSwapChain(backendDevice, backendSurface, descriptor);
+
+        auto reservation = mWireClient->ReserveSwapChain(apiDevice, descriptor);
+        mWireServer->InjectSwapChain(cSwapChain, reservation.handle, reservation.deviceHandle);
+
+        return wgpu::SwapChain::Acquire(reservation.swapchain);
     }
 
     void BeginWireTrace(const char* name) override {
@@ -137,15 +189,29 @@ class WireHelperProxy : public WireHelper {
 
     bool FlushServer() override { return mS2cBuf->Flush(); }
 
+    bool IsIdle() override { return mC2sBuf->Empty() && mS2cBuf->Empty(); }
+
   private:
+    const DawnProcTable& mBackendProcs;
     std::unique_ptr<dawn::utils::TerribleCommandBuffer> mC2sBuf;
     std::unique_ptr<dawn::utils::TerribleCommandBuffer> mS2cBuf;
-    std::unique_ptr<WireServerTraceLayer> mWireServerTraceLayer;
     std::unique_ptr<dawn::wire::WireServer> mWireServer;
     std::unique_ptr<dawn::wire::WireClient> mWireClient;
+    std::unique_ptr<WireServerTraceLayer> mWireServerTraceLayer;
 };
 
 }  // anonymous namespace
+
+std::pair<wgpu::Instance, std::unique_ptr<dawn::native::Instance>> WireHelper::CreateInstances(
+    const wgpu::InstanceDescriptor* nativeDesc,
+    const wgpu::InstanceDescriptor* wireDesc) {
+    auto nativeInstance = std::make_unique<dawn::native::Instance>(
+        reinterpret_cast<const WGPUInstanceDescriptor*>(nativeDesc));
+
+    return {RegisterInstance(nativeInstance->Get(),
+                             reinterpret_cast<const WGPUInstanceDescriptor*>(wireDesc)),
+            std::move(nativeInstance)};
+}
 
 std::unique_ptr<WireHelper> CreateWireHelper(const DawnProcTable& procs,
                                              bool useWire,

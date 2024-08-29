@@ -1,20 +1,33 @@
 #!/usr/bin/env python3
-# Copyright 2017 The Dawn Authors
+# Copyright 2017 The Dawn & Tint Authors
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import json, os, sys
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 
 from generator_lib import Generator, run_generator, FileRender
 
@@ -33,7 +46,6 @@ class Metadata:
         self.native_namespace = metadata['native_namespace']
         self.copyright_year = metadata.get('copyright_year', None)
 
-
 class Name:
     def __init__(self, name, native=False):
         self.native = native
@@ -50,7 +62,7 @@ class Name:
         return chunk[0].upper() + chunk[1:]
 
     def canonical_case(self):
-        return (' '.join(self.chunks)).lower()
+        return ' '.join(self.chunks)
 
     def concatcase(self):
         return ''.join(self.chunks)
@@ -104,17 +116,22 @@ class EnumType(Type):
         Type.__init__(self, name, json_data)
 
         self.values = []
+        self.hasUndefined = False
         self.contiguousFromZero = True
         lastValue = -1
         for m in self.json_data['values']:
             if not is_enabled(m):
                 continue
             value = m['value']
+            name = m['name']
+            if name == "undefined":
+                assert value == 0
+                self.hasUndefined = True
             if value != lastValue + 1:
                 self.contiguousFromZero = False
             lastValue = value
             self.values.append(
-                EnumValue(Name(m['name']), value, m.get('valid', True), m))
+                EnumValue(Name(name), value, m.get('valid', True), m))
 
         # Assert that all values are unique in enums
         all_values = set()
@@ -140,6 +157,14 @@ class BitmaskType(Type):
         for value in self.values:
             self.full_mask = self.full_mask | value.value
         self.is_wire_transparent = True
+
+
+class CallbackFunctionType(Type):
+
+    def __init__(self, is_enabled, name, json_data):
+        Type.__init__(self, name, json_data)
+        self.return_type = None
+        self.arguments = []
 
 
 class FunctionPointerType(Type):
@@ -192,6 +217,19 @@ class RecordMember:
     def set_id_type(self, id_type):
         assert self.type.dict_name == "ObjectId"
         self.id_type = id_type
+
+    @property
+    def requires_struct_defaulting(self):
+        if self.annotation != "value":
+            return False
+
+        if self.type.category == "structure":
+            return self.type.any_member_requires_struct_defaulting
+        elif self.type.category == "enum":
+            return (self.type.hasUndefined
+                    and self.default_value not in [None, "undefined"])
+        else:
+            return False
 
 
 Method = namedtuple(
@@ -247,12 +285,14 @@ class StructureType(Record, Type):
         if self.chained:
             assert self.chained == 'in' or self.chained == 'out'
             assert 'chain roots' in json_data
+            self.chain_roots = []
         if self.extensible:
             assert self.extensible == 'in' or self.extensible == 'out'
         # Chained structs inherit from wgpu::ChainedStruct, which has
         # nextInChain, so setting both extensible and chained would result in
         # two nextInChain members.
         assert not (self.extensible and self.chained)
+        self.extensions = []
 
     def update_metadata(self):
         Record.update_metadata(self)
@@ -281,6 +321,25 @@ class StructureType(Record, Type):
             if m.annotation != 'value':
                 return True
         return False
+
+    @property
+    def any_member_requires_struct_defaulting(self):
+        return any(member.requires_struct_defaulting
+                   for member in self.members)
+
+    @property
+    # Returns True if the structure can be created with no parameters, e.g. all of its members have
+    # defaults or are optional,
+    def has_basic_constructor(self):
+        return all((member.optional or member.default_value)
+                   for member in self.members)
+
+
+class CallbackInfoType(StructureType):
+
+    def __init__(self, is_enabled, name, json_data):
+        StructureType.__init__(self, is_enabled, name, json_data)
+        self.extensible = 'in'
 
 
 class ConstantDefinition():
@@ -384,6 +443,9 @@ def link_object(obj, types):
 
 def link_structure(struct, types):
     struct.members = linked_record_members(struct.json_data['members'], types)
+    for root in struct.json_data.get('chain roots', []):
+        struct.chain_roots.append(types[root])
+        types[root].extensions.append(struct)
     struct.chain_roots = [types[root] for root in struct.json_data.get('chain roots', [])]
     assert all((root.category == 'structure' for root in struct.chain_roots))
 
@@ -454,6 +516,8 @@ def parse_json(json, enabled_tags, disabled_tags=None):
             disabled_tags, json_data)
     category_to_parser = {
         'bitmask': BitmaskType,
+        'callback function': CallbackFunctionType,
+        'callback info': CallbackInfoType,
         'enum': EnumType,
         'native': NativeType,
         'function pointer': FunctionPointerType,
@@ -500,6 +564,12 @@ def parse_json(json, enabled_tags, disabled_tags=None):
                 no_cpp=True)
             types[name] = func_decl
             by_category['function'].append(func_decl)
+
+    for callback_info in by_category['callback info']:
+        link_structure(callback_info, types)
+
+    for callback_function in by_category['callback function']:
+        link_function_pointer(callback_function, types)
 
     for function_pointer in by_category['function pointer']:
         link_function_pointer(function_pointer, types)
@@ -567,7 +637,8 @@ def compute_wire_params(api_params, wire_json):
             is_void = method.return_type.name.canonical_case() == 'void'
             if not (is_object or is_void):
                 assert command_suffix in (
-                    wire_json['special items']['client_handwritten_commands'])
+                    wire_json['special items']['client_handwritten_commands']
+                ), command_suffix
                 continue
 
             if command_suffix in (
@@ -684,6 +755,7 @@ def as_protobufTypeLPM(member):
             "uint16_t": "uint32",
             "uint32_t": "uint32",
             "uint64_t": "uint64",
+            "size_t": "uint64",
         }
 
         assert typ in cpp_to_protobuf_type
@@ -713,6 +785,91 @@ def as_protobufMemberNameLPM(*names):
 
 def unreachable_code():
     assert False
+
+
+############################################################
+# KOTLIN STUFF
+############################################################
+
+
+def compute_kotlin_params(loaded_json, kotlin_json):
+    params_kotlin = parse_json(loaded_json, enabled_tags=['art'])
+    params_kotlin['kotlin_package'] = kotlin_json['kotlin_package']
+    params_kotlin['to_jni_type'] = kotlin_json['to_jni_type']
+    kt_file_path = params_kotlin['kotlin_package'].replace('.', '/')
+
+    # The 'length' members are removed as Kotlin can infer that from the container.
+    # 'length' members are identified when some *other* member specifies its name as the
+    # length parameter. Void pointer members refer to binary structures that cannot be used by
+    # clients without conversion to ART types in handwritten code, so we don't convert those.
+    def include_structure_member(structure, member):
+        if member.type.category == 'function pointer':
+            return False
+        if member.type.name.get() in ['void *', 'void const *']:
+            return False
+        for other in structure.members:
+            if other.length == member:
+                return False
+        return True
+
+    def filter_arguments(arguments):
+        for argument in arguments:
+            # length parameters are omitted because Kotlin containers have 'length'.
+            if argument in [arg.length for arg in arguments]:
+                continue
+
+            # userdata parameter omitted because Kotlin clients can achieve the same with closures.
+            if argument.name.get() == 'userdata':
+                continue
+
+            yield argument
+
+    def include_method(method):
+        if method.return_type.category == 'function pointer':
+            # Kotlin doesn't support returning functions.
+            return False
+        for argument in method.arguments:
+            if argument.annotation == '*':
+                # Dawn uses 'annotation = *' for output parameters, for example to return arrays.
+                # Kotlin doesn't support that at the moment
+                return False
+            if argument.annotation == 'value' and argument.type.category == 'structure':
+                # Passing structures by value is not supported at the moment.
+                return False
+            if argument.type.category == 'function pointer':
+                # Currently returning structures in callbacks is not supported.
+                for callback_arg in argument.type.arguments:
+                    if callback_arg.type.category == 'structure':
+                        return False
+        return True
+
+    def jni_name(type):
+        return kt_file_path + '/' + type.name.CamelCase()
+
+    # We assume that if the final two parameters are named 'userdata' and 'callback' respectively
+    # that this is an async method that uses function pointer based callbacks.
+    def is_async_method(method):
+        if len(method.arguments) < 3:
+            return False  # Not enough parameters to be an async method.
+        if method.arguments[-1].name.get() != 'userdata':
+            return False
+        if method.arguments[-2].name.get() != 'callback':
+            return False
+        return True
+
+    # A structure may need to know which other structures listed it as a chain root, e.g.
+    # to know whether to mark the generated class 'open'.
+    chain_children = defaultdict(list)
+    for structure in params_kotlin['by_category']['structure']:
+        for chain_root in structure.chain_roots:
+            chain_children[chain_root.name.get()].append(structure)
+    params_kotlin['chain_children'] = chain_children
+    params_kotlin['filter_arguments'] = filter_arguments
+    params_kotlin['include_structure_member'] = include_structure_member
+    params_kotlin['include_method'] = include_method
+    params_kotlin['jni_name'] = jni_name
+    params_kotlin['is_async_method'] = is_async_method
+    return params_kotlin
 
 
 #############################################################
@@ -746,6 +903,10 @@ def as_cppType(name):
         return name.concatcase()
     else:
         return name.CamelCase()
+
+
+def as_ktName(name):
+    return '_' + name if '0' <= name[0] <= '9' else name
 
 
 def as_jsEnumValue(value):
@@ -825,6 +986,14 @@ def as_MethodSuffix(type_name, method_name):
     return type_name.CamelCase() + method_name.CamelCase()
 
 
+def as_CppMethodSuffix(type_name, method_name):
+    assert not type_name.native and not method_name.native
+    original_method_name_str = method_name.CamelCase()
+    if method_name.chunks[-1] == 'f':
+        return type_name.CamelCase() + original_method_name_str[:-1]
+    return type_name.CamelCase() + original_method_name_str
+
+
 def as_frontendType(metadata, typ):
     if typ.category == 'object':
         return typ.name.CamelCase() + 'Base*'
@@ -845,18 +1014,9 @@ def as_wireType(metadata, typ):
         return as_cppType(typ.name)
 
 
-def as_formatType(typ):
-    # Unsigned integral types
-    if typ.json_data['type'] in ['bool', 'uint32_t', 'uint64_t']:
-        return 'u'
-
-    # Defaults everything else to strings.
-    return 's'
-
-
 def c_methods(params, typ):
     return typ.methods + [
-        Method(Name('reference'), params['types']['void'], [], False, {}),
+        Method(Name('add ref'), params['types']['void'], [], False, {}),
         Method(Name('release'), params['types']['void'], [], False, {}),
     ]
 
@@ -871,6 +1031,26 @@ def has_callback_arguments(method):
     return any(arg.type.category == 'function pointer' for arg in method.arguments)
 
 
+# TODO: crbug.com/dawn/2509 - Remove this helper when once we deprecate older APIs.
+def has_callback_info(method):
+    return method.return_type.name.get() == 'future' and any(
+        arg.name.get() == 'callback info'
+        and arg.type.category != 'callback info' for arg in method.arguments)
+
+
+def has_callbackInfoStruct(method):
+    return any(arg.type.category == 'callback info'
+               for arg in method.arguments)
+
+
+def is_wire_serializable(type):
+    # Function pointers, callback functions, and "void *" types (i.e. userdata) cannot
+    # be serialized.
+    return (type.category != 'function pointer'
+            and type.category != 'callback function'
+            and type.name.get() != 'void *')
+
+
 def make_base_render_params(metadata):
     c_prefix = metadata.c_prefix
 
@@ -883,14 +1063,19 @@ def make_base_render_params(metadata):
         assert not type_name.native and not value_name.native
         return c_prefix + type_name.CamelCase() + '_' + value_name.CamelCase()
 
-    def as_cMethod(type_name, method_name):
+    def as_cMethodNamespaced(type_name, method_name, namespace=None):
         c_method = c_prefix.lower()
-        if type_name != None:
+        if namespace is not None:
+            c_method += namespace.CamelCase()
+        if type_name is not None:
             assert not type_name.native
             c_method += type_name.CamelCase()
         assert not method_name.native
         c_method += method_name.CamelCase()
         return c_method
+
+    def as_cMethod(type_name, method_name):
+        return as_cMethodNamespaced(type_name, method_name)
 
     def as_cProc(type_name, method_name):
         c_proc = c_prefix + 'Proc'
@@ -910,7 +1095,9 @@ def make_base_render_params(metadata):
             'as_cEnum': as_cEnum,
             'as_cppEnum': as_cppEnum,
             'as_cMethod': as_cMethod,
+            'as_cMethodNamespaced': as_cMethodNamespaced,
             'as_MethodSuffix': as_MethodSuffix,
+            'as_CppMethodSuffix': as_CppMethodSuffix,
             'as_cProc': as_cProc,
             'as_cType': lambda name: as_cType(c_prefix, name),
             'as_cReturnType': lambda typ: as_cReturnType(c_prefix, typ),
@@ -919,7 +1106,9 @@ def make_base_render_params(metadata):
             'convert_cType_to_cppType': convert_cType_to_cppType,
             'as_varName': as_varName,
             'decorate': decorate,
-            'as_formatType': as_formatType
+            'as_ktName': as_ktName,
+            'has_callbackInfoStruct': has_callbackInfoStruct,
+            'unreachable_code': unreachable_code
         }
 
 
@@ -930,7 +1119,7 @@ class MultiGeneratorFromDawnJSON(Generator):
     def add_commandline_arguments(self, parser):
         allowed_targets = [
             'dawn_headers', 'cpp_headers', 'cpp', 'proc', 'mock_api', 'wire',
-            'native_utils', 'dawn_lpmfuzz_cpp', 'dawn_lpmfuzz_proto'
+            'native_utils', 'dawn_lpmfuzz_cpp', 'dawn_lpmfuzz_proto', 'kotlin'
         ]
 
         parser.add_argument('--dawn-json',
@@ -941,6 +1130,10 @@ class MultiGeneratorFromDawnJSON(Generator):
                             default=None,
                             type=str,
                             help='The DAWN WIRE JSON definition to use.')
+        parser.add_argument('--kotlin-json',
+                            default=None,
+                            type=str,
+                            help='The KOTLIN JSON definition to use.')
         parser.add_argument("--lpm-json",
                             default=None,
                             type=str,
@@ -964,6 +1157,11 @@ class MultiGeneratorFromDawnJSON(Generator):
             with open(args.wire_json) as f:
                 wire_json = json.loads(f.read())
 
+        kotlin_json = None
+        if args.kotlin_json:
+            with open(args.kotlin_json) as f:
+                kotlin_json = json.loads(f.read())
+
         lpm_json = None
         if args.lpm_json:
             with open(args.lpm_json) as f:
@@ -983,14 +1181,32 @@ class MultiGeneratorFromDawnJSON(Generator):
                 FileRender('api.h', 'include/dawn/' + api + '.h',
                            [RENDER_PARAMS_BASE, params_dawn]))
             renders.append(
+                FileRender('dawn/wire/client/api.h',
+                           'include/dawn/wire/client/' + api + '.h',
+                           [RENDER_PARAMS_BASE, params_dawn]))
+            renders.append(
                 FileRender('dawn_proc_table.h',
                            'include/dawn/' + prefix + '_proc_table.h',
                            [RENDER_PARAMS_BASE, params_dawn]))
 
         if 'cpp_headers' in targets:
             renders.append(
-                FileRender('api_cpp.h', 'include/dawn/' + api + '_cpp.h',
-                           [RENDER_PARAMS_BASE, params_dawn]))
+                FileRender('api_cpp.h', 'include/dawn/' + api + '_cpp.h', [
+                    RENDER_PARAMS_BASE, params_dawn, {
+                        'c_header': api + '/' + api + '.h',
+                        'c_namespace': None,
+                    }
+                ]))
+
+            renders.append(
+                FileRender(
+                    'api_cpp.h', 'include/dawn/wire/client/' + api + '_cpp.h',
+                    [
+                        RENDER_PARAMS_BASE, params_dawn, {
+                            'c_header': 'dawn/wire/client/' + api + '.h',
+                            'c_namespace': Name('dawn wire client'),
+                        }
+                    ]))
 
             renders.append(
                 FileRender('api_cpp_print.h',
@@ -999,12 +1215,12 @@ class MultiGeneratorFromDawnJSON(Generator):
 
             renders.append(
                 FileRender('api_cpp_chained_struct.h',
-                           'include/dawn/' + api + '_cpp_chained_struct.h',
+                           'include/webgpu/' + api + '_cpp_chained_struct.h',
                            [RENDER_PARAMS_BASE, params_dawn]))
 
         if 'proc' in targets:
             renders.append(
-                FileRender('dawn_proc.c', 'src/dawn/' + prefix + '_proc.c',
+                FileRender('dawn_proc.cpp', 'src/dawn/' + prefix + '_proc.cpp',
                            [RENDER_PARAMS_BASE, params_dawn]))
             renders.append(
                 FileRender('dawn_thread_dispatch_proc.cpp',
@@ -1017,11 +1233,6 @@ class MultiGeneratorFromDawnJSON(Generator):
                            'src/dawn/native/webgpu_dawn_native_proc.cpp',
                            [RENDER_PARAMS_BASE, params_dawn]))
 
-        if 'cpp' in targets:
-            renders.append(
-                FileRender('api_cpp.cpp', 'src/dawn/' + api + '_cpp.cpp',
-                           [RENDER_PARAMS_BASE, params_dawn]))
-
         if 'webgpu_headers' in targets:
             params_upstream = parse_json(loaded_json,
                                          enabled_tags=['upstream', 'native'],
@@ -1031,30 +1242,43 @@ class MultiGeneratorFromDawnJSON(Generator):
                            [RENDER_PARAMS_BASE, params_upstream]))
 
         if 'emscripten_bits' in targets:
+            assert api == 'webgpu'
             params_emscripten = parse_json(loaded_json,
                                            enabled_tags=['emscripten'])
+            # system/include/webgpu
             renders.append(
-                FileRender('api.h', 'emscripten-bits/' + api + '.h',
+                FileRender('api.h',
+                           'emscripten-bits/system/include/webgpu/webgpu.h',
                            [RENDER_PARAMS_BASE, params_emscripten]))
             renders.append(
-                FileRender('api_cpp.h', 'emscripten-bits/' + api + '_cpp.h',
-                           [RENDER_PARAMS_BASE, params_emscripten]))
+                FileRender(
+                    'api_cpp.h',
+                    'emscripten-bits/system/include/webgpu/webgpu_cpp.h', [
+                        RENDER_PARAMS_BASE, params_emscripten, {
+                            'c_header': api + '/' + api + '.h',
+                            'c_namespace': None,
+                        }
+                    ]))
             renders.append(
-                FileRender('api_cpp.cpp', 'emscripten-bits/' + api + '_cpp.cpp',
-                           [RENDER_PARAMS_BASE, params_emscripten]))
+                FileRender(
+                    'api_cpp_chained_struct.h',
+                    'emscripten-bits/system/include/webgpu/webgpu_cpp_chained_struct.h',
+                    [RENDER_PARAMS_BASE, params_emscripten]))
+            # Snippets to paste into existing Emscripten files
             renders.append(
                 FileRender('api_struct_info.json',
-                           'emscripten-bits/' + api + '_struct_info.json',
+                           'emscripten-bits/webgpu_struct_info.json',
                            [RENDER_PARAMS_BASE, params_emscripten]))
             renders.append(
                 FileRender('library_api_enum_tables.js',
-                           'emscripten-bits/library_' + api + '_enum_tables.js',
+                           'emscripten-bits/library_webgpu_enum_tables.js',
                            [RENDER_PARAMS_BASE, params_emscripten]))
 
         if 'mock_api' in targets:
             mock_params = [
                 RENDER_PARAMS_BASE, params_dawn, {
-                    'has_callback_arguments': has_callback_arguments
+                    'has_callback_arguments': has_callback_arguments,
+                    "has_callback_info": has_callback_info
                 }
             ]
             renders.append(
@@ -1111,6 +1335,14 @@ class MultiGeneratorFromDawnJSON(Generator):
                            'src/' + native_dir + '/ChainUtils_autogen.cpp',
                            frontend_params))
             renders.append(
+                FileRender('dawn/native/Features.h',
+                           'src/' + native_dir + '/Features_autogen.h',
+                           frontend_params))
+            renders.append(
+                FileRender('dawn/native/Features.inl',
+                           'src/' + native_dir + '/Features_autogen.inl',
+                           frontend_params))
+            renders.append(
                 FileRender('dawn/native/api_absl_format.h',
                            'src/' + native_dir + '/' + api + '_absl_format_autogen.h',
                            frontend_params))
@@ -1143,6 +1375,7 @@ class MultiGeneratorFromDawnJSON(Generator):
                     'as_wireType': lambda type : as_wireType(metadata, type),
                     'as_annotated_wireType': \
                         lambda arg: annotated(as_wireType(metadata, arg.type), arg),
+                    'is_wire_serializable': lambda type : is_wire_serializable(type),
                 }, additional_params
             ]
             renders.append(
@@ -1192,6 +1425,11 @@ class MultiGeneratorFromDawnJSON(Generator):
                     'dawn/wire/server/ServerPrototypes.inc',
                     'src/dawn/wire/server/ServerPrototypes_autogen.inc',
                     wire_params))
+            renders.append(
+                FileRender('dawn/wire/server/WGPUTraits.h',
+                           'src/dawn/wire/server/WGPUTraits_autogen.h',
+                           wire_params))
+
 
         if 'dawn_lpmfuzz_proto' in targets:
             params_dawn_wire = parse_json(loaded_json,
@@ -1232,8 +1470,7 @@ class MultiGeneratorFromDawnJSON(Generator):
 
             lpm_params = [
                 RENDER_PARAMS_BASE, params_dawn_wire, {
-                    'as_protobufMemberName': as_protobufMemberNameLPM,
-                    'unreachable_code': unreachable_code
+                    'as_protobufMemberName': as_protobufMemberNameLPM
                 }, api_and_wire_params, fuzzer_params
             ]
 
@@ -1255,12 +1492,76 @@ class MultiGeneratorFromDawnJSON(Generator):
                     'src/dawn/fuzzers/lpmfuzz/DawnLPMConstants_autogen.h',
                     lpm_params))
 
+        if 'kotlin' in targets:
+            params_kotlin = compute_kotlin_params(loaded_json, kotlin_json)
+            kt_file_path = params_kotlin['kotlin_package'].replace('.', '/')
+            jni_name = params_kotlin['jni_name']
+            by_category = params_kotlin['by_category']
+            for structure in by_category['structure']:
+                renders.append(
+                    FileRender('art/api_kotlin_structure.kt',
+                               'java/' + jni_name(structure) + '.kt', [
+                                   RENDER_PARAMS_BASE, params_kotlin, {
+                                       'structure': structure
+                                   }
+                               ]))
+            for obj in by_category['object']:
+                renders.append(
+                    FileRender(
+                        'art/api_kotlin_object.kt',
+                        'java/' + jni_name(obj) + '.kt',
+                        [RENDER_PARAMS_BASE, params_kotlin, {
+                            'obj': obj
+                        }]))
+            for function_pointer in by_category['function pointer']:
+                renders.append(
+                    FileRender('art/api_kotlin_function_pointer.kt',
+                               'java/' + jni_name(function_pointer) + '.kt', [
+                                   RENDER_PARAMS_BASE, params_kotlin, {
+                                       'function_pointer': function_pointer
+                                   }
+                               ]))
+            renders.append(
+                FileRender('art/api_kotlin_functions.kt',
+                           'java/' + kt_file_path + '/Functions.kt',
+                           [RENDER_PARAMS_BASE, params_kotlin]))
+            renders.append(
+                FileRender('art/api_kotlin_async_helpers.kt',
+                           'java/' + kt_file_path + '/AsyncHelpers.kt',
+                           [RENDER_PARAMS_BASE, params_kotlin]))
+            renders.append(
+                FileRender('art/structures.h', 'cpp/structures.h',
+                           [RENDER_PARAMS_BASE, params_kotlin]))
+            renders.append(
+                FileRender('art/structures.cpp', 'cpp/structures.cpp',
+                           [RENDER_PARAMS_BASE, params_kotlin]))
+            renders.append(
+                FileRender('art/methods.cpp', 'cpp/methods.cpp',
+                           [RENDER_PARAMS_BASE, params_kotlin]))
+
+            for enum in (params_kotlin['by_category']['bitmask'] +
+                         params_kotlin['by_category']['enum']):
+                renders.append(
+                    FileRender(
+                        'art/api_kotlin_enum.kt',
+                        'java/' + jni_name(enum) + '.kt',
+                        [RENDER_PARAMS_BASE, params_kotlin, {
+                            'enum': enum
+                        }]))
+
+            renders.append(
+                FileRender('art/api_kotlin_constants.kt',
+                           'java/' + kt_file_path + '/Constants.kt',
+                           [RENDER_PARAMS_BASE, params_kotlin]))
+
         return renders
 
     def get_dependencies(self, args):
         deps = [os.path.abspath(args.dawn_json)]
         if args.wire_json != None:
             deps += [os.path.abspath(args.wire_json)]
+        if args.kotlin_json != None:
+            deps += [os.path.abspath(args.kotlin_json)]
         if args.lpm_json != None:
             deps += [os.path.abspath(args.lpm_json)]
         return deps

@@ -1,5 +1,6 @@
 #version 310 es
 precision highp float;
+precision highp int;
 
 struct SB_RW_atomic {
   int arg_0;
@@ -17,7 +18,7 @@ void atomicAdd_d32fe4() {
   int arg_1 = 0;
   int res = 0;
   arg_1 = 1;
-  int x_13 = atomicAdd(sb_rw.inner.arg_0, 1);
+  int x_13 = atomicAdd(sb_rw.inner.arg_0, -(1));
   res = x_13;
   return;
 }
@@ -53,7 +54,7 @@ void atomicAdd_d32fe4() {
   int arg_1 = 0;
   int res = 0;
   arg_1 = 1;
-  int x_13 = atomicAdd(sb_rw.inner.arg_0, 1);
+  int x_13 = atomicAdd(sb_rw.inner.arg_0, -(1));
   res = x_13;
   return;
 }

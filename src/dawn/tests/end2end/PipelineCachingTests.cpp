@@ -1,16 +1,29 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <memory>
 #include <string_view>
@@ -146,6 +159,7 @@ TEST_P(SinglePipelineCachingTests, ComputePipelineNoCache) {
 // Tests that pipeline creation on the same device uses frontend cache when possible.
 TEST_P(SinglePipelineCachingTests, ComputePipelineFrontedCache) {
     wgpu::ComputePipelineDescriptor desc;
+    desc.layout = utils::MakeBasicPipelineLayout(device, nullptr);
     desc.compute.module = utils::CreateShaderModule(device, kComputeShaderDefault.data());
     desc.compute.entryPoint = "main";
 
@@ -305,6 +319,7 @@ TEST_P(SinglePipelineCachingTests, RenderPipelineNoCache) {
 // Tests that pipeline creation on the same device uses frontend cache when possible.
 TEST_P(SinglePipelineCachingTests, RenderPipelineFrontedCache) {
     utils::ComboRenderPipelineDescriptor desc;
+    desc.layout = utils::MakeBasicPipelineLayout(device, nullptr);
     desc.vertex.module = utils::CreateShaderModule(device, kVertexShaderDefault.data());
     desc.vertex.entryPoint = "main";
     desc.cFragment.module = utils::CreateShaderModule(device, kFragmentShaderDefault.data());
@@ -551,14 +566,20 @@ TEST_P(SinglePipelineCachingTests, RenderPipelineBlobCacheLayout) {
             utils::CreateShaderModule(device, kFragmentShaderBindGroup00Uniform.data());
         desc.cFragment.entryPoint = "main";
         desc.layout = utils::MakePipelineLayout(
-            device, {
-                        utils::MakeBindGroupLayout(
-                            device,
-                            {
-                                {0, wgpu::ShaderStage::Fragment, wgpu::BufferBindingType::Uniform},
-                                {1, wgpu::ShaderStage::Fragment, wgpu::BufferBindingType::Uniform},
-                            }),
-                    });
+            device,
+            {
+                utils::MakeBindGroupLayout(
+                    device,
+                    {
+                        {0, wgpu::ShaderStage::Fragment, wgpu::BufferBindingType::Uniform},
+                        {1, wgpu::ShaderStage::Fragment,
+                         // Note: OpenGL pipeline uses an internal uniform buffer which can be
+                         // impacted by the extra uniform buffer binding layout, resulting in a
+                         // shader module cache miss.
+                         (IsOpenGL() || IsOpenGLES()) ? wgpu::BufferBindingType::ReadOnlyStorage
+                                                      : wgpu::BufferBindingType::Uniform},
+                    }),
+            });
         EXPECT_CACHE_STATS(mMockCache, Hit(2 * counts.shaderModule), Add(counts.pipeline),
                            device.CreateRenderPipeline(&desc));
     }

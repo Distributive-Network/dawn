@@ -1,16 +1,29 @@
-// Copyright 2021 The Tint Authors.
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "gmock/gmock.h"
 #include "src/tint/lang/glsl/writer/ast_printer/helper_test.h"
@@ -100,6 +113,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_NoReturn_Void) {
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 void func() {
   return;
@@ -147,6 +161,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_WithInOutVars) {
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 layout(location = 0) in float foo_1;
 layout(location = 1) out float value;
@@ -187,6 +202,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_WithInOut_Builtins
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 float frag_main(vec4 coord) {
   return coord.x;
@@ -239,6 +255,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_SharedStruct_Diffe
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 layout(location = 1) out float col1_1;
 layout(location = 2) out float col2_1;
@@ -378,6 +395,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_With_Uniform) {
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 struct UBO {
   vec4 coord;
@@ -419,6 +437,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_With_UniformStruct
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 struct Uniforms {
   vec4 coord;
@@ -460,6 +479,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_With_RW_StorageBuf
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 struct Data {
   int a;
@@ -508,6 +528,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_With_RO_StorageBuf
     EXPECT_EQ(gen.Result(),
               R"(#version 310 es
 precision highp float;
+precision highp int;
 
 struct Data {
   int a;
@@ -553,6 +574,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_With_WO_StorageBuf
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 struct Data {
   int a;
@@ -598,6 +620,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_With_StorageBuffer
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 struct Data {
   int a;
@@ -645,6 +668,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_Called_By_EntryPoint_With_Uni
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 struct S {
   float x;
@@ -692,6 +716,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_Called_By_EntryPoint_With_Sto
     EXPECT_EQ(gen.Result(),
               R"(#version 310 es
 precision highp float;
+precision highp int;
 
 struct S {
   float x;
@@ -728,6 +753,7 @@ TEST_F(GlslASTPrinterTest_Function, Emit_Attribute_EntryPoint_WithNameCollision)
     EXPECT_THAT(gen.Diagnostics(), testing::IsEmpty());
     EXPECT_EQ(gen.Result(), R"(#version 310 es
 precision highp float;
+precision highp int;
 
 void tint_symbol() {
 }
@@ -816,7 +842,7 @@ TEST_F(GlslASTPrinterTest_Function,
     ASTPrinter& gen = Build();
     gen.Generate();
     EXPECT_EQ(
-        gen.Diagnostics().str(),
+        gen.Diagnostics().Str(),
         R"(error: override-expressions should have been removed with the SubstituteOverride transform
 error: override-expressions should have been removed with the SubstituteOverride transform
 error: override-expressions should have been removed with the SubstituteOverride transform

@@ -1,16 +1,29 @@
-// Copyright 2021 The Tint Authors.
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 package sem
 
@@ -33,9 +46,7 @@ type Sem struct {
 	BinaryOperators           []*Intrinsic
 	ConstructorsAndConverters []*Intrinsic
 	// Maximum number of template types used across all builtins
-	MaxTemplateTypes int
-	// Maximum number of template numbers used across all builtins
-	MaxTemplateNumbers int
+	MaxTemplates int
 	// The alphabetically sorted list of unique parameter names
 	UniqueParameterNames []string
 }
@@ -148,22 +159,68 @@ type EnumMatcher struct {
 	Options        []*EnumEntry
 }
 
-// TemplateEnumParam is a template enum parameter
-type TemplateEnumParam struct {
-	Name    string
-	Enum    *Enum
-	Matcher *EnumMatcher // Optional
-}
+// TemplateKind is an enumerator of template kinds.
+type TemplateKind string
+
+const (
+	// A templated type
+	TypeTemplate TemplateKind = "Type"
+	// A templated number
+	NumberTemplate TemplateKind = "Number"
+)
 
 // TemplateTypeParam is a template type parameter
 type TemplateTypeParam struct {
-	Name string
-	Type ResolvableType
+	Name     string
+	ASTParam ast.TemplateParam
+	Type     *FullyQualifiedName
+}
+
+func (t *TemplateTypeParam) AST() ast.TemplateParam     { return t.ASTParam }
+func (t *TemplateTypeParam) TemplateKind() TemplateKind { return TypeTemplate }
+
+// Format implements the fmt.Formatter interface
+func (t *TemplateTypeParam) Format(w fmt.State, verb rune) {
+	fmt.Fprint(w, t.Name)
+	if t.Type != nil {
+		fmt.Fprint(w, ": ")
+		fmt.Fprint(w, *t.Type)
+	}
+}
+
+// TemplateEnumParam is a template enum parameter
+type TemplateEnumParam struct {
+	Name     string
+	ASTParam ast.TemplateParam
+	Enum     *Enum
+	Matcher  *EnumMatcher // Optional
+}
+
+func (t *TemplateEnumParam) AST() ast.TemplateParam     { return t.ASTParam }
+func (t *TemplateEnumParam) TemplateKind() TemplateKind { return NumberTemplate }
+
+// Format implements the fmt.Formatter interface
+func (t *TemplateEnumParam) Format(w fmt.State, verb rune) {
+	fmt.Fprint(w, t.Name)
+	if t.Enum != nil {
+		fmt.Fprint(w, ": ")
+		fmt.Fprint(w, *t.Enum)
+	}
 }
 
 // TemplateNumberParam is a template type parameter
 type TemplateNumberParam struct {
-	Name string
+	Name     string
+	ASTParam ast.TemplateParam
+}
+
+func (t *TemplateNumberParam) AST() ast.TemplateParam     { return t.ASTParam }
+func (t *TemplateNumberParam) TemplateKind() TemplateKind { return NumberTemplate }
+
+// Format implements the fmt.Formatter interface
+func (t *TemplateNumberParam) Format(w fmt.State, verb rune) {
+	fmt.Fprint(w, t.Name)
+	fmt.Fprint(w, ": num")
 }
 
 // Intrinsic describes the overloads of a builtin or operator
@@ -172,19 +229,49 @@ type Intrinsic struct {
 	Overloads []*Overload
 }
 
+// IntrinsicTemplates is a list of TemplateParam, used by an Intrinsic.
+type IntrinsicTemplates []TemplateParam
+
+// Types() returns all the template type parameters
+func (t IntrinsicTemplates) Types() []*TemplateTypeParam {
+	out := []*TemplateTypeParam{}
+	for _, p := range t {
+		if ty, ok := p.(*TemplateTypeParam); ok {
+			out = append(out, ty)
+		}
+	}
+	return out
+}
+
+// Numbers() returns all the template number parameters.
+func (t IntrinsicTemplates) Numbers() []TemplateParam {
+	out := []TemplateParam{}
+	for _, p := range t {
+		if _, ok := p.(*TemplateTypeParam); !ok {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // Overload describes a single overload of a builtin or operator
 type Overload struct {
 	Decl              ast.IntrinsicDecl
 	Intrinsic         *Intrinsic
-	TemplateParams    []TemplateParam
-	TemplateTypes     []*TemplateTypeParam
-	TemplateNumbers   []TemplateParam
+	ExplicitTemplates IntrinsicTemplates
+	ImplicitTemplates IntrinsicTemplates
 	ReturnType        *FullyQualifiedName
 	Parameters        []Parameter
 	CanBeUsedInStage  StageUses
 	MustUse           bool   // True if function cannot be used as a statement
+	MemberFunction    bool   // True if function is a member function
 	IsDeprecated      bool   // True if this overload is deprecated
 	ConstEvalFunction string // Name of the function used to evaluate the intrinsic at shader creation time
+}
+
+// AllTemplates returns the combined list of explicit and implicit templates
+func (o *Overload) AllTemplates() IntrinsicTemplates {
+	return append(append([]TemplateParam{}, o.ExplicitTemplates...), o.ImplicitTemplates...)
 }
 
 // StageUses describes the stages an overload can be used in
@@ -218,15 +305,15 @@ func (o Overload) Format(w fmt.State, verb rune) {
 		fmt.Fprintf(w, "op ")
 	}
 	fmt.Fprintf(w, "%v", o.Intrinsic.Name)
-	if len(o.TemplateParams) > 0 {
+	if len(o.ExplicitTemplates) > 0 {
 		fmt.Fprintf(w, "<")
-		for i, t := range o.TemplateParams {
-			if i > 0 {
-				fmt.Fprint(w, ", ")
-			}
-			fmt.Fprintf(w, "%v", t)
-		}
+		formatList(w, o.ExplicitTemplates)
 		fmt.Fprintf(w, ">")
+	}
+	if len(o.ImplicitTemplates) > 0 {
+		fmt.Fprintf(w, "[")
+		formatList(w, o.ImplicitTemplates)
+		fmt.Fprintf(w, "]")
 	}
 	fmt.Fprint(w, "(")
 	for i, p := range o.Parameters {
@@ -271,12 +358,7 @@ func (f FullyQualifiedName) Format(w fmt.State, verb rune) {
 	fmt.Fprint(w, f.Target.GetName())
 	if len(f.TemplateArguments) > 0 {
 		fmt.Fprintf(w, "<")
-		for i, t := range f.TemplateArguments {
-			if i > 0 {
-				fmt.Fprint(w, ", ")
-			}
-			fmt.Fprintf(w, "%v", t)
-		}
+		formatList(w, f.TemplateArguments)
 		fmt.Fprintf(w, ">")
 	}
 }
@@ -284,12 +366,9 @@ func (f FullyQualifiedName) Format(w fmt.State, verb rune) {
 // TemplateParam is a TemplateEnumParam, TemplateTypeParam or TemplateNumberParam
 type TemplateParam interface {
 	Named
-	isTemplateParam()
+	TemplateKind() TemplateKind
+	AST() ast.TemplateParam
 }
-
-func (*TemplateEnumParam) isTemplateParam()   {}
-func (*TemplateTypeParam) isTemplateParam()   {}
-func (*TemplateNumberParam) isTemplateParam() {}
 
 // ResolvableType is a Type, TypeMatcher or TemplateTypeParam
 type ResolvableType interface {
@@ -339,3 +418,12 @@ func (t *TemplateEnumParam) GetName() string { return t.Name }
 
 // GetName returns the name of the TemplateNumberParam
 func (t *TemplateNumberParam) GetName() string { return t.Name }
+
+func formatList[T any](w fmt.State, list []T) {
+	for i, v := range list {
+		if i > 0 {
+			fmt.Fprint(w, ", ")
+		}
+		fmt.Fprintf(w, "%v", v)
+	}
+}

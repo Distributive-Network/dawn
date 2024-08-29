@@ -1,16 +1,29 @@
-// Copyright 2022 The Tint Authors.
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/utils/text/unicode.h"
 
@@ -375,32 +388,34 @@ std::pair<CodePoint, size_t> Decode(const uint8_t* ptr, size_t len) {
 
     CodePoint c;
 
-    uint8_t valid = 0x80;
+    uint8_t top_bits = 0b11000000;
     switch (n) {
         // Note: n=0 (invalid) is correctly handled without a case.
         case 1:
             c = CodePoint{ptr[0]};
             break;
         case 2:
-            valid &= ptr[1];
+            top_bits &= ptr[1] ^ 0b01000000;
             c = CodePoint{(static_cast<uint32_t>(ptr[0] & 0b00011111) << 6) |
                           (static_cast<uint32_t>(ptr[1] & 0b00111111))};
             break;
         case 3:
-            valid &= ptr[1] & ptr[2];
+            top_bits &= (ptr[1] ^ 0b01000000) & (ptr[2] ^ 0b01000000);
             c = CodePoint{(static_cast<uint32_t>(ptr[0] & 0b00001111) << 12) |
                           (static_cast<uint32_t>(ptr[1] & 0b00111111) << 6) |
                           (static_cast<uint32_t>(ptr[2] & 0b00111111))};
             break;
         case 4:
-            valid &= ptr[1] & ptr[2] & ptr[3];
+            top_bits &= (ptr[1] ^ 0b01000000) & (ptr[2] ^ 0b01000000) & (ptr[3] ^ 0b01000000);
             c = CodePoint{(static_cast<uint32_t>(ptr[0] & 0b00000111) << 18) |
                           (static_cast<uint32_t>(ptr[1] & 0b00111111) << 12) |
                           (static_cast<uint32_t>(ptr[2] & 0b00111111) << 6) |
                           (static_cast<uint32_t>(ptr[3] & 0b00111111))};
             break;
     }
-    if (!valid) {
+    if (top_bits != 0b11000000) {
+        // Check that the two most significant bits of all the code units after the first code point
+        // are all [1, 0].
         n = 0;
         c = 0;
     }
@@ -409,6 +424,40 @@ std::pair<CodePoint, size_t> Decode(const uint8_t* ptr, size_t len) {
 
 std::pair<CodePoint, size_t> Decode(std::string_view utf8_string) {
     return Decode(reinterpret_cast<const uint8_t*>(utf8_string.data()), utf8_string.size());
+}
+
+size_t Encode(CodePoint code_point, uint8_t* ptr) {
+    if (code_point <= 0x7f) {
+        if (ptr) {
+            ptr[0] = static_cast<uint8_t>(code_point);
+        }
+        return 1;
+    }
+    if (code_point <= 0x7ff) {
+        if (ptr) {
+            ptr[0] = static_cast<uint8_t>(code_point >> 6) | 0b11000000;
+            ptr[1] = static_cast<uint8_t>(code_point & 0b00111111) | 0b10000000;
+        }
+        return 2;
+    }
+    if (code_point <= 0xffff) {
+        if (ptr) {
+            ptr[0] = static_cast<uint8_t>(code_point >> 12) | 0b11100000;
+            ptr[1] = static_cast<uint8_t>((code_point >> 6) & 0b00111111) | 0b10000000;
+            ptr[2] = static_cast<uint8_t>(code_point & 0b00111111) | 0b10000000;
+        }
+        return 3;
+    }
+    if (code_point <= 0x10ffff) {
+        if (ptr) {
+            ptr[0] = static_cast<uint8_t>(code_point >> 18) | 0b11110000;
+            ptr[1] = static_cast<uint8_t>((code_point >> 12) & 0b00111111) | 0b10000000;
+            ptr[2] = static_cast<uint8_t>((code_point >> 6) & 0b00111111) | 0b10000000;
+            ptr[3] = static_cast<uint8_t>(code_point & 0b00111111) | 0b10000000;
+        }
+        return 4;
+    }
+    return 0;  // invalid code point
 }
 
 bool IsASCII(std::string_view str) {
@@ -422,4 +471,49 @@ bool IsASCII(std::string_view str) {
 
 }  // namespace utf8
 
+namespace utf16 {
+
+std::pair<CodePoint, size_t> Decode(const uint16_t* ptr, size_t len) {
+    if (len < 1) {
+        return {};
+    }
+    uint16_t a = ptr[0];
+    if (a <= 0xd7ff || a >= 0xe000) {
+        return {CodePoint{static_cast<uint32_t>(a)}, 1};
+    }
+    if (len < 2) {
+        return {};
+    }
+    uint32_t b = ptr[1];
+    if (b <= 0xd7ff || b >= 0xe000) {
+        return {};
+    }
+    uint32_t high = a - 0xd800;
+    uint32_t low = b - 0xdc00;
+    return {CodePoint{0x10000 + ((high << 10) | low)}, 2};
+}
+
+std::pair<CodePoint, size_t> Decode(std::string_view utf16_string) {
+    return Decode(reinterpret_cast<const uint16_t*>(utf16_string.data()), utf16_string.size() / 2);
+}
+
+size_t Encode(CodePoint code_point, uint16_t* ptr) {
+    if (code_point <= 0xd7ff || (code_point >= 0xe000 && code_point <= 0xffff)) {
+        if (ptr) {
+            ptr[0] = static_cast<uint16_t>(code_point);
+        }
+        return 1;
+    }
+    if (code_point >= 0x10000 && code_point <= 0x10ffff) {
+        if (ptr) {
+            auto biased = code_point - 0x10000;
+            ptr[0] = static_cast<uint16_t>((biased >> 10) + 0xd800);
+            ptr[1] = static_cast<uint16_t>((biased & 0b1111111111) + 0xdc00);
+        }
+        return 2;
+    }
+    return 0;  // invalid code point
+}
+
+}  // namespace utf16
 }  // namespace tint

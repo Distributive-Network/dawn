@@ -1,25 +1,40 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/opengl/PhysicalDeviceGL.h"
 
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "dawn/common/GPUInfo.h"
+#include "dawn/native/ChainUtils.h"
 #include "dawn/native/Instance.h"
 #include "dawn/native/opengl/ContextEGL.h"
 #include "dawn/native/opengl/DeviceGL.h"
@@ -52,26 +67,45 @@ uint32_t GetVendorIdFromVendors(const char* vendor) {
     return vendorId;
 }
 
+uint32_t GetDeviceIdFromRender(std::string_view render) {
+    uint32_t deviceId = 0;
+    size_t pos = render.find("(0x");
+    if (pos == std::string_view::npos) {
+        pos = render.find("(0X");
+    }
+    if (pos == std::string_view::npos) {
+        return deviceId;
+    }
+    render.remove_prefix(pos + 3);
+
+    // The first character after the prefix must be hexadecimal, otherwise an invalid argument
+    // exception is thrown.
+    if (!render.empty() && std::isxdigit(static_cast<unsigned char>(*render.data()))) {
+        deviceId = static_cast<uint32_t>(std::stoul(render.data(), nullptr, 16));
+    }
+
+    return deviceId;
+}
+
 }  // anonymous namespace
 
 // static
-ResultOrError<Ref<PhysicalDevice>> PhysicalDevice::Create(InstanceBase* instance,
-                                                          wgpu::BackendType backendType,
-                                                          void* (*getProc)(const char*),
+ResultOrError<Ref<PhysicalDevice>> PhysicalDevice::Create(wgpu::BackendType backendType,
+                                                          EGLGetProcProc getProc,
                                                           EGLDisplay display) {
     EGLFunctions egl;
-    egl.Init(getProc);
-
-    EGLenum api = backendType == wgpu::BackendType::OpenGLES ? EGL_OPENGL_ES_API : EGL_OPENGL_API;
+    DAWN_TRY(egl.LoadClientProcs(getProc));
 
     if (display == EGL_NO_DISPLAY) {
         display = egl.GetCurrentDisplay();
     }
-
     if (display == EGL_NO_DISPLAY) {
         display = egl.GetDisplay(EGL_DEFAULT_DISPLAY);
     }
 
+    DAWN_TRY(egl.LoadDisplayProcs(display));
+
+    EGLenum api = backendType == wgpu::BackendType::OpenGLES ? EGL_OPENGL_ES_API : EGL_OPENGL_API;
     std::unique_ptr<ContextEGL> context;
     DAWN_TRY_ASSIGN(context, ContextEGL::Create(egl, api, display, false));
 
@@ -81,8 +115,7 @@ ResultOrError<Ref<PhysicalDevice>> PhysicalDevice::Create(InstanceBase* instance
 
     context->MakeCurrent();
 
-    Ref<PhysicalDevice> physicalDevice =
-        AcquireRef(new PhysicalDevice(instance, backendType, display));
+    Ref<PhysicalDevice> physicalDevice = AcquireRef(new PhysicalDevice(backendType, display));
     DAWN_TRY(physicalDevice->InitializeGLFunctions(getProc));
     DAWN_TRY(physicalDevice->Initialize());
 
@@ -90,14 +123,13 @@ ResultOrError<Ref<PhysicalDevice>> PhysicalDevice::Create(InstanceBase* instance
     return physicalDevice;
 }
 
-PhysicalDevice::PhysicalDevice(InstanceBase* instance,
-                               wgpu::BackendType backendType,
-                               EGLDisplay display)
-    : PhysicalDeviceBase(instance, backendType), mDisplay(display) {}
+PhysicalDevice::PhysicalDevice(wgpu::BackendType backendType, EGLDisplay display)
+    : PhysicalDeviceBase(backendType), mDisplay(display) {}
 
-MaybeError PhysicalDevice::InitializeGLFunctions(void* (*getProc)(const char*)) {
+MaybeError PhysicalDevice::InitializeGLFunctions(EGLGetProcProc getProc) {
     // Use getProc to populate the dispatch table
-    mEGLFunctions.Init(getProc);
+    DAWN_TRY(mEGLFunctions.LoadClientProcs(getProc));
+    DAWN_TRY(mEGLFunctions.LoadDisplayProcs(mDisplay));
     return mFunctions.Initialize(getProc);
 }
 
@@ -108,9 +140,18 @@ bool PhysicalDevice::SupportsExternalImages() const {
 
 MaybeError PhysicalDevice::InitializeImpl() {
     if (mFunctions.GetVersion().IsES()) {
-        ASSERT(GetBackendType() == wgpu::BackendType::OpenGLES);
+        DAWN_ASSERT(GetBackendType() == wgpu::BackendType::OpenGLES);
+
+        // WebGPU requires being able to render to f16 and being able to blend f16
+        // which EXT_color_buffer_half_float provides.
+        DAWN_INVALID_IF(!mFunctions.IsGLExtensionSupported("GL_EXT_color_buffer_half_float"),
+                        "GL_EXT_color_buffer_half_float is required");
+
+        // WebGPU requires being able to render to f32 but does not require being able to blend f32
+        DAWN_INVALID_IF(!mFunctions.IsGLExtensionSupported("GL_EXT_color_buffer_float"),
+                        "GL_EXT_color_buffer_float is required");
     } else {
-        ASSERT(GetBackendType() == wgpu::BackendType::OpenGL);
+        DAWN_ASSERT(GetBackendType() == wgpu::BackendType::OpenGL);
     }
 
     mName = reinterpret_cast<const char*>(mFunctions.GetString(GL_RENDERER));
@@ -118,6 +159,10 @@ MaybeError PhysicalDevice::InitializeImpl() {
     // Workaroud to find vendor id from vendor name
     const char* vendor = reinterpret_cast<const char*>(mFunctions.GetString(GL_VENDOR));
     mVendorId = GetVendorIdFromVendors(vendor);
+    // Workaround to find device id from ANGLE render string
+    if (mName.find("ANGLE") == 0) {
+        mDeviceId = GetDeviceIdFromRender(mName);
+    }
 
     mDriverDescription = std::string("OpenGL version ") +
                          reinterpret_cast<const char*>(mFunctions.GetString(GL_VERSION));
@@ -130,6 +175,8 @@ MaybeError PhysicalDevice::InitializeImpl() {
 }
 
 void PhysicalDevice::InitializeSupportedFeaturesImpl() {
+    EnableFeature(Feature::StaticSamplers);
+
     // TextureCompressionBC
     {
         // BC1, BC2 and BC3 are not supported in OpenGL or OpenGL ES core features.
@@ -187,6 +234,19 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
     if (mFunctions.IsGLExtensionSupported("GL_AMD_gpu_shader_half_float")) {
         EnableFeature(Feature::ShaderF16);
     }
+
+    // DualSourceBlending
+    if (mFunctions.IsGLExtensionSupported("GL_EXT_blend_func_extended") ||
+        mFunctions.IsAtLeastGL(3, 3)) {
+        EnableFeature(Feature::DualSourceBlending);
+    }
+
+    // Unorm16TextureFormats, Snorm16TextureFormats and Norm16TextureFormats
+    if (mFunctions.IsGLExtensionSupported("GL_EXT_texture_norm16")) {
+        EnableFeature(Feature::Unorm16TextureFormats);
+        EnableFeature(Feature::Snorm16TextureFormats);
+        EnableFeature(Feature::Norm16TextureFormats);
+    }
 }
 
 namespace {
@@ -205,7 +265,7 @@ GLint GetIndexed(const OpenGLFunctions& gl, GLenum pname, GLuint index) {
 
 MaybeError PhysicalDevice::InitializeSupportedLimitsImpl(CombinedLimits* limits) {
     const OpenGLFunctions& gl = mFunctions;
-    GetDefaultLimits(&limits->v1);
+    GetDefaultLimitsForSupportedFeatureLevel(&limits->v1);
 
     limits->v1.maxTextureDimension1D = limits->v1.maxTextureDimension2D =
         Get(gl, GL_MAX_TEXTURE_SIZE);
@@ -233,11 +293,22 @@ MaybeError PhysicalDevice::InitializeSupportedLimitsImpl(CombinedLimits* limits)
     limits->v1.minStorageBufferOffsetAlignment = Get(gl, GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT);
     limits->v1.maxVertexBuffers = Get(gl, GL_MAX_VERTEX_ATTRIB_BINDINGS);
     limits->v1.maxBufferSize = kAssumedMaxBufferSize;
-    GLint maxVertexAttribs = Get(gl, GL_MAX_VERTEX_ATTRIBS);
-    limits->v1.maxVertexAttributes = limits->v1.maxVertexBuffers * maxVertexAttribs;
+    // The code that handles adding the index buffer offset to first_index
+    // used in drawIndexedIndirect can not handle a max buffer size larger than 4gig.
+    // See IndirectDrawValidationEncoder.cpp
+    static_assert(kAssumedMaxBufferSize < 0x100000000u);
+
+    limits->v1.maxVertexAttributes = Get(gl, GL_MAX_VERTEX_ATTRIBS);
     limits->v1.maxVertexBufferArrayStride = Get(gl, GL_MAX_VERTEX_ATTRIB_STRIDE);
     limits->v1.maxInterStageShaderComponents = Get(gl, GL_MAX_VARYING_COMPONENTS);
     limits->v1.maxInterStageShaderVariables = Get(gl, GL_MAX_VARYING_VECTORS);
+    // TODO(dawn:685, dawn:1448): Support higher values as ANGLE compiler always generates
+    // additional shader varyings (gl_PointSize and dx_Position) on ANGLE D3D backends.
+    limits->v1.maxInterStageShaderComponents =
+        std::min(limits->v1.maxInterStageShaderComponents, kMaxInterStageShaderComponents);
+    limits->v1.maxInterStageShaderVariables =
+        std::min(limits->v1.maxInterStageShaderVariables, kMaxInterStageShaderVariables);
+
     limits->v1.maxColorAttachments =
         std::min(Get(gl, GL_MAX_COLOR_ATTACHMENTS), Get(gl, GL_MAX_DRAW_BUFFERS));
 
@@ -257,14 +328,12 @@ MaybeError PhysicalDevice::InitializeSupportedLimitsImpl(CombinedLimits* limits)
     return {};
 }
 
-void PhysicalDevice::SetupBackendAdapterToggles(TogglesState* adpterToggles) const {}
+void PhysicalDevice::SetupBackendAdapterToggles(dawn::platform::Platform* platform,
+                                                TogglesState* adapterToggles) const {}
 
-void PhysicalDevice::SetupBackendDeviceToggles(TogglesState* deviceToggles) const {
+void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platform,
+                                               TogglesState* deviceToggles) const {
     const OpenGLFunctions& gl = mFunctions;
-
-    bool supportsBaseVertex = gl.IsAtLeastGLES(3, 2) || gl.IsAtLeastGL(3, 2);
-
-    bool supportsBaseInstance = gl.IsAtLeastGLES(3, 2) || gl.IsAtLeastGL(4, 2);
 
     // TODO(crbug.com/dawn/582): Use OES_draw_buffers_indexed where available.
     bool supportsIndexedDrawBuffers = gl.IsAtLeastGLES(3, 2) || gl.IsAtLeastGL(3, 0);
@@ -287,28 +356,11 @@ void PhysicalDevice::SetupBackendDeviceToggles(TogglesState* deviceToggles) cons
     bool supportsSampleVariables = gl.IsAtLeastGL(4, 0) || gl.IsAtLeastGLES(3, 2) ||
                                    gl.IsGLExtensionSupported("GL_OES_sample_variables");
 
-    // TODO(crbug.com/dawn/343): We can support the extension variants, but need to load the EXT
-    // procs without the extension suffix.
-    // We'll also need emulation of shader builtins gl_BaseVertex and gl_BaseInstance.
-
-    // supportsBaseVertex |=
-    //     (gl.IsAtLeastGLES(2, 0) &&
-    //      (gl.IsGLExtensionSupported("OES_draw_elements_base_vertex") ||
-    //       gl.IsGLExtensionSupported("EXT_draw_elements_base_vertex"))) ||
-    //     (gl.IsAtLeastGL(3, 1) && gl.IsGLExtensionSupported("ARB_draw_elements_base_vertex"));
-
-    // supportsBaseInstance |=
-    //     (gl.IsAtLeastGLES(3, 1) && gl.IsGLExtensionSupported("EXT_base_instance")) ||
-    //     (gl.IsAtLeastGL(3, 1) && gl.IsGLExtensionSupported("ARB_base_instance"));
-
-    if (gl.IsAtLeastGLES(3, 1) && gl.IsGLExtensionSupported("GL_ANGLE_base_vertex_base_instance")) {
-        supportsBaseVertex = true;
-        supportsBaseInstance = true;
-    }
+    // Decide whether glTexSubImage2D/3D accepts GL_STENCIL_INDEX or not.
+    bool supportsStencilWriteTexture =
+        gl.GetVersion().IsDesktop() || gl.IsGLExtensionSupported("GL_OES_texture_stencil8");
 
     // TODO(crbug.com/dawn/343): Investigate emulation.
-    deviceToggles->Default(Toggle::DisableBaseVertex, !supportsBaseVertex);
-    deviceToggles->Default(Toggle::DisableBaseInstance, !supportsBaseInstance);
     deviceToggles->Default(Toggle::DisableIndexedDrawBuffers, !supportsIndexedDrawBuffers);
     deviceToggles->Default(Toggle::DisableDepthRead, !supportsDepthRead);
     deviceToggles->Default(Toggle::DisableStencilRead, !supportsStencilRead);
@@ -335,14 +387,27 @@ void PhysicalDevice::SetupBackendDeviceToggles(TogglesState* deviceToggles) cons
 
     // For OpenGL ES, use compute shader blit to emulate bgra8unorm texture to buffer copies.
     deviceToggles->Default(Toggle::UseBlitForBGRA8UnormTextureToBufferCopy, !supportsBGRARead);
+
+    // For OpenGL ES, use compute shader blit to emulate rgb9e5ufloat texture to buffer copies.
+    deviceToggles->Default(Toggle::UseBlitForRGB9E5UfloatTextureCopy, gl.GetVersion().IsES());
+
+    // Use a blit to emulate stencil-only buffer-to-texture copies.
+    deviceToggles->Default(Toggle::UseBlitForBufferToStencilTextureCopy, true);
+
+    // Use a blit to emulate write to stencil textures.
+    deviceToggles->Default(Toggle::UseBlitForStencilTextureWrite, !supportsStencilWriteTexture);
+
+    // Use T2B and B2T copies to emulate a T2T copy between sRGB and non-sRGB textures.
+    deviceToggles->Default(Toggle::UseT2B2TForSRGBTextureCopy, true);
 }
 
-ResultOrError<Ref<DeviceBase>> PhysicalDevice::CreateDeviceImpl(AdapterBase* adapter,
-                                                                const DeviceDescriptor* descriptor,
-                                                                const TogglesState& deviceToggles) {
+ResultOrError<Ref<DeviceBase>> PhysicalDevice::CreateDeviceImpl(
+    AdapterBase* adapter,
+    const UnpackedPtr<DeviceDescriptor>& descriptor,
+    const TogglesState& deviceToggles,
+    Ref<DeviceBase::DeviceLostEvent>&& lostEvent) {
     EGLenum api =
         GetBackendType() == wgpu::BackendType::OpenGL ? EGL_OPENGL_API : EGL_OPENGL_ES_API;
-    std::unique_ptr<Device::Context> context;
     bool useANGLETextureSharing = false;
     for (size_t i = 0; i < descriptor->requiredFeatureCount; ++i) {
         if (descriptor->requiredFeatures[i] == wgpu::FeatureName::ANGLETextureSharing) {
@@ -350,18 +415,53 @@ ResultOrError<Ref<DeviceBase>> PhysicalDevice::CreateDeviceImpl(AdapterBase* ada
         }
     }
 
+    std::unique_ptr<ContextEGL> context;
     DAWN_TRY_ASSIGN(context,
                     ContextEGL::Create(mEGLFunctions, api, mDisplay, useANGLETextureSharing));
-    return Device::Create(adapter, descriptor, mFunctions, std::move(context), deviceToggles);
+
+    return Device::Create(adapter, descriptor, mFunctions, std::move(context), deviceToggles,
+                          std::move(lostEvent));
 }
 
 bool PhysicalDevice::SupportsFeatureLevel(FeatureLevel featureLevel) const {
     return featureLevel == FeatureLevel::Compatibility;
 }
 
-MaybeError PhysicalDevice::ValidateFeatureSupportedWithTogglesImpl(
+ResultOrError<PhysicalDeviceSurfaceCapabilities> PhysicalDevice::GetSurfaceCapabilities(
+    InstanceBase*,
+    const Surface*) const {
+    PhysicalDeviceSurfaceCapabilities capabilities;
+
+    capabilities.usages = wgpu::TextureUsage::RenderAttachment |
+                          wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopySrc |
+                          wgpu::TextureUsage::CopyDst;
+
+    // This is the only supported format in native mode (see crbug.com/dawn/160).
+#if DAWN_PLATFORM_IS(ANDROID)
+    capabilities.formats.push_back(wgpu::TextureFormat::RGBA8Unorm);
+#else
+    capabilities.formats.push_back(wgpu::TextureFormat::BGRA8Unorm);
+#endif  // !DAWN_PLATFORM_IS(ANDROID)
+
+    capabilities.presentModes = {
+        wgpu::PresentMode::Fifo,
+        wgpu::PresentMode::Immediate,
+        wgpu::PresentMode::Mailbox,
+    };
+
+    capabilities.alphaModes = {
+        wgpu::CompositeAlphaMode::Opaque,
+    };
+
+    return capabilities;
+}
+
+FeatureValidationResult PhysicalDevice::ValidateFeatureSupportedWithTogglesImpl(
     wgpu::FeatureName feature,
     const TogglesState& toggles) const {
     return {};
 }
+
+void PhysicalDevice::PopulateBackendProperties(UnpackedPtr<AdapterProperties>& properties) const {}
+
 }  // namespace dawn::native::opengl

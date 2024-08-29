@@ -1,16 +1,29 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_DAWN_NATIVE_BUFFER_H_
 #define SRC_DAWN_NATIVE_BUFFER_H_
@@ -18,12 +31,15 @@
 #include <functional>
 #include <memory>
 
+#include "dawn/common/FutureUtils.h"
 #include "dawn/common/NonCopyable.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 #include "dawn/native/Error.h"
 #include "dawn/native/Forward.h"
 #include "dawn/native/IntegerTypes.h"
 #include "dawn/native/ObjectBase.h"
+#include "dawn/native/SharedBufferMemory.h"
 #include "dawn/native/UsageValidationMode.h"
 
 #include "dawn/native/dawn_platform.h"
@@ -34,7 +50,9 @@ struct CopyTextureToBufferCmd;
 
 enum class MapType : uint32_t;
 
-MaybeError ValidateBufferDescriptor(DeviceBase* device, const BufferDescriptor* descriptor);
+ResultOrError<UnpackedPtr<BufferDescriptor>> ValidateBufferDescriptor(
+    DeviceBase* device,
+    const BufferDescriptor* descriptor);
 
 static constexpr wgpu::BufferUsage kReadOnlyBufferUsages =
     wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::Index |
@@ -44,21 +62,31 @@ static constexpr wgpu::BufferUsage kReadOnlyBufferUsages =
 static constexpr wgpu::BufferUsage kMappableBufferUsages =
     wgpu::BufferUsage::MapRead | wgpu::BufferUsage::MapWrite;
 
-class BufferBase : public ApiObjectBase {
+static constexpr wgpu::BufferUsage kShaderBufferUsages =
+    wgpu::BufferUsage::Uniform | wgpu::BufferUsage::Storage | kInternalStorageBuffer |
+    kReadOnlyStorageBuffer;
+
+static constexpr wgpu::BufferUsage kReadOnlyShaderBufferUsages =
+    kShaderBufferUsages & kReadOnlyBufferUsages;
+
+class BufferBase : public SharedResource {
   public:
     enum class BufferState {
         Unmapped,
         PendingMap,
         Mapped,
         MappedAtCreation,
+        HostMappedPersistent,
+        SharedMemoryNoAccess,
         Destroyed,
     };
-    static BufferBase* MakeError(DeviceBase* device, const BufferDescriptor* descriptor);
+    static Ref<BufferBase> MakeError(DeviceBase* device, const BufferDescriptor* descriptor);
 
     ObjectType GetType() const override;
 
     uint64_t GetSize() const;
     uint64_t GetAllocatedSize() const;
+    ExecutionSerial GetLastUsageSerial() const;
 
     // |GetUsageExternalOnly| returns the usage with which the buffer was created using the
     // base WebGPU API. Additional usages may be added for internal state tracking. |GetUsage|
@@ -73,13 +101,22 @@ class BufferBase : public ApiObjectBase {
 
     bool IsFullBufferRange(uint64_t offset, uint64_t size) const;
     bool NeedsInitialization() const;
-    bool IsDataInitialized() const;
-    void SetIsDataInitialized();
     void MarkUsedInPendingCommands();
+    virtual MaybeError UploadData(uint64_t bufferOffset, const void* data, size_t size);
+
+    // SharedResource impl.
+    ExecutionSerial OnEndAccess() override;
+    void OnBeginAccess() override;
+    bool HasAccess() const override;
+    bool IsDestroyed() const override;
+    void SetInitialized(bool initialized) override;
+    bool IsInitialized() const override;
 
     virtual void* GetMappedPointer() = 0;
     void* GetMappedRange(size_t offset, size_t size, bool writable = true);
     MaybeError Unmap();
+
+    void DumpMemoryStatistics(dawn::native::MemoryDump* dump, const char* prefix) const;
 
     // Dawn API
     void APIMapAsync(wgpu::MapMode mode,
@@ -87,6 +124,14 @@ class BufferBase : public ApiObjectBase {
                      size_t size,
                      WGPUBufferMapCallback callback,
                      void* userdata);
+    Future APIMapAsyncF(wgpu::MapMode mode,
+                        size_t offset,
+                        size_t size,
+                        const BufferMapCallbackInfo& callbackInfo);
+    Future APIMapAsync2(wgpu::MapMode mode,
+                        size_t offset,
+                        size_t size,
+                        const WGPUBufferMapCallbackInfo2& callbackInfo);
     void* APIGetMappedRange(size_t offset, size_t size);
     const void* APIGetConstMappedRange(size_t offset, size_t size);
     void APIUnmap();
@@ -96,7 +141,7 @@ class BufferBase : public ApiObjectBase {
     uint64_t APIGetSize() const;
 
   protected:
-    BufferBase(DeviceBase* device, const BufferDescriptor* descriptor);
+    BufferBase(DeviceBase* device, const UnpackedPtr<BufferDescriptor>& descriptor);
     BufferBase(DeviceBase* device, const BufferDescriptor* descriptor, ObjectBase::ErrorTag tag);
 
     void DestroyImpl() override;
@@ -128,8 +173,8 @@ class BufferBase : public ApiObjectBase {
     bool CanGetMappedRange(bool writable, size_t offset, size_t size) const;
     void UnmapInternal(WGPUBufferMapAsyncStatus callbackStatus);
 
-    uint64_t mSize = 0;
-    wgpu::BufferUsage mUsage = wgpu::BufferUsage::None;
+    const uint64_t mSize = 0;
+    const wgpu::BufferUsage mUsage = wgpu::BufferUsage::None;
     BufferState mState;
     bool mIsDataInitialized = false;
 
@@ -142,11 +187,16 @@ class BufferBase : public ApiObjectBase {
     Ref<BufferBase> mStagingBuffer;
 
     WGPUBufferMapCallback mMapCallback = nullptr;
-    void* mMapUserdata = nullptr;
+    raw_ptr<void> mMapUserdata = nullptr;
     MapRequestID mLastMapID = MapRequestID(0);
     wgpu::MapMode mMapMode = wgpu::MapMode::None;
     size_t mMapOffset = 0;
     size_t mMapSize = 0;
+
+    struct MapAsyncEvent;
+    struct MapAsyncEvent1;
+    struct MapAsyncEvent2;
+    Ref<MapAsyncEvent> mPendingMapEvent;
 };
 
 }  // namespace dawn::native

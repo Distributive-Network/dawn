@@ -1,30 +1,43 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/spirv/reader/ast_parser/function.h"
 
 #include <algorithm>
 #include <array>
 
+#include "src/tint/lang/core/builtin_fn.h"
 #include "src/tint/lang/core/builtin_value.h"
 #include "src/tint/lang/core/fluent_types.h"
-#include "src/tint/lang/core/function.h"
 #include "src/tint/lang/core/type/depth_texture.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
+#include "src/tint/lang/spirv/reader/ast_lower/atomics.h"
 #include "src/tint/lang/wgsl/ast/assignment_statement.h"
-#include "src/tint/lang/wgsl/ast/bitcast_expression.h"
 #include "src/tint/lang/wgsl/ast/break_statement.h"
 #include "src/tint/lang/wgsl/ast/builtin_attribute.h"
 #include "src/tint/lang/wgsl/ast/call_statement.h"
@@ -35,7 +48,6 @@
 #include "src/tint/lang/wgsl/ast/return_statement.h"
 #include "src/tint/lang/wgsl/ast/stage_attribute.h"
 #include "src/tint/lang/wgsl/ast/switch_statement.h"
-#include "src/tint/lang/wgsl/ast/transform/spirv_atomic.h"
 #include "src/tint/lang/wgsl/ast/unary_op_expression.h"
 #include "src/tint/lang/wgsl/ast/variable_decl_statement.h"
 #include "src/tint/utils/containers/hashmap.h"
@@ -230,6 +242,7 @@ std::optional<core::BinaryOp> ConvertBinaryOp(spv::Op opcode) {
             return core::BinaryOp::kDivide;
         case spv::Op::OpUMod:
         case spv::Op::OpSMod:
+        case spv::Op::OpSRem:
         case spv::Op::OpFRem:
             return core::BinaryOp::kModulo;
         case spv::Op::OpLogicalEqual:
@@ -455,42 +468,42 @@ std::string GetGlslStd450FuncName(uint32_t ext_opcode) {
 }
 
 // Returns the WGSL standard library function builtin for the
-// given instruction, or core::Function::kNone
-core::Function GetBuiltin(spv::Op opcode) {
+// given instruction, or wgsl::BuiltinFn::kNone
+wgsl::BuiltinFn GetBuiltin(spv::Op opcode) {
     switch (opcode) {
         case spv::Op::OpBitCount:
-            return core::Function::kCountOneBits;
+            return wgsl::BuiltinFn::kCountOneBits;
         case spv::Op::OpBitFieldInsert:
-            return core::Function::kInsertBits;
+            return wgsl::BuiltinFn::kInsertBits;
         case spv::Op::OpBitFieldSExtract:
         case spv::Op::OpBitFieldUExtract:
-            return core::Function::kExtractBits;
+            return wgsl::BuiltinFn::kExtractBits;
         case spv::Op::OpBitReverse:
-            return core::Function::kReverseBits;
+            return wgsl::BuiltinFn::kReverseBits;
         case spv::Op::OpDot:
-            return core::Function::kDot;
+            return wgsl::BuiltinFn::kDot;
         case spv::Op::OpDPdx:
-            return core::Function::kDpdx;
+            return wgsl::BuiltinFn::kDpdx;
         case spv::Op::OpDPdy:
-            return core::Function::kDpdy;
+            return wgsl::BuiltinFn::kDpdy;
         case spv::Op::OpFwidth:
-            return core::Function::kFwidth;
+            return wgsl::BuiltinFn::kFwidth;
         case spv::Op::OpDPdxFine:
-            return core::Function::kDpdxFine;
+            return wgsl::BuiltinFn::kDpdxFine;
         case spv::Op::OpDPdyFine:
-            return core::Function::kDpdyFine;
+            return wgsl::BuiltinFn::kDpdyFine;
         case spv::Op::OpFwidthFine:
-            return core::Function::kFwidthFine;
+            return wgsl::BuiltinFn::kFwidthFine;
         case spv::Op::OpDPdxCoarse:
-            return core::Function::kDpdxCoarse;
+            return wgsl::BuiltinFn::kDpdxCoarse;
         case spv::Op::OpDPdyCoarse:
-            return core::Function::kDpdyCoarse;
+            return wgsl::BuiltinFn::kDpdyCoarse;
         case spv::Op::OpFwidthCoarse:
-            return core::Function::kFwidthCoarse;
+            return wgsl::BuiltinFn::kFwidthCoarse;
         default:
             break;
     }
-    return core::Function::kNone;
+    return wgsl::BuiltinFn::kNone;
 }
 
 // @param opcode a SPIR-V opcode
@@ -2509,8 +2522,7 @@ bool FunctionEmitter::EmitFunctionVariables() {
             }
         }
         auto* var = parser_impl_.MakeVar(inst.result_id(), core::AddressSpace::kUndefined,
-                                         core::Access::kUndefined, var_store_type, initializer,
-                                         Attributes{});
+                                         var_store_type, initializer, Attributes{});
         auto* var_decl_stmt = create<ast::VariableDeclStatement>(Source{}, var);
         AddStatement(var_decl_stmt);
         auto* var_type = ty_.Reference(core::AddressSpace::kUndefined, var_store_type);
@@ -3356,9 +3368,8 @@ bool FunctionEmitter::EmitStatementsInBasicBlock(const BlockInfo& block_info,
         // no need to remap pointer properties.
         auto* store_type = parser_impl_.ConvertType(def_inst->type_id());
         AddStatement(create<ast::VariableDeclStatement>(
-            Source{},
-            parser_impl_.MakeVar(id, core::AddressSpace::kUndefined, core::Access::kUndefined,
-                                 store_type, nullptr, Attributes{})));
+            Source{}, parser_impl_.MakeVar(id, core::AddressSpace::kUndefined, store_type, nullptr,
+                                           Attributes{})));
         auto* type = ty_.Reference(core::AddressSpace::kUndefined, store_type);
         identifier_types_.emplace(id, type);
     }
@@ -3414,7 +3425,7 @@ bool FunctionEmitter::EmitStatementsInBasicBlock(const BlockInfo& block_info,
                 auto copy_name = namer_.MakeDerivedName(namer_.Name(phi_id) + "_c" +
                                                         std::to_string(block_info.id));
                 auto copy_sym = builder_.Symbols().Register(copy_name);
-                copied_phis.GetOrCreate(phi_id, [copy_sym] { return copy_sym; });
+                copied_phis.GetOrAdd(phi_id, [copy_sym] { return copy_sym; });
                 AddStatement(builder_.WrapInStatement(
                     builder_.Let(copy_sym, builder_.Expr(namer_.Name(phi_id)))));
             }
@@ -3425,7 +3436,7 @@ bool FunctionEmitter::EmitStatementsInBasicBlock(const BlockInfo& block_info,
             const auto phi_id = assignment.phi_id;
             auto* const lhs_expr = builder_.Expr(namer_.Name(phi_id));
             // If RHS value is actually a phi we just cpatured, then use it.
-            auto copy_sym = copied_phis.Find(assignment.value_id);
+            auto copy_sym = copied_phis.Get(assignment.value_id);
             auto* const rhs_expr =
                 copy_sym ? builder_.Expr(*copy_sym) : MakeExpression(assignment.value_id).expr;
             AddStatement(builder_.Assign(lhs_expr, rhs_expr));
@@ -3818,11 +3829,11 @@ TypedExpression FunctionEmitter::MaybeEmitCombinatorialValue(
     }
 
     const auto builtin = GetBuiltin(op);
-    if (builtin != core::Function::kNone) {
+    if (builtin != wgsl::BuiltinFn::kNone) {
         switch (builtin) {
-            case core::Function::kExtractBits:
+            case wgsl::BuiltinFn::kExtractBits:
                 return MakeExtractBitsCall(inst);
-            case core::Function::kInsertBits:
+            case wgsl::BuiltinFn::kInsertBits:
                 return MakeInsertBitsCall(inst);
             default:
                 return MakeBuiltinCall(inst);
@@ -4001,8 +4012,8 @@ TypedExpression FunctionEmitter::EmitGlslStd450ExtInst(const spvtools::opt::Inst
 
             case GLSLstd450Normalize:
                 // WGSL does not have scalar form of the normalize builtin.
-                // The answer would be 1 anyway, so return that directly.
-                return {ty_.F32(), builder_.Expr(1_f)};
+                // In this case we map normalize(x) to sign(x).
+                return {ty_.F32(), builder_.Call("sign", MakeOperand(inst, 2).expr)};
 
             case GLSLstd450FaceForward: {
                 // If dot(Nref, Incident) < 0, the result is Normal, otherwise -Normal.
@@ -4906,7 +4917,6 @@ DefInfo::Pointer FunctionEmitter::GetPointerInfo(uint32_t id) {
                 break;
         }
         TINT_UNREACHABLE() << "expected a memory object declaration";
-        return {};
     };
 
     auto where = def_info_.find(id);
@@ -5307,6 +5317,14 @@ bool FunctionEmitter::EmitControlBarrier(const spvtools::opt::Instruction& inst)
         AddStatement(builder_.CallStmt(builder_.Call("storageBarrier")));
         semantics &= ~static_cast<uint32_t>(spv::MemorySemanticsMask::UniformMemory);
     }
+    if (semantics & uint32_t(spv::MemorySemanticsMask::ImageMemory)) {
+        if (memory != uint32_t(spv::Scope::Workgroup)) {
+            return Fail() << "textureBarrier requires workgroup memory scope";
+        }
+        parser_impl_.Require(wgsl::LanguageFeature::kReadonlyAndReadwriteStorageTextures);
+        AddStatement(builder_.CallStmt(builder_.Call("textureBarrier")));
+        semantics &= ~static_cast<uint32_t>(spv::MemorySemanticsMask::ImageMemory);
+    }
     if (semantics) {
         return Fail() << "unsupported control barrier semantics: " << semantics;
     }
@@ -5315,7 +5333,7 @@ bool FunctionEmitter::EmitControlBarrier(const spvtools::opt::Instruction& inst)
 
 TypedExpression FunctionEmitter::MakeBuiltinCall(const spvtools::opt::Instruction& inst) {
     const auto builtin = GetBuiltin(opcode(inst));
-    auto* name = core::str(builtin);
+    auto* name = wgsl::str(builtin);
     auto* ident = create<ast::Identifier>(Source{}, builder_.Symbols().Register(name));
 
     ExpressionList params;
@@ -5339,7 +5357,7 @@ TypedExpression FunctionEmitter::MakeBuiltinCall(const spvtools::opt::Instructio
 
 TypedExpression FunctionEmitter::MakeExtractBitsCall(const spvtools::opt::Instruction& inst) {
     const auto builtin = GetBuiltin(opcode(inst));
-    auto* name = core::str(builtin);
+    auto* name = wgsl::str(builtin);
     auto* ident = create<ast::Identifier>(Source{}, builder_.Symbols().Register(name));
     auto e = MakeOperand(inst, 0);
     auto offset = ToU32(MakeOperand(inst, 1));
@@ -5356,7 +5374,7 @@ TypedExpression FunctionEmitter::MakeExtractBitsCall(const spvtools::opt::Instru
 
 TypedExpression FunctionEmitter::MakeInsertBitsCall(const spvtools::opt::Instruction& inst) {
     const auto builtin = GetBuiltin(opcode(inst));
-    auto* name = core::str(builtin);
+    auto* name = wgsl::str(builtin);
     auto* ident = create<ast::Identifier>(Source{}, builder_.Symbols().Register(name));
     auto e = MakeOperand(inst, 0);
     auto newbits = MakeOperand(inst, 1);
@@ -5633,9 +5651,10 @@ bool FunctionEmitter::EmitImageAccess(const spvtools::opt::Instruction& inst) {
         image_operands_mask ^= uint32_t(spv::ImageOperandsMask::Lod);
         arg_index++;
     } else if ((op == spv::Op::OpImageFetch || op == spv::Op::OpImageRead) &&
-               !texture_type->IsAnyOf<DepthMultisampledTexture, MultisampledTexture>()) {
-        // textureLoad requires an explicit level-of-detail parameter for
-        // non-multisampled texture types.
+               !texture_type
+                    ->IsAnyOf<DepthMultisampledTexture, MultisampledTexture, StorageTexture>()) {
+        // textureLoad requires an explicit level-of-detail parameter for non-multisampled and
+        // non-storage texture types.
         args.Push(parser_impl_.MakeNullValue(ty_.I32()));
     }
     if (arg_index + 1 < num_args &&
@@ -5813,7 +5832,9 @@ bool FunctionEmitter::EmitImageQuery(const spvtools::opt::Instruction& inst) {
                     : exprs[0],
             };
 
-            expr = ToSignedIfUnsigned(expr);
+            if (result_type->IsSignedScalarOrVector()) {
+                expr = ToSignedIfUnsigned(expr);
+            }
 
             return EmitConstDefOrWriteToHoistedVar(inst, expr);
         }
@@ -5842,7 +5863,7 @@ bool FunctionEmitter::EmitImageQuery(const spvtools::opt::Instruction& inst) {
 }
 
 bool FunctionEmitter::EmitAtomicOp(const spvtools::opt::Instruction& inst) {
-    auto emit_atomic = [&](core::Function builtin, std::initializer_list<TypedExpression> args) {
+    auto emit_atomic = [&](wgsl::BuiltinFn builtin, std::initializer_list<TypedExpression> args) {
         // Split args into params and expressions
         ParameterList params;
         params.Reserve(args.size());
@@ -5864,12 +5885,12 @@ bool FunctionEmitter::EmitAtomicOp(const spvtools::opt::Instruction& inst) {
 
         // Emit stub, will be removed by transform::SpirvAtomic
         auto* stub = builder_.Func(
-            Source{}, builder_.Symbols().New(std::string("stub_") + core::str(builtin)),
+            Source{}, builder_.Symbols().New(std::string("stub_") + wgsl::str(builtin)),
             std::move(params), ret_type,
             /* body */ nullptr,
             tint::Vector{
-                builder_.ASTNodes().Create<ast::transform::SpirvAtomic::Stub>(
-                    builder_.ID(), builder_.AllocateNodeID(), builtin),
+                builder_.ASTNodes().Create<Atomics::Stub>(builder_.ID(), builder_.AllocateNodeID(),
+                                                          builtin),
                 builder_.Disable(ast::DisabledValidation::kFunctionHasNoBody),
             });
 
@@ -5901,38 +5922,38 @@ bool FunctionEmitter::EmitAtomicOp(const spvtools::opt::Instruction& inst) {
 
     switch (opcode(inst)) {
         case spv::Op::OpAtomicLoad:
-            return emit_atomic(core::Function::kAtomicLoad, {oper(/*ptr*/ 0)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicLoad, {oper(/*ptr*/ 0)});
         case spv::Op::OpAtomicStore:
-            return emit_atomic(core::Function::kAtomicStore, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicStore, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicExchange:
-            return emit_atomic(core::Function::kAtomicExchange,
+            return emit_atomic(wgsl::BuiltinFn::kAtomicExchange,
                                {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicCompareExchange:
         case spv::Op::OpAtomicCompareExchangeWeak:
-            return emit_atomic(core::Function::kAtomicCompareExchangeWeak,
+            return emit_atomic(wgsl::BuiltinFn::kAtomicCompareExchangeWeak,
                                {oper(/*ptr*/ 0), /*value*/ oper(5), /*comparator*/ oper(4)});
         case spv::Op::OpAtomicIIncrement:
-            return emit_atomic(core::Function::kAtomicAdd, {oper(/*ptr*/ 0), lit(1)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicAdd, {oper(/*ptr*/ 0), lit(1)});
         case spv::Op::OpAtomicIDecrement:
-            return emit_atomic(core::Function::kAtomicSub, {oper(/*ptr*/ 0), lit(1)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicSub, {oper(/*ptr*/ 0), lit(1)});
         case spv::Op::OpAtomicIAdd:
-            return emit_atomic(core::Function::kAtomicAdd, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicAdd, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicISub:
-            return emit_atomic(core::Function::kAtomicSub, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicSub, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicSMin:
-            return emit_atomic(core::Function::kAtomicMin, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicMin, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicUMin:
-            return emit_atomic(core::Function::kAtomicMin, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicMin, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicSMax:
-            return emit_atomic(core::Function::kAtomicMax, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicMax, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicUMax:
-            return emit_atomic(core::Function::kAtomicMax, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicMax, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicAnd:
-            return emit_atomic(core::Function::kAtomicAnd, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicAnd, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicOr:
-            return emit_atomic(core::Function::kAtomicOr, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicOr, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicXor:
-            return emit_atomic(core::Function::kAtomicXor, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
+            return emit_atomic(wgsl::BuiltinFn::kAtomicXor, {oper(/*ptr*/ 0), oper(/*value*/ 3)});
         case spv::Op::OpAtomicFlagTestAndSet:
         case spv::Op::OpAtomicFlagClear:
         case spv::Op::OpAtomicFMinEXT:

@@ -1,16 +1,29 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <vector>
 
@@ -65,11 +78,11 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
     bool IsFormatSupported() const { return mIsFormatSupported; }
 
     uint32_t BlockWidthInTexels() const {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
         return utils::GetTextureFormatBlockWidth(GetParam().mTextureFormat);
     }
     uint32_t BlockHeightInTexels() const {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
         return utils::GetTextureFormatBlockHeight(GetParam().mTextureFormat);
     }
 
@@ -114,7 +127,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
     // copyConfig.
     void InitializeDataInCompressedTexture(wgpu::Texture compressedTexture,
                                            const CopyConfig& copyConfig) {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
 
         std::vector<uint8_t> data = UploadData(copyConfig);
 
@@ -139,7 +152,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
                                            wgpu::Texture compressedTexture,
                                            uint32_t baseArrayLayer = 0,
                                            uint32_t baseMipLevel = 0) {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
 
         wgpu::SamplerDescriptor samplerDesc;
         samplerDesc.minFilter = wgpu::FilterMode::Nearest;
@@ -158,9 +171,9 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
         return utils::MakeBindGroup(device, bindGroupLayout, {{0, sampler}, {1, textureView}});
     }
 
-    // Create a render pipeline for sampling from a texture and rendering into the render target.
-    wgpu::RenderPipeline CreateRenderPipelineForTest() {
-        ASSERT(IsFormatSupported());
+    // Create a render pipeline for sampling from a texture 2d and rendering into the render target.
+    wgpu::RenderPipeline CreateRenderPipelineForTestTex2D() {
+        DAWN_ASSERT(IsFormatSupported());
 
         utils::ComboRenderPipelineDescriptor renderPipelineDescriptor;
         wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
@@ -196,6 +209,57 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
         return device.CreateRenderPipeline(&renderPipelineDescriptor);
     }
 
+    // Create a render pipeline for sampling from a texture cube and rendering into the render
+    // target. Used for compatibility mode as cube texture cannot be bound as texture_2d_array.
+    wgpu::RenderPipeline CreateRenderPipelineForTestCube() {
+        utils::ComboRenderPipelineDescriptor renderPipelineDescriptor;
+        wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
+            struct VertexOut {
+                @location(0) texCoord : vec2 <f32>,
+                @builtin(position) position : vec4f,
+            }
+
+            @vertex
+            fn main(@builtin(vertex_index) VertexIndex : u32) -> VertexOut {
+                var pos = array(
+                    vec2f(-3.0,  1.0),
+                    vec2f( 3.0,  1.0),
+                    vec2f( 0.0, -2.0)
+                );
+                var output : VertexOut;
+                output.position = vec4f(pos[VertexIndex], 0.0, 1.0);
+                output.texCoord = vec2f(output.position.x / 2.0, -output.position.y / 2.0) + vec2f(0.5, 0.5);
+                return output;
+            })");
+        wgpu::ShaderModule fsModule = utils::CreateShaderModule(device, R"(
+            @group(0) @binding(0) var sampler0 : sampler;
+            @group(0) @binding(1) var texture0 : texture_cube<f32>;
+            @group(0) @binding(2) var<uniform> layer : u32;
+
+            @fragment
+            fn main(@location(0) texCoord : vec2f) -> @location(0) vec4f {
+                var st: vec2f = texCoord;
+                st.y = 1. - st.y;
+                st = st * 2. - 1.;
+                var coords: vec3f;
+                switch(layer) {
+                    case 0u: { coords = vec3f(1., st.y, -st.x); } // Positive X
+                    case 1u: { coords = vec3f(-1., st.y, st.x); } // Negative X
+                    case 2u: { coords = vec3f(st.x, 1., -st.y); } // Positive Y
+                    case 3u: { coords = vec3f(st.x, -1., st.y); } // Negative Y
+                    case 4u: { coords = vec3f(st.x, st.y, 1.); }  // Positive Z
+                    case 5u: { coords = vec3f(-st.x, st.y, -1.);} // Negative Z
+                    default: { return vec4f(0.); } // Unreachable
+                }
+                return textureSample(texture0, sampler0, coords);
+            })");
+        renderPipelineDescriptor.vertex.module = vsModule;
+        renderPipelineDescriptor.cFragment.module = fsModule;
+        renderPipelineDescriptor.cTargets[0].format = utils::BasicRenderPass::kDefaultColorFormat;
+
+        return device.CreateRenderPipeline(&renderPipelineDescriptor);
+    }
+
     // Run the given render pipeline and bind group and verify the pixels in the render target.
     void VerifyCompressedTexturePixelValues(wgpu::RenderPipeline renderPipeline,
                                             wgpu::BindGroup bindGroup,
@@ -203,7 +267,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
                                             const wgpu::Origin3D& expectedOrigin,
                                             const wgpu::Extent3D& expectedExtent,
                                             const std::vector<utils::RGBA8>& expected) {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
 
         utils::BasicRenderPass renderPass =
             utils::CreateBasicRenderPass(device, renderTargetSize.width, renderTargetSize.height);
@@ -232,7 +296,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
     // Run the tests that copies pre-prepared format data into a texture and verifies if we can
     // render correctly with the pixel values sampled from the texture.
     void TestCopyRegionIntoFormatTextures(const CopyConfig& config) {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
 
         wgpu::Texture texture = CreateTextureWithCompressedData(config);
 
@@ -240,7 +304,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
     }
 
     void VerifyTexture(const CopyConfig& config, wgpu::Texture texture) {
-        wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTest();
+        wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTestTex2D();
 
         wgpu::Extent3D virtualSizeAtLevel = GetVirtualSizeAtLevel(config);
 
@@ -445,7 +509,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
                         0x0, 0xff, 0x1,  0x0, 0x0, 0x3f, 0xf0, 0x3};
 
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
                 return {};
         }
     }
@@ -572,7 +636,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
                 return FillExpectedData(testRegion, kASTCDarkRedSRGB, kASTCDarkGreenSRGB);
 
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
                 return {};
         }
     }
@@ -580,7 +644,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
     std::vector<utils::RGBA8> FillExpectedData(const wgpu::Extent3D& testRegion,
                                                utils::RGBA8 leftColorInBlock,
                                                utils::RGBA8 rightColorInBlock) {
-        ASSERT(testRegion.depthOrArrayLayers == 1);
+        DAWN_ASSERT(testRegion.depthOrArrayLayers == 1);
 
         std::vector<utils::RGBA8> expectedData(testRegion.width * testRegion.height,
                                                leftColorInBlock);
@@ -604,7 +668,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
     }
 
     CopyConfig GetDefaultFullConfig(uint32_t depthOrArrayLayers = 1) const {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
 
         CopyConfig config;
         config.textureDescriptor.format = GetParam().mTextureFormat;
@@ -615,14 +679,14 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
         config.viewMipmapLevel = kMipmapLevelCount - 1;
 
         const wgpu::Extent3D virtualSize = GetVirtualSizeAtLevel(config);
-        ASSERT(virtualSize.width % BlockWidthInTexels() != 0u);
-        ASSERT(virtualSize.height % BlockHeightInTexels() != 0u);
+        DAWN_ASSERT(virtualSize.width % BlockWidthInTexels() != 0u);
+        DAWN_ASSERT(virtualSize.height % BlockHeightInTexels() != 0u);
 
         return config;
     }
 
     CopyConfig GetDefaultSmallConfig(uint32_t depthOrArrayLayers = 1) const {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
 
         CopyConfig config;
         config.textureDescriptor.format = GetParam().mTextureFormat;
@@ -632,7 +696,7 @@ class CompressedTextureFormatTest : public DawnTestWithParams<CompressedTextureF
     }
 
     CopyConfig GetDefaultSubresourceConfig(uint32_t depthOrArrayLayers = 1) const {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
 
         CopyConfig config;
         config.textureDescriptor.format = GetParam().mTextureFormat;
@@ -682,6 +746,81 @@ TEST_P(CompressedTextureFormatTest, Basic) {
     TestCopyRegionIntoFormatTextures(config);
 }
 
+// Test copying into the whole cube texture with 2x2 blocks and sampling from it.
+// Made for compatibility mode.
+TEST_P(CompressedTextureFormatTest, Cube) {
+    DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
+    // TODO(crbug.com/dawn/2131): diagnose this failure on Win Angle D3D11
+    DAWN_SUPPRESS_TEST_IF(IsANGLED3D11());
+
+    const wgpu::TextureFormat format = GetParam().mTextureFormat;
+
+    constexpr uint32_t kLayers = 6;
+    CopyConfig config = GetDefaultSmallConfig(kLayers);
+    config.copyExtent3D = config.textureDescriptor.size;
+    config.bytesPerRowAlignment = Align(
+        config.copyExtent3D.width / BlockWidthInTexels() * utils::GetTexelBlockSizeInBytes(format),
+        kTextureBytesPerRowAlignment);
+    config.rowsPerImage = kLayers;
+    wgpu::TextureBindingViewDimensionDescriptor textureBindingViewDimensionDesc;
+    if (IsCompatibilityMode()) {
+        textureBindingViewDimensionDesc.textureBindingViewDimension =
+            wgpu::TextureViewDimension::Cube;
+        config.textureDescriptor.nextInChain = &textureBindingViewDimensionDesc;
+
+        wgpu::Texture texture = CreateTextureWithCompressedData(config);
+        wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTestCube();
+
+        wgpu::Extent3D virtualSizeAtLevel = GetVirtualSizeAtLevel(config);
+
+        // The copy region may exceed the subresource size because of the required paddings, so we
+        // should limit the size of the expectedData to make it match the real size of the render
+        // target.
+        wgpu::Extent3D noPaddingExtent3D = config.copyExtent3D;
+        if (config.copyOrigin3D.x + config.copyExtent3D.width > virtualSizeAtLevel.width) {
+            noPaddingExtent3D.width = virtualSizeAtLevel.width - config.copyOrigin3D.x;
+        }
+        if (config.copyOrigin3D.y + config.copyExtent3D.height > virtualSizeAtLevel.height) {
+            noPaddingExtent3D.height = virtualSizeAtLevel.height - config.copyOrigin3D.y;
+        }
+        noPaddingExtent3D.depthOrArrayLayers = 1u;
+
+        std::vector<utils::RGBA8> expectedData = GetExpectedData(noPaddingExtent3D);
+
+        wgpu::Origin3D firstLayerCopyOrigin = {config.copyOrigin3D.x, config.copyOrigin3D.y, 0};
+
+        wgpu::SamplerDescriptor samplerDesc = {};
+        wgpu::Sampler sampler = device.CreateSampler(&samplerDesc);
+
+        wgpu::TextureViewDescriptor textureViewDescriptor = {};
+        textureViewDescriptor.format = GetParam().mTextureFormat;
+        textureViewDescriptor.dimension = wgpu::TextureViewDimension::Cube;
+        textureViewDescriptor.baseMipLevel = config.viewMipmapLevel;
+        textureViewDescriptor.mipLevelCount = 1;
+        wgpu::TextureView textureView = texture.CreateView(&textureViewDescriptor);
+
+        for (uint32_t layer = config.copyOrigin3D.z;
+             layer < config.copyOrigin3D.z + config.copyExtent3D.depthOrArrayLayers; ++layer) {
+            wgpu::Buffer uniformBuffer = utils::CreateBufferFromData(
+                device, &layer, sizeof(uint32_t), wgpu::BufferUsage::Uniform);
+
+            wgpu::BindGroup bindGroup =
+                utils::MakeBindGroup(device, renderPipeline.GetBindGroupLayout(0),
+                                     {
+                                         {0, sampler},
+                                         {1, textureView},
+                                         {2, uniformBuffer},
+                                     });
+
+            VerifyCompressedTexturePixelValues(renderPipeline, bindGroup, virtualSizeAtLevel,
+                                               firstLayerCopyOrigin, noPaddingExtent3D,
+                                               expectedData);
+        }
+    } else {
+        TestCopyRegionIntoFormatTextures(config);
+    }
+}
+
 // Test copying into a sub-region of a texture works correctly.
 TEST_P(CompressedTextureFormatTest, CopyIntoSubRegion) {
     // TODO(crbug.com/dawn/976): Failing on Linux Intel OpenGL drivers.
@@ -700,8 +839,8 @@ TEST_P(CompressedTextureFormatTest, CopyIntoSubRegion) {
 TEST_P(CompressedTextureFormatTest, CopyIntoNonZeroArrayLayer) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
-    // TODO(crbug.com/dawn/1328): ES3.1 does not support subsetting of compressed textures.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
+    // Compatibility mode cannot bind a 2d-array texture as 2d.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
 
     constexpr uint32_t kArrayLayerCount = 3;
 
@@ -717,9 +856,6 @@ TEST_P(CompressedTextureFormatTest, CopyIntoNonZeroArrayLayer) {
 TEST_P(CompressedTextureFormatTest, CopyBufferIntoNonZeroMipmapLevel) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
-    // TODO(crbug.com/dawn/1328): ES3.1 does not support subsetting of compressed textures.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
-
     CopyConfig config = GetDefaultFullConfig();
     // The virtual size of the texture at mipmap level == 2 is not a multiple of the texel
     // dimensions so paddings are required in the copies.
@@ -732,8 +868,8 @@ TEST_P(CompressedTextureFormatTest, CopyBufferIntoNonZeroMipmapLevel) {
 TEST_P(CompressedTextureFormatTest, CopyWholeTextureSubResourceIntoNonZeroMipmapLevel) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
-    // TODO(crbug.com/dawn/1328): ES3.1 does not support subsetting of compressed textures.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
+    // Compatibility mode does not support T2T copies of compressed textures.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
 
     // TODO(crbug.com/dawn/816): This consistently fails on with the 12th pixel being opaque
     // black instead of opaque red on Win10 FYI Release (NVIDIA GeForce GTX 1660).
@@ -756,7 +892,7 @@ TEST_P(CompressedTextureFormatTest, CopyWholeTextureSubResourceIntoNonZeroMipmap
     wgpu::Texture textureDst = CreateTextureFromTexture(textureSrc, config, config);
 
     // Verify if we can use texture as sampled textures correctly.
-    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTest();
+    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTestTex2D();
     wgpu::BindGroup bindGroup =
         CreateBindGroupForTest(renderPipeline.GetBindGroupLayout(0), textureDst,
                                config.copyOrigin3D.z, config.viewMipmapLevel);
@@ -771,9 +907,12 @@ TEST_P(CompressedTextureFormatTest, CopyWholeTextureSubResourceIntoNonZeroMipmap
 TEST_P(CompressedTextureFormatTest, CopyIntoSubresourceWithPhysicalSizeNotEqualToVirtualSize) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
+    // Compatibility mode does not support T2T copies of compressed textures.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
+
     // TODO(crbug.com/dawn/817): add workaround on the T2T copies where Extent3D fits in one
     // subresource and does not fit in another one on OpenGL.
-    DAWN_SUPPRESS_TEST_IF(IsOpenGL() || IsOpenGLES());
+    DAWN_SUPPRESS_TEST_IF(IsOpenGL());
 
     CopyConfig srcConfig = GetDefaultSubresourceConfig();
     srcConfig.textureDescriptor.usage = wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst;
@@ -796,7 +935,7 @@ TEST_P(CompressedTextureFormatTest, CopyIntoSubresourceWithPhysicalSizeNotEqualT
     wgpu::Texture textureDst = CreateTextureFromTexture(textureSrc, srcConfig, dstConfig);
 
     // Verify if we can use texture as sampled textures correctly.
-    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTest();
+    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTestTex2D();
     wgpu::BindGroup bindGroup =
         CreateBindGroupForTest(renderPipeline.GetBindGroupLayout(0), textureDst,
                                dstConfig.copyOrigin3D.z, dstConfig.viewMipmapLevel);
@@ -811,9 +950,12 @@ TEST_P(CompressedTextureFormatTest, CopyIntoSubresourceWithPhysicalSizeNotEqualT
 TEST_P(CompressedTextureFormatTest, CopyFromSubresourceWithPhysicalSizeNotEqualToVirtualSize) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
+    // Compatibility mode does not support T2T copies of compressed textures.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
+
     // TODO(crbug.com/dawn/817): add workaround on the T2T copies where Extent3D fits in one
     // subresource and does not fit in another one on OpenGL.
-    DAWN_SUPPRESS_TEST_IF(IsOpenGL() || IsOpenGLES());
+    DAWN_SUPPRESS_TEST_IF(IsOpenGL());
 
     CopyConfig srcConfig = GetDefaultFullConfig();
     srcConfig.textureDescriptor.usage = wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst;
@@ -837,7 +979,7 @@ TEST_P(CompressedTextureFormatTest, CopyFromSubresourceWithPhysicalSizeNotEqualT
     wgpu::Texture textureDst = CreateTextureFromTexture(textureSrc, srcConfig, dstConfig);
 
     // Verify if we can use texture as sampled textures correctly.
-    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTest();
+    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTestTex2D();
     wgpu::BindGroup bindGroup =
         CreateBindGroupForTest(renderPipeline.GetBindGroupLayout(0), textureDst,
                                dstConfig.copyOrigin3D.z, dstConfig.viewMipmapLevel);
@@ -852,9 +994,12 @@ TEST_P(CompressedTextureFormatTest, CopyFromSubresourceWithPhysicalSizeNotEqualT
 TEST_P(CompressedTextureFormatTest, MultipleCopiesWithPhysicalSizeNotEqualToVirtualSize) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
+    // Compatibility mode does not support T2T copies of compressed textures.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
+
     // TODO(crbug.com/dawn/817): add workaround on the T2T copies where Extent3D fits in one
     // subresource and does not fit in another one on OpenGL.
-    DAWN_SUPPRESS_TEST_IF(IsOpenGL() || IsOpenGLES());
+    DAWN_SUPPRESS_TEST_IF(IsOpenGL());
 
     constexpr uint32_t kTotalCopyCount = 2;
     std::array<CopyConfig, kTotalCopyCount> srcConfigs;
@@ -893,7 +1038,7 @@ TEST_P(CompressedTextureFormatTest, MultipleCopiesWithPhysicalSizeNotEqualToVirt
     wgpu::CommandBuffer commandBuffer = encoder.Finish();
     queue.Submit(1, &commandBuffer);
 
-    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTest();
+    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTestTex2D();
 
     for (uint32_t i = 0; i < kTotalCopyCount; ++i) {
         // Verify if we can use dstTextures as sampled textures correctly.
@@ -914,9 +1059,12 @@ TEST_P(CompressedTextureFormatTest, MultipleCopiesWithPhysicalSizeNotEqualToVirt
 TEST_P(CompressedTextureFormatTest, CopyWithMultipleLayerAndPhysicalSizeNotEqualToVirtualSize) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
+    // Compatibility mode cannot bind a 2d-array texture as 2d.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
+
     // TODO(crbug.com/dawn/817): add workaround on the T2T copies where Extent3D fits in one
     // subresource and does not fit in another one on OpenGL.
-    DAWN_SUPPRESS_TEST_IF(IsOpenGL() || IsOpenGLES());
+    DAWN_SUPPRESS_TEST_IF(IsOpenGL());
 
     constexpr uint32_t kArrayLayerCount = 5;
 
@@ -951,7 +1099,7 @@ TEST_P(CompressedTextureFormatTest, CopyWithMultipleLayerAndPhysicalSizeNotEqual
 
     // We use the render pipeline to test if each layer can be correctly sampled with the
     // expected data.
-    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTest();
+    wgpu::RenderPipeline renderPipeline = CreateRenderPipelineForTestTex2D();
 
     const wgpu::Extent3D kExpectedDataRegionPerLayer = {kDstVirtualSize.width,
                                                         kDstVirtualSize.height, 1u};
@@ -1068,9 +1216,6 @@ TEST_P(CompressedTextureFormatTest, LargeImageHeight) {
 TEST_P(CompressedTextureFormatTest, LargeImageHeightAndClampedCopyExtent) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
-    // TODO(crbug.com/dawn/1328): ES3.1 does not support subsetting of compressed textures.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
-
     CopyConfig config = GetDefaultFullConfig();
 
     // The virtual size of the texture at mipmap level == 2 is not a multiple of the texel
@@ -1087,8 +1232,8 @@ TEST_P(CompressedTextureFormatTest, LargeImageHeightAndClampedCopyExtent) {
 TEST_P(CompressedTextureFormatTest, CopyWhole2DArrayTexture) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
-    // TODO(crbug.com/dawn/1328): ES3.1 does not support subsetting of compressed textures.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
+    // Compatibility mode does not support T2T copies of compressed textures.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
 
     constexpr uint32_t kArrayLayerCount = 3;
 
@@ -1104,8 +1249,8 @@ TEST_P(CompressedTextureFormatTest, CopyWhole2DArrayTexture) {
 TEST_P(CompressedTextureFormatTest, CopyMultiple2DArrayLayers) {
     DAWN_TEST_UNSUPPORTED_IF(!IsFormatSupported());
 
-    // TODO(crbug.com/dawn/1328): ES3.1 does not support subsetting of compressed textures.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
+    // Compatibility mode cannot bind a 2d-array texture as 2d.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
 
     constexpr uint32_t kArrayLayerCount = 3;
 
@@ -1149,9 +1294,11 @@ class CompressedTextureFormatSpecificTest : public DawnTest {
 // Testing a special code path: clearing a non-renderable texture when DynamicUploader
 // is unaligned doesn't throw validation errors.
 TEST_P(CompressedTextureFormatSpecificTest, BC1RGBAUnorm_UnalignedDynamicUploader) {
+    // Compatibility mode cannot bind a 2d-array texture as 2d.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
+
     // CopyT2B for compressed texture formats is unimplemented on OpenGL.
     DAWN_TEST_UNSUPPORTED_IF(IsOpenGL());
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
     DAWN_TEST_UNSUPPORTED_IF(!IsBCFormatSupported());
 
     utils::UnalignDynamicUploader(device);
@@ -1196,7 +1343,7 @@ class CompressedTextureWriteTextureTest : public CompressedTextureFormatTest {
     // Write the compressed texture data into the destination texture as is specified in
     // copyConfig.
     void WriteToCompressedTexture(wgpu::Texture compressedTexture, const CopyConfig& copyConfig) {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
 
         std::vector<uint8_t> data = UploadData(copyConfig);
 
@@ -1213,7 +1360,7 @@ class CompressedTextureWriteTextureTest : public CompressedTextureFormatTest {
     // Run the tests that write pre-prepared format data into a texture and verifies if we can
     // render correctly with the pixel values sampled from the texture.
     void TestWriteRegionIntoFormatTextures(const CopyConfig& config) {
-        ASSERT(IsFormatSupported());
+        DAWN_ASSERT(IsFormatSupported());
 
         wgpu::Texture texture = device.CreateTexture(&config.textureDescriptor);
         WriteToCompressedTexture(texture, config);
@@ -1251,11 +1398,11 @@ TEST_P(CompressedTextureWriteTextureTest, Basic) {
 
 // Test writing to multiple 2D texture array layers.
 TEST_P(CompressedTextureWriteTextureTest, WriteMultiple2DArrayLayers) {
+    // Compatibility mode cannot bind a 2d-array texture as 2d.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
+
     // TODO(crbug.com/dawn/976): Failing on Linux Intel OpenGL drivers.
     DAWN_SUPPRESS_TEST_IF(IsIntel() && IsOpenGL() && IsLinux());
-
-    // TODO(crbug.com/dawn/1328): ES3.1 does not support subsetting of compressed textures.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
 
     // TODO(b/198674734): Width multiplier set to 7 because 5 results in square size for ASTC6x5.
     constexpr uint32_t kSizeWidthMultiplier = 7;
@@ -1286,9 +1433,6 @@ TEST_P(CompressedTextureWriteTextureTest,
        WriteIntoSubresourceWithPhysicalSizeNotEqualToVirtualSize) {
     // TODO(crbug.com/dawn/976): Failing on Linux Intel OpenGL drivers.
     DAWN_SUPPRESS_TEST_IF(IsIntel() && IsOpenGL() && IsLinux());
-
-    // TODO(crbug.com/dawn/1328): ES3.1 does not support subsetting of compressed textures.
-    DAWN_TEST_UNSUPPORTED_IF(IsOpenGLES());
 
     CopyConfig config = GetDefaultFullConfig();
 

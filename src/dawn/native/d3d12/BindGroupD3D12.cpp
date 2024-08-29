@@ -1,23 +1,38 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/d3d12/BindGroupD3D12.h"
 
 #include <utility>
 
 #include "dawn/common/BitSetIterator.h"
+#include "dawn/common/MatchVariant.h"
 #include "dawn/native/ExternalTexture.h"
+#include "dawn/native/Queue.h"
 #include "dawn/native/d3d12/BindGroupLayoutD3D12.h"
 #include "dawn/native/d3d12/BufferD3D12.h"
 #include "dawn/native/d3d12/DeviceD3D12.h"
@@ -57,8 +72,9 @@ BindGroup::BindGroup(Device* device,
 
         // Increment size does not need to be stored and is only used to get a handle
         // local to the allocation with OffsetFrom().
-        switch (bindingInfo.bindingType) {
-            case BindingInfoType::Buffer: {
+        MatchVariant(
+            bindingInfo.bindingLayout,
+            [&](const BufferBindingInfo& layout) {
                 BufferBinding binding = GetBindingAsBufferBinding(bindingIndex);
 
                 ID3D12Resource* resource = ToBackend(binding.buffer)->GetD3D12Resource();
@@ -66,10 +82,10 @@ BindGroup::BindGroup(Device* device,
                     // The Buffer was destroyed. Skip creating buffer views since there is no
                     // resource. This bind group won't be used as it is an error to submit a
                     // command buffer that references destroyed resources.
-                    continue;
+                    return;
                 }
 
-                switch (bindingInfo.buffer.type) {
+                switch (layout.type) {
                     case wgpu::BufferBindingType::Uniform: {
                         D3D12_CONSTANT_BUFFER_VIEW_DESC desc;
                         desc.SizeInBytes =
@@ -125,13 +141,10 @@ BindGroup::BindGroup(Device* device,
                         break;
                     }
                     case wgpu::BufferBindingType::Undefined:
-                        UNREACHABLE();
+                        DAWN_UNREACHABLE();
                 }
-
-                break;
-            }
-
-            case BindingInfoType::Texture: {
+            },
+            [&](const TextureBindingInfo&) {
                 auto* view = ToBackend(GetBindingAsTextureView(bindingIndex));
                 auto& srv = view->GetSRVDescriptor();
 
@@ -140,17 +153,15 @@ BindGroup::BindGroup(Device* device,
                     // The Texture was destroyed. Skip creating the SRV since there is no
                     // resource. This bind group won't be used as it is an error to submit a
                     // command buffer that references destroyed resources.
-                    continue;
+                    return;
                 }
 
                 d3d12Device->CreateShaderResourceView(
                     resource, &srv,
                     viewAllocation.OffsetFrom(viewSizeIncrement,
                                               descriptorHeapOffsets[bindingIndex]));
-                break;
-            }
-
-            case BindingInfoType::StorageTexture: {
+            },
+            [&](const StorageTextureBindingInfo& layout) {
                 TextureView* view = ToBackend(GetBindingAsTextureView(bindingIndex));
 
                 ID3D12Resource* resource = ToBackend(view->GetTexture())->GetD3D12Resource();
@@ -158,11 +169,12 @@ BindGroup::BindGroup(Device* device,
                     // The Texture was destroyed. Skip creating the SRV/UAV since there is no
                     // resource. This bind group won't be used as it is an error to submit a
                     // command buffer that references destroyed resources.
-                    continue;
+                    return;
                 }
 
-                switch (bindingInfo.storageTexture.access) {
-                    case wgpu::StorageTextureAccess::WriteOnly: {
+                switch (layout.access) {
+                    case wgpu::StorageTextureAccess::WriteOnly:
+                    case wgpu::StorageTextureAccess::ReadWrite: {
                         D3D12_UNORDERED_ACCESS_VIEW_DESC uav = view->GetUAVDescriptor();
                         d3d12Device->CreateUnorderedAccessView(
                             resource, nullptr, &uav,
@@ -170,26 +182,24 @@ BindGroup::BindGroup(Device* device,
                                                       descriptorHeapOffsets[bindingIndex]));
                         break;
                     }
-
-                    // TODO(dawn:1972): Implement ReadOnly and ReadWrite storage texture
-                    case wgpu::StorageTextureAccess::ReadOnly:
-                    case wgpu::StorageTextureAccess::ReadWrite:
+                    case wgpu::StorageTextureAccess::ReadOnly: {
+                        D3D12_SHADER_RESOURCE_VIEW_DESC srv = view->GetSRVDescriptor();
+                        d3d12Device->CreateShaderResourceView(
+                            resource, &srv,
+                            viewAllocation.OffsetFrom(viewSizeIncrement,
+                                                      descriptorHeapOffsets[bindingIndex]));
+                        break;
+                    }
                     case wgpu::StorageTextureAccess::Undefined:
-                        UNREACHABLE();
+                        DAWN_UNREACHABLE();
                 }
-
-                break;
-            }
-
-            case BindingInfoType::ExternalTexture: {
-                UNREACHABLE();
-            }
-
-            case BindingInfoType::Sampler: {
-                // No-op as samplers will be later initialized by CreateSamplers().
-                break;
-            }
-        }
+            },
+            [](const StaticSamplerBindingInfo&) {
+                // Static samplers are already initialized in the pipeline layout.
+            },
+            // No-op as samplers will be later initialized by CreateSamplers().
+            [](const SamplerBindingInfo&) {},
+            [](const InputAttachmentBindingInfo&) { DAWN_UNREACHABLE(); });
     }
 
     // Loop through the dynamic storage buffers and build a flat map from the index of the
@@ -212,7 +222,7 @@ BindGroup::~BindGroup() = default;
 void BindGroup::DestroyImpl() {
     BindGroupBase::DestroyImpl();
     ToBackend(GetLayout())->DeallocateBindGroup(this, &mCPUViewAllocation);
-    ASSERT(!mCPUViewAllocation.IsValid());
+    DAWN_ASSERT(!mCPUViewAllocation.IsValid());
 }
 
 bool BindGroup::PopulateViews(MutexProtected<ShaderVisibleDescriptorAllocator>& viewAllocator) {
@@ -228,7 +238,8 @@ bool BindGroup::PopulateViews(MutexProtected<ShaderVisibleDescriptorAllocator>& 
     Device* device = ToBackend(GetDevice());
 
     D3D12_CPU_DESCRIPTOR_HANDLE baseCPUDescriptor;
-    if (!viewAllocator->AllocateGPUDescriptors(descriptorCount, device->GetPendingCommandSerial(),
+    if (!viewAllocator->AllocateGPUDescriptors(descriptorCount,
+                                               device->GetQueue()->GetPendingCommandSerial(),
                                                &baseCPUDescriptor, &mGPUViewAllocation)) {
         return false;
     }
@@ -248,7 +259,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE BindGroup::GetBaseViewDescriptor() const {
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE BindGroup::GetBaseSamplerDescriptor() const {
-    ASSERT(mSamplerAllocationEntry != nullptr);
+    DAWN_ASSERT(mSamplerAllocationEntry != nullptr);
     return mSamplerAllocationEntry->GetBaseDescriptor();
 }
 

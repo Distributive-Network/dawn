@@ -1,25 +1,35 @@
-# Copyright 2020 The Dawn Authors
+# Copyright 2020 The Dawn & Tint Authors
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-find_package(PythonInterp REQUIRED)
-message(STATUS "Dawn: using python at ${PYTHON_EXECUTABLE}")
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # Check for Jinja2
 if (NOT DAWN_JINJA2_DIR)
     message(STATUS "Dawn: Using system jinja2")
     execute_process(
-        COMMAND ${PYTHON_EXECUTABLE} -c "import jinja2"
+        COMMAND ${Python3_EXECUTABLE} -c "import jinja2"
         RESULT_VARIABLE RET
     )
     if (NOT RET EQUAL 0)
@@ -42,7 +52,7 @@ function(DawnGenerator)
 
     # Build the set of args common to all invocation of that generator.
     set(BASE_ARGS
-        ${PYTHON_EXECUTABLE}
+        ${Python3_EXECUTABLE}
         ${G_SCRIPT}
         --template-dir
         "${DAWN_TEMPLATE_DIR}"
@@ -70,9 +80,7 @@ function(DawnGenerator)
     endif()
 
     # Ask CMake to re-run if any of the dependencies changed as it might modify the build graph.
-    if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.12.0")
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${DEPENDENCIES})
-    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${DEPENDENCIES})
 
     # Call the generator to get the list of its outputs.
     execute_process(
@@ -94,6 +102,26 @@ function(DawnGenerator)
 
     # Return the list of outputs.
     set(${G_RESULT_VARIABLE} ${OUTPUTS} PARENT_SCOPE)
+
+    # Prior to CMake 3.20 the GENERATED property is local to a directory which means that putting
+    # generated headers in INTERFACE properties causes dependent targets to complain that they
+    # cannot find the file. (because they don't see it as generated and want to check is is
+    # actually on the filesystem).
+    # Work around this by generating the files once if they aren't present at configuration time.
+    set(needToGenerate OFF)
+    foreach(path ${OUTPUTS})
+        if (NOT EXISTS ${path})
+            set(needToGenerate ON)
+        endif()
+    endforeach()
+
+    if (${needToGenerate})
+        message(STATUS "Dawn: Generating initial versions of files for ${G_PRINT_NAME}.")
+        execute_process(COMMAND ${BASE_ARGS} RESULT_VARIABLE RET)
+        if (NOT RET EQUAL 0)
+            message(FATAL_ERROR "Dawn: Failed to generate the initial version of files for ${G_PRINT_NAME}. Base args are '${BASE_ARGS}'.")
+        endif()
+    endif()
 endfunction()
 
 # Helper function to call dawn_generator.py:
@@ -106,9 +134,11 @@ function(DawnJSONGenerator)
     DawnGenerator(
         SCRIPT "${Dawn_SOURCE_DIR}/generator/dawn_json_generator.py"
         ARGS --dawn-json
-             "${Dawn_SOURCE_DIR}/dawn.json"
+             "${Dawn_SOURCE_DIR}/src/dawn/dawn.json"
              --wire-json
-             "${Dawn_SOURCE_DIR}/dawn_wire.json"
+             "${Dawn_SOURCE_DIR}/src/dawn/dawn_wire.json"
+             --kotlin-json
+             "${Dawn_SOURCE_DIR}/src/dawn/dawn_kotlin.json"
              --targets
              ${G_TARGET}
         RESULT_VARIABLE RET

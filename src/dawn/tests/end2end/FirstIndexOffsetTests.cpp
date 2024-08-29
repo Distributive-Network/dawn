@@ -1,16 +1,29 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <limits>
 #include <sstream>
@@ -20,6 +33,18 @@
 #include "dawn/tests/DawnTest.h"
 #include "dawn/utils/ComboRenderPipelineDescriptor.h"
 #include "dawn/utils/WGPUHelpers.h"
+
+namespace dawn {
+enum class CheckIndex : uint32_t {
+    Vertex = 0x0000001,
+    Instance = 0x0000002,
+};
+}  // namespace dawn
+
+template <>
+struct wgpu::IsWGPUBitmask<dawn::CheckIndex> {
+    static constexpr bool enable = true;
+};
 
 namespace dawn {
 namespace {
@@ -33,21 +58,11 @@ enum class DrawMode {
     IndexedIndirect,
 };
 
-enum class CheckIndex : uint32_t {
-    Vertex = 0x0000001,
-    Instance = 0x0000002,
-};
-
 bool IsIndirectDraw(DrawMode mode) {
     return mode == DrawMode::NonIndexedIndirect || mode == DrawMode::IndexedIndirect;
 }
 
 }  // anonymous namespace
-
-template <>
-struct IsDawnBitmask<CheckIndex> {
-    static constexpr bool enable = true;
-};
 
 namespace {
 
@@ -63,9 +78,6 @@ class FirstIndexOffsetTests : public DawnTest {
         // TODO(crbug.com/dawn/1292): Some Intel OpenGL drivers don't seem to like
         // the offsets that Tint/GLSL produces.
         DAWN_SUPPRESS_TEST_IF(IsIntel() && IsOpenGL() && IsLinux());
-
-        // TODO(tint:451): Remove once "flat" is supported under OpenGL(ES).
-        DAWN_SUPPRESS_TEST_IF(IsOpenGL() || IsOpenGLES());
     }
 
     std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
@@ -292,6 +304,9 @@ TEST_P(FirstIndexOffsetTests, IndexedBothOffset) {
 
 // Test that vertex_index starts at 7 when drawn using DrawIndirect()
 TEST_P(FirstIndexOffsetTests, NonIndexedIndirectVertexOffset) {
+    // TODO(crbug.com/347223100): failing on ANGLE/D3D11
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsANGLED3D11());
+
     // TODO(crbug.com/dawn/1429): Fails with the full validation turned on.
     DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsFullBackendValidationEnabled());
     TestVertexIndex(DrawMode::NonIndexedIndirect, 7);
@@ -299,17 +314,26 @@ TEST_P(FirstIndexOffsetTests, NonIndexedIndirectVertexOffset) {
 
 // Test that instance_index starts at 11 when drawn using DrawIndirect()
 TEST_P(FirstIndexOffsetTests, NonIndexedIndirectInstanceOffset) {
+    // TODO(crbug.com/347223100): failing on ANGLE/D3D11
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsANGLED3D11());
+
     TestInstanceIndex(DrawMode::NonIndexedIndirect, 11);
 }
 
 // Test that vertex_index and instance_index start at 7 and 11 respectively when drawn using
 // DrawIndirect()
 TEST_P(FirstIndexOffsetTests, NonIndexedIndirectBothOffset) {
+    // TODO(crbug.com/347223100): failing on ANGLE/D3D11
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsANGLED3D11());
+
     TestBothIndices(DrawMode::NonIndexedIndirect, 7, 11);
 }
 
 // Test that vertex_index starts at 7 when drawn using DrawIndexedIndirect()
 TEST_P(FirstIndexOffsetTests, IndexedIndirectVertex) {
+    // TODO(crbug.com/347223100): failing on ANGLE/D3D11
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsANGLED3D11());
+
     // TODO(crbug.com/dawn/1429): Fails with the full validation turned on.
     DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsFullBackendValidationEnabled());
     TestVertexIndex(DrawMode::IndexedIndirect, 7);
@@ -317,12 +341,18 @@ TEST_P(FirstIndexOffsetTests, IndexedIndirectVertex) {
 
 // Test that instance_index starts at 11 when drawn using DrawIndexed()
 TEST_P(FirstIndexOffsetTests, IndexedIndirectInstance) {
+    // TODO(crbug.com/347223100): failing on ANGLE/D3D11
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsANGLED3D11());
+
     TestInstanceIndex(DrawMode::IndexedIndirect, 11);
 }
 
 // Test that vertex_index and instance_index start at 7 and 11 respectively when drawn using
 // DrawIndexed()
 TEST_P(FirstIndexOffsetTests, IndexedIndirectBothOffset) {
+    // TODO(crbug.com/347223100): failing on ANGLE/D3D11
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsANGLED3D11());
+
     TestBothIndices(DrawMode::IndexedIndirect, 7, 11);
 }
 

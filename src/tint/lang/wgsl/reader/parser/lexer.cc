@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/wgsl/reader/parser/lexer.h"
 
@@ -18,11 +31,10 @@
 #include <charconv>
 #include <cmath>
 #include <cstring>
-#include <functional>
 #include <limits>
 #include <optional>
+#include <string>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 
 #include "src/tint/lang/core/fluent_types.h"
@@ -46,7 +58,10 @@ static_assert(sizeof(decltype(tint::Source::FileContent::data[0])) == sizeof(uin
 // programs and being a bit bigger then those need (atan2-const-eval is the outlier here).
 static constexpr size_t kDefaultListSize = 4092;
 
-bool read_blankspace(std::string_view str, size_t i, bool* is_blankspace, size_t* blankspace_size) {
+bool read_blankspace(std::string_view str,
+                     size_t i,
+                     bool* is_blankspace,
+                     uint32_t* blankspace_size) {
     // See https://www.w3.org/TR/WGSL/#blankspace
 
     auto* utf8 = reinterpret_cast<const uint8_t*>(&str[i]);
@@ -63,7 +78,7 @@ bool read_blankspace(std::string_view str, size_t i, bool* is_blankspace, size_t
 
     if (cp == kSpace || cp == kHTab || cp == kL2R || cp == kR2L) {
         *is_blankspace = true;
-        *blankspace_size = n;
+        *blankspace_size = static_cast<uint32_t>(n);
         return true;
     }
 
@@ -119,7 +134,7 @@ std::vector<Token> Lexer::Lex() {
     return tokens;
 }
 
-const std::string_view Lexer::line() const {
+std::string_view Lexer::line() const {
     if (file_->content.lines.size() == 0) {
         static const char* empty_string = "";
         return empty_string;
@@ -127,15 +142,15 @@ const std::string_view Lexer::line() const {
     return file_->content.lines[location_.line - 1];
 }
 
-size_t Lexer::pos() const {
+uint32_t Lexer::pos() const {
     return location_.column - 1;
 }
 
-size_t Lexer::length() const {
-    return line().size();
+uint32_t Lexer::length() const {
+    return static_cast<uint32_t>(line().size());
 }
 
-const char& Lexer::at(size_t pos) const {
+const char& Lexer::at(uint32_t pos) const {
     auto l = line();
     // Unlike for std::string, if pos == l.size(), indexing `l[pos]` is UB for
     // std::string_view.
@@ -146,15 +161,15 @@ const char& Lexer::at(size_t pos) const {
     return l[pos];
 }
 
-std::string_view Lexer::substr(size_t offset, size_t count) {
+std::string_view Lexer::substr(uint32_t offset, uint32_t count) {
     return line().substr(offset, count);
 }
 
-void Lexer::advance(size_t offset) {
+void Lexer::advance(uint32_t offset) {
     location_.column += offset;
 }
 
-void Lexer::set_pos(size_t pos) {
+void Lexer::set_pos(uint32_t pos) {
     location_.column = pos + 1;
 }
 
@@ -223,19 +238,18 @@ bool Lexer::is_null() const {
 bool Lexer::is_digit(char ch) const {
     return std::isdigit(static_cast<unsigned char>(ch));
 }
-
 bool Lexer::is_hex(char ch) const {
     return std::isxdigit(static_cast<unsigned char>(ch));
 }
 
-bool Lexer::matches(size_t pos, std::string_view sub_string) {
+bool Lexer::matches(uint32_t pos, std::string_view sub_string) {
     if (pos >= length()) {
         return false;
     }
-    return substr(pos, sub_string.size()) == sub_string;
+    return substr(pos, static_cast<uint32_t>(sub_string.size())) == sub_string;
 }
 
-bool Lexer::matches(size_t pos, char ch) {
+bool Lexer::matches(uint32_t pos, char ch) {
     if (pos >= length()) {
         return false;
     }
@@ -252,7 +266,7 @@ std::optional<Token> Lexer::skip_blankspace_and_comments() {
             }
 
             bool is_blankspace;
-            size_t blankspace_size;
+            uint32_t blankspace_size;
             if (!read_blankspace(line(), pos(), &is_blankspace, &blankspace_size)) {
                 return Token{Token::Type::kError, begin_source(), "invalid UTF-8"};
             }
@@ -371,7 +385,7 @@ std::optional<Token> Lexer::try_float() {
     }
 
     // Parse the exponent if one exists
-    std::optional<size_t> exponent_value_position;
+    std::optional<uint32_t> exponent_value_position;
     bool negative_exponent = false;
     if (end < length() && (matches(end, 'e') || matches(end, 'E'))) {
         end++;
@@ -417,9 +431,10 @@ std::optional<Token> Lexer::try_float() {
         end_ptr = &at(length() - 1) + 1;
     }
 
-    auto ret = tint::ParseDouble(std::string_view(&at(start), end - start));
-    double value = ret ? ret.Get() : 0.0;
-    bool overflow = !ret && ret.Failure() == tint::ParseNumberError::kResultOutOfRange;
+    auto ret = tint::strconv::ParseDouble(std::string_view(&at(start), end - start));
+    double value = ret == Success ? ret.Get() : 0.0;
+    bool overflow =
+        ret != Success && ret.Failure() == tint::strconv::ParseNumberError::kResultOutOfRange;
 
     // If the value didn't fit in a double, check for underflow as that is 0.0 in WGSL and not an
     // error.
@@ -454,7 +469,7 @@ std::optional<Token> Lexer::try_float() {
 
     if (has_f_suffix) {
         auto f = core::CheckedConvert<f32>(AFloat(value));
-        if (!overflow && f) {
+        if (!overflow && f == Success) {
             advance(1);
             end_source(source);
             return Token{Token::Type::kFloatLiteral_F, source, static_cast<double>(f.Get())};
@@ -464,7 +479,7 @@ std::optional<Token> Lexer::try_float() {
 
     if (has_h_suffix) {
         auto f = core::CheckedConvert<f16>(AFloat(value));
-        if (!overflow && f) {
+        if (!overflow && f == Success) {
             advance(1);
             end_source(source);
             return Token{Token::Type::kFloatLiteral_H, source, static_cast<double>(f.Get())};
@@ -880,8 +895,8 @@ std::optional<Token> Lexer::try_hex_float() {
 }
 
 Token Lexer::build_token_from_int_if_possible(Source source,
-                                              size_t start,
-                                              size_t prefix_count,
+                                              uint32_t start,
+                                              uint32_t prefix_count,
                                               int32_t base) {
     const char* start_ptr = &at(start);
     // The call to `from_chars` will return the pointer to just after the last parsed character.
@@ -894,10 +909,10 @@ Token Lexer::build_token_from_int_if_possible(Source source,
     int64_t value = 0;
     auto res = std::from_chars(start_ptr, end_ptr, value, base);
     const bool overflow = res.ec != std::errc();
-    advance(static_cast<size_t>(res.ptr - start_ptr) + prefix_count);
+    advance(static_cast<uint32_t>(res.ptr - start_ptr) + prefix_count);
 
     if (matches(pos(), 'u')) {
-        if (!overflow && core::CheckedConvert<u32>(AInt(value))) {
+        if (!overflow && core::CheckedConvert<u32>(AInt(value)) == Success) {
             advance(1);
             end_source(source);
             return {Token::Type::kIntLiteral_U, source, value};
@@ -906,7 +921,7 @@ Token Lexer::build_token_from_int_if_possible(Source source,
     }
 
     if (matches(pos(), 'i')) {
-        if (!overflow && core::CheckedConvert<i32>(AInt(value))) {
+        if (!overflow && core::CheckedConvert<i32>(AInt(value)) == Success) {
             advance(1);
             end_source(source);
             return {Token::Type::kIntLiteral_I, source, value};
@@ -980,7 +995,7 @@ std::optional<Token> Lexer::try_ident() {
             return {};
         }
         // Consume start codepoint
-        advance(n);
+        advance(static_cast<uint32_t>(n));
     }
 
     while (!is_eol()) {
@@ -996,19 +1011,17 @@ std::optional<Token> Lexer::try_ident() {
         }
 
         // Consume continuing codepoint
-        advance(n);
-
-        if (pos() - start == 2 && substr(start, 2) == "__") {
-            // Identifiers prefixed with two or more underscores are not allowed.
-            // We check for these in the loop to bail early and prevent quadratic parse time for
-            // long sequences of ____.
-            set_pos(start);
-            return {};
-        }
+        advance(static_cast<uint32_t>(n));
     }
 
     auto str = substr(start, pos() - start);
     end_source(source);
+
+    if (str.length() > 1 && substr(start, 2) == "__") {
+        // Identifiers prefixed with two or more underscores are not allowed.
+        return Token{Token::Type::kError, source,
+                     "identifiers must not start with two or more underscores"};
+    }
 
     if (auto t = parse_keyword(str); t.has_value()) {
         return Token{t.value(), source, str};
@@ -1199,9 +1212,6 @@ std::optional<Token> Lexer::try_punctuation() {
 std::optional<Token::Type> Lexer::parse_keyword(std::string_view str) {
     if (str == "alias") {
         return Token::Type::kAlias;
-    }
-    if (str == "bitcast") {
-        return Token::Type::kBitcast;
     }
     if (str == "break") {
         return Token::Type::kBreak;

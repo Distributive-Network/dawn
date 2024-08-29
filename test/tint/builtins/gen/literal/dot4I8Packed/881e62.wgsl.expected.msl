@@ -1,29 +1,43 @@
-SKIP: FAILED
+#include <metal_stdlib>
 
-
-enable chromium_experimental_dp4a;
-
-fn dot4I8Packed_881e62() {
-  var res : i32 = dot4I8Packed(1u, 1u);
+using namespace metal;
+int dot4I8Packed_881e62() {
+  int res = 1;
+  return res;
 }
 
-@vertex
-fn vertex_main() -> @builtin(position) vec4<f32> {
-  dot4I8Packed_881e62();
-  return vec4<f32>();
+fragment void fragment_main(device int* tint_symbol_1 [[buffer(0)]]) {
+  *(tint_symbol_1) = dot4I8Packed_881e62();
+  return;
 }
 
-@fragment
-fn fragment_main() {
-  dot4I8Packed_881e62();
+kernel void compute_main(device int* tint_symbol_2 [[buffer(0)]]) {
+  *(tint_symbol_2) = dot4I8Packed_881e62();
+  return;
 }
 
-@compute @workgroup_size(1)
-fn compute_main() {
-  dot4I8Packed_881e62();
+struct VertexOutput {
+  float4 pos;
+  int prevent_dce;
+};
+
+struct tint_symbol {
+  int prevent_dce [[user(locn0)]] [[flat]];
+  float4 pos [[position]];
+};
+
+VertexOutput vertex_main_inner() {
+  VertexOutput out = {};
+  out.pos = float4(0.0f);
+  out.prevent_dce = dot4I8Packed_881e62();
+  return out;
 }
 
-Failed to generate: builtins/gen/literal/dot4I8Packed/881e62.wgsl:24:8 error: MSL backend does not support extension 'chromium_experimental_dp4a'
-enable chromium_experimental_dp4a;
-       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+vertex tint_symbol vertex_main() {
+  VertexOutput const inner_result = vertex_main_inner();
+  tint_symbol wrapper_result = {};
+  wrapper_result.pos = inner_result.pos;
+  wrapper_result.prevent_dce = inner_result.prevent_dce;
+  return wrapper_result;
+}
 

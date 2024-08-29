@@ -1,16 +1,29 @@
-// Copyright 2022 The Tint Authors.
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/wgsl/resolver/resolver.h"
 #include "src/tint/lang/wgsl/resolver/resolver_helper_test.h"
@@ -37,8 +50,8 @@ struct ResolverAliasAnalysisTest : public resolver::TestHelper, public testing::
 //   target(&v1, aliased ? &v1 : &v2);
 // }
 struct TwoPointerConfig {
-    core::AddressSpace address_space;  // The address space for the pointers.
-    bool aliased;                      // Whether the pointers alias or not.
+    const core::AddressSpace address_space;  // The address space for the pointers.
+    const bool aliased;                      // Whether the pointers alias or not.
 };
 class TwoPointers : public ResolverTestWithParam<TwoPointerConfig> {
   protected:
@@ -166,7 +179,7 @@ TEST_P(TwoPointers, ReadWriteAcrossDifferentFunctions) {
     // f1(p1);
     // f2(p2);
     Func("f1",
-         Vector<const ast::Parameter*, 4>{
+         Vector{
              Param("p1", ty.ptr<i32>(GetParam().address_space)),
          },
          ty.void_(),
@@ -174,7 +187,7 @@ TEST_P(TwoPointers, ReadWriteAcrossDifferentFunctions) {
              Assign(Phony(), Deref("p1")),
          });
     Func("f2",
-         Vector<const ast::Parameter*, 4>{
+         Vector{
              Param("p2", ty.ptr<i32>(GetParam().address_space)),
          },
          ty.void_(),
@@ -227,7 +240,7 @@ class OnePointerOneModuleScope : public ResolverTestWithParam<bool> {
 
     void Run(Vector<const ast::Statement*, 4>&& body, const char* err = nullptr) {
         Func("target",
-             Vector<const ast::Parameter*, 4>{
+             Vector{
                  Param("p1", ty.ptr<i32>(core::AddressSpace::kPrivate)),
              },
              ty.void_(), std::move(body));
@@ -296,7 +309,7 @@ TEST_P(OnePointerOneModuleScope, ReadWriteThroughChain_GlobalViaArg) {
     //
     // f1(p1);
     Func("f2",
-         Vector<const ast::Parameter*, 4>{
+         Vector{
              Param("p1", ty.ptr<i32>(core::AddressSpace::kPrivate)),
          },
          ty.void_(),
@@ -304,7 +317,7 @@ TEST_P(OnePointerOneModuleScope, ReadWriteThroughChain_GlobalViaArg) {
              Assign(Deref("p1"), 42_a),
          });
     Func("f1",
-         Vector<const ast::Parameter*, 4>{
+         Vector{
              Param("p1", ty.ptr<i32>(core::AddressSpace::kPrivate)),
          },
          ty.void_(),
@@ -331,7 +344,7 @@ TEST_P(OnePointerOneModuleScope, ReadWriteThroughChain_Both) {
     //
     // f1(p1);
     Func("f2",
-         Vector<const ast::Parameter*, 4>{
+         Vector{
              Param("p1", ty.ptr<i32>(core::AddressSpace::kPrivate)),
          },
          ty.void_(),
@@ -340,7 +353,7 @@ TEST_P(OnePointerOneModuleScope, ReadWriteThroughChain_Both) {
              Assign(Expr(Source{{56, 78}}, "global_1"), 42_a),
          });
     Func("f1",
-         Vector<const ast::Parameter*, 4>{
+         Vector{
              Param("p1", ty.ptr<i32>(core::AddressSpace::kPrivate)),
          },
          ty.void_(),
@@ -366,7 +379,7 @@ TEST_P(OnePointerOneModuleScope, WriteReadThroughChain_GlobalViaArg) {
     //
     // f1(p1);
     Func("f2",
-         Vector<const ast::Parameter*, 4>{
+         Vector{
              Param("p1", ty.ptr<i32>(core::AddressSpace::kPrivate)),
          },
          ty.void_(),
@@ -374,7 +387,7 @@ TEST_P(OnePointerOneModuleScope, WriteReadThroughChain_GlobalViaArg) {
              Assign(Phony(), Deref("p1")),
          });
     Func("f1",
-         Vector<const ast::Parameter*, 4>{
+         Vector{
              Param("p1", ty.ptr<i32>(core::AddressSpace::kPrivate)),
          },
          ty.void_(),
@@ -925,6 +938,433 @@ TEST_F(ResolverAliasAnalysisTest, NonOverlappingCalls) {
          });
     EXPECT_TRUE(r()->Resolve()) << r()->error();
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Atomics
+////////////////////////////////////////////////////////////////////////////////
+class AtomicPointers
+    : public ResolverTestWithParam<
+          std::tuple<wgsl::BuiltinFn, wgsl::BuiltinFn, core::AddressSpace, bool /* aliased */>> {
+  protected:
+    static constexpr std::string_view kPass = "<PASS>";
+
+    ast::Type Ptr() {
+        auto address_space = std::get<2>(GetParam());
+        if (address_space == storage) {
+            return ty.ptr<storage, atomic<i32>, read_write>();
+        } else {
+            return ty.ptr<atomic<i32>>(address_space);
+        }
+    }
+
+    void SetUp() override {
+        auto address_space = std::get<2>(GetParam());
+        if (address_space == storage) {
+            GlobalVar("v1", address_space, read_write, ty.Of<atomic<i32>>(),  //
+                      Binding(0_a), Group(0_a));
+            GlobalVar("v2", address_space, read_write, ty.Of<atomic<i32>>(),  //
+                      Binding(1_a), Group(0_a));
+        } else {
+            GlobalVar("v1", address_space, ty.Of<atomic<i32>>());
+            GlobalVar("v2", address_space, ty.Of<atomic<i32>>());
+        }
+    }
+
+    bool IsWrite(wgsl::BuiltinFn fn) const {
+        switch (fn) {
+            case wgsl::BuiltinFn::kAtomicStore:
+            case wgsl::BuiltinFn::kAtomicAdd:
+            case wgsl::BuiltinFn::kAtomicSub:
+            case wgsl::BuiltinFn::kAtomicMax:
+            case wgsl::BuiltinFn::kAtomicMin:
+            case wgsl::BuiltinFn::kAtomicAnd:
+            case wgsl::BuiltinFn::kAtomicOr:
+            case wgsl::BuiltinFn::kAtomicXor:
+            case wgsl::BuiltinFn::kAtomicExchange:
+            case wgsl::BuiltinFn::kAtomicCompareExchangeWeak:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    bool ShouldPass() const {
+        auto [builtin_a, builtin_b, space, aliased] = GetParam();
+        bool fail = aliased && (IsWrite(builtin_a) || IsWrite(builtin_b));
+        return !fail;
+    }
+
+    const ast::Statement* CallBuiltin(wgsl::BuiltinFn fn, std::string_view ptr) {
+        switch (fn) {
+            case wgsl::BuiltinFn::kAtomicLoad:
+                return CallStmt(Call(fn, ptr));
+            case wgsl::BuiltinFn::kAtomicStore:
+            case wgsl::BuiltinFn::kAtomicAdd:
+            case wgsl::BuiltinFn::kAtomicSub:
+            case wgsl::BuiltinFn::kAtomicMax:
+            case wgsl::BuiltinFn::kAtomicMin:
+            case wgsl::BuiltinFn::kAtomicAnd:
+            case wgsl::BuiltinFn::kAtomicOr:
+            case wgsl::BuiltinFn::kAtomicXor:
+            case wgsl::BuiltinFn::kAtomicExchange:
+                return CallStmt(Call(fn, ptr, 42_a));
+            case wgsl::BuiltinFn::kAtomicCompareExchangeWeak:
+                return CallStmt(Call(fn, ptr, 10_a, 42_a));
+            default:
+                TINT_UNIMPLEMENTED() << fn;
+        }
+    }
+
+    std::string Run() {
+        if (r()->Resolve()) {
+            return std::string(kPass);
+        }
+        return r()->error();
+    }
+};
+
+TEST_P(AtomicPointers, CallDirect) {
+    // var<ADDRESS_SPACE> v1 : atomic<i32>;
+    // var<ADDRESS_SPACE> v2 : atomic<i32>;
+    //
+    // fn caller() {
+    //    callee(&v1, aliased ? &v1 : &v2);
+    // }
+    //
+    // fn callee(p1 : PTR, p2 : PTR) {
+    //   <builtin-a>(p1);
+    //   <builtin-b>(p2);
+    // }
+    auto [builtin_a, builtin_b, space, aliased] = GetParam();
+
+    Func("caller", tint::Empty, ty.void_(),
+         Vector{
+             CallStmt(Call("callee",  //
+                           AddressOf(Source{{12, 34}}, "v1"),
+                           AddressOf(Source{{56, 78}}, aliased ? "v1" : "v2"))),
+         });
+
+    Func("callee", Vector{Param("p1", Ptr()), Param("p2", Ptr())}, ty.void_(),
+         Vector{
+             CallBuiltin(builtin_a, "p1"),
+             CallBuiltin(builtin_b, "p2"),
+         });
+
+    EXPECT_EQ(Run(), ShouldPass() ? kPass : R"(56:78 error: invalid aliased pointer argument
+12:34 note: aliases with another argument passed here)");
+}
+
+TEST_P(AtomicPointers, CallThroughChain) {
+    // var<ADDRESS_SPACE> v1 : atomic<i32>;
+    // var<ADDRESS_SPACE> v2 : atomic<i32>;
+    //
+    // fn caller() {
+    //    callee(&v1, aliased ? &v1 : &v2);
+    // }
+    //
+    // fn f2(p1 : PTR, p2 : PTR) {
+    //    f1(p1, p2);
+    // }
+    //
+    // fn f1(p1 : PTR, p2 : PTR) {
+    //    callee(p1, p2);
+    // }
+    //
+    // fn callee(p1 : PTR, p2 : PTR) {
+    //   <builtin-a>(p1);
+    //   <builtin-b>(p2);
+    // }
+    auto [builtin_a, builtin_b, space, aliased] = GetParam();
+
+    Func("caller", tint::Empty, ty.void_(),
+         Vector{
+             CallStmt(Call("callee",  //
+                           AddressOf(Source{{12, 34}}, "v1"),
+                           AddressOf(Source{{56, 78}}, aliased ? "v1" : "v2"))),
+         });
+
+    Func("f2", Vector{Param("p1", Ptr()), Param("p2", Ptr())}, ty.void_(),
+         Vector{
+             CallStmt(Call("f1", "p1", "p2")),
+         });
+
+    Func("f1", Vector{Param("p1", Ptr()), Param("p2", Ptr())}, ty.void_(),
+         Vector{
+             CallStmt(Call("callee", "p1", "p2")),
+         });
+
+    Func("callee", Vector{Param("p1", Ptr()), Param("p2", Ptr())}, ty.void_(),
+         Vector{
+             CallBuiltin(builtin_a, "p1"),
+             CallBuiltin(builtin_b, "p2"),
+         });
+
+    EXPECT_EQ(Run(), ShouldPass() ? kPass : R"(56:78 error: invalid aliased pointer argument
+12:34 note: aliases with another argument passed here)");
+}
+
+TEST_P(AtomicPointers, ReadWriteAcrossDifferentFunctions) {
+    // var<ADDRESS_SPACE> v1 : atomic<i32>;
+    // var<ADDRESS_SPACE> v2 : atomic<i32>;
+    //
+    // fn caller() {
+    //   f(&v1, aliased ? &v1 : &v2);
+    // }
+    //
+    // fn f(p1 : PTR, p2 : PTR) {
+    //    f1(p1);
+    //    f2(p2);
+    // }
+    //
+    // fn f1(p : PTR) {
+    //   <builtin-a>(p);
+    // }
+    //
+    // fn f2(p : PTR) {
+    //   <builtin-b>(p);
+    // }
+    auto [builtin_a, builtin_b, space, aliased] = GetParam();
+
+    Func("caller", tint::Empty, ty.void_(),
+         Vector{
+             CallStmt(Call("f",  //
+                           AddressOf(Source{{12, 34}}, "v1"),
+                           AddressOf(Source{{56, 78}}, aliased ? "v1" : "v2"))),
+         });
+
+    Func("f", Vector{Param("p1", Ptr()), Param("p2", Ptr())}, ty.void_(),
+         Vector{
+             CallStmt(Call("f1", "p1")),
+             CallStmt(Call("f2", "p2")),
+         });
+
+    Func("f1", Vector{Param("p", Ptr())}, ty.void_(),
+         Vector{
+             CallBuiltin(builtin_a, "p"),
+         });
+
+    Func("f2", Vector{Param("p", Ptr())}, ty.void_(),
+         Vector{
+             CallBuiltin(builtin_b, "p"),
+         });
+
+    EXPECT_EQ(Run(), ShouldPass() ? kPass : R"(56:78 error: invalid aliased pointer argument
+12:34 note: aliases with another argument passed here)");
+}
+
+std::array kAtomicFns{
+    wgsl::BuiltinFn::kAtomicLoad,
+    wgsl::BuiltinFn::kAtomicStore,
+    wgsl::BuiltinFn::kAtomicAdd,
+    wgsl::BuiltinFn::kAtomicSub,
+    wgsl::BuiltinFn::kAtomicMax,
+    wgsl::BuiltinFn::kAtomicMin,
+    wgsl::BuiltinFn::kAtomicAnd,
+    wgsl::BuiltinFn::kAtomicOr,
+    wgsl::BuiltinFn::kAtomicXor,
+    wgsl::BuiltinFn::kAtomicExchange,
+    wgsl::BuiltinFn::kAtomicCompareExchangeWeak,
+};
+
+INSTANTIATE_TEST_SUITE_P(ResolverAliasAnalysisTest,
+                         AtomicPointers,
+                         ::testing::Combine(::testing::ValuesIn(kAtomicFns),
+                                            ::testing::ValuesIn(kAtomicFns),
+                                            ::testing::Values(core::AddressSpace::kWorkgroup,
+                                                              core::AddressSpace::kStorage),
+                                            ::testing::Values(true, false)));
+
+////////////////////////////////////////////////////////////////////////////////
+// WorkgroupUniformLoad
+////////////////////////////////////////////////////////////////////////////////
+enum class WorkgroupUniformLoadAction {
+    kRead,
+    kWrite,
+    kWorkgroupUniformLoad,
+};
+
+std::array kWorkgroupUniformLoadActions{
+    WorkgroupUniformLoadAction::kRead,
+    WorkgroupUniformLoadAction::kWrite,
+    WorkgroupUniformLoadAction::kWorkgroupUniformLoad,
+};
+
+class WorkgroupUniformLoad
+    : public ResolverTestWithParam<
+          std::tuple<WorkgroupUniformLoadAction, WorkgroupUniformLoadAction, bool>> {
+  protected:
+    static constexpr std::string_view kPass = "<PASS>";
+
+    void SetUp() override {
+        GlobalVar("v1", workgroup, ty.i32());
+        GlobalVar("v2", workgroup, ty.i32());
+    }
+
+    const ast::Statement* Do(WorkgroupUniformLoadAction action, std::string_view ptr) {
+        switch (action) {
+            case WorkgroupUniformLoadAction::kRead:
+                return Assign(Phony(), Deref(ptr));
+            case WorkgroupUniformLoadAction::kWrite:
+                return Assign(Deref(ptr), 42_a);
+            case WorkgroupUniformLoadAction::kWorkgroupUniformLoad:
+                return Assign(Phony(), Call(wgsl::BuiltinFn::kWorkgroupUniformLoad, ptr));
+        }
+        return nullptr;
+    }
+
+    bool IsWrite(WorkgroupUniformLoadAction action) const {
+        return action == WorkgroupUniformLoadAction::kWrite;
+    }
+
+    bool ShouldPass() const {
+        auto [action_a, action_b, aliased] = GetParam();
+        bool fail = aliased && (IsWrite(action_a) || IsWrite(action_b));
+        return !fail;
+    }
+
+    std::string Run() {
+        if (r()->Resolve()) {
+            return std::string(kPass);
+        }
+        return r()->error();
+    }
+};
+
+TEST_P(WorkgroupUniformLoad, CallDirect) {
+    // var<workgroup> v1 : i32;
+    // var<workgroup> v2 : i32;
+    //
+    // fn caller() {
+    //    callee(&v1, aliased ? &v1 : &v2);
+    // }
+    //
+    // fn callee(p1 : PTR, p2 : PTR) {
+    //   <action-a>(p1);
+    //   <action-b>(p2);
+    // }
+    auto [action_a, action_b, aliased] = GetParam();
+
+    Func("caller", tint::Empty, ty.void_(),
+         Vector{
+             CallStmt(Call("callee",  //
+                           AddressOf(Source{{12, 34}}, "v1"),
+                           AddressOf(Source{{56, 78}}, aliased ? "v1" : "v2"))),
+         });
+
+    Func("callee",
+         Vector{Param("p1", ty.ptr<workgroup, i32>()), Param("p2", ty.ptr<workgroup, i32>())},
+         ty.void_(),
+         Vector{
+             Do(action_a, "p1"),
+             Do(action_b, "p2"),
+         });
+
+    EXPECT_EQ(Run(), ShouldPass() ? kPass : R"(56:78 error: invalid aliased pointer argument
+12:34 note: aliases with another argument passed here)");
+}
+
+TEST_P(WorkgroupUniformLoad, CallThroughChain) {
+    // var<workgroup> v1 : i32;
+    // var<workgroup> v2 : i32;
+    //
+    // fn caller() {
+    //    callee(&v1, aliased ? &v1 : &v2);
+    // }
+    //
+    // fn f2(p1 : PTR, p2 : PTR) {
+    //    f1(p1, p2);
+    // }
+    //
+    // fn f1(p1 : PTR, p2 : PTR) {
+    //    callee(p1, p2);
+    // }
+    //
+    // fn callee(p1 : PTR, p2 : PTR) {
+    //   <action-a>(p1);
+    //   <action-b>(p2);
+    // }
+    auto [action_a, action_b, aliased] = GetParam();
+
+    Func("caller", tint::Empty, ty.void_(),
+         Vector{
+             CallStmt(Call("callee",  //
+                           AddressOf(Source{{12, 34}}, "v1"),
+                           AddressOf(Source{{56, 78}}, aliased ? "v1" : "v2"))),
+         });
+
+    Func("f2", Vector{Param("p1", ty.ptr<workgroup, i32>()), Param("p2", ty.ptr<workgroup, i32>())},
+         ty.void_(),
+         Vector{
+             CallStmt(Call("f1", "p1", "p2")),
+         });
+
+    Func("f1", Vector{Param("p1", ty.ptr<workgroup, i32>()), Param("p2", ty.ptr<workgroup, i32>())},
+         ty.void_(),
+         Vector{
+             CallStmt(Call("callee", "p1", "p2")),
+         });
+
+    Func("callee",
+         Vector{Param("p1", ty.ptr<workgroup, i32>()), Param("p2", ty.ptr<workgroup, i32>())},
+         ty.void_(),
+         Vector{
+             Do(action_a, "p1"),
+             Do(action_b, "p2"),
+         });
+
+    EXPECT_EQ(Run(), ShouldPass() ? kPass : R"(56:78 error: invalid aliased pointer argument
+12:34 note: aliases with another argument passed here)");
+}
+
+TEST_P(WorkgroupUniformLoad, ReadWriteAcrossDifferentFunctions) {
+    // var<workgroup> v1 : i32;
+    // var<workgroup> v2 : i32;
+    //
+    // fn caller() {
+    //   f(&v1, aliased ? &v1 : &v2);
+    // }
+    //
+    // fn f(p1 : PTR, p2 : PTR) {
+    //    f1(p1);
+    //    f2(p2);
+    // }
+    //
+    // fn f1(p : PTR) {
+    //   <action-a>(p);
+    // }
+    //
+    // fn f2(p : PTR) {
+    //   <action-b>(p);
+    // }
+    auto [action_a, action_b, aliased] = GetParam();
+
+    Func("caller", tint::Empty, ty.void_(),
+         Vector{
+             CallStmt(Call("f",  //
+                           AddressOf(Source{{12, 34}}, "v1"),
+                           AddressOf(Source{{56, 78}}, aliased ? "v1" : "v2"))),
+         });
+
+    Func("f", Vector{Param("p1", ty.ptr<workgroup, i32>()), Param("p2", ty.ptr<workgroup, i32>())},
+         ty.void_(),
+         Vector{
+             CallStmt(Call("f1", "p1")),
+             CallStmt(Call("f2", "p2")),
+         });
+
+    Func("f1", Vector{Param("p", ty.ptr<workgroup, i32>())}, ty.void_(), Vector{Do(action_a, "p")});
+
+    Func("f2", Vector{Param("p", ty.ptr<workgroup, i32>())}, ty.void_(), Vector{Do(action_b, "p")});
+
+    EXPECT_EQ(Run(), ShouldPass() ? kPass : R"(56:78 error: invalid aliased pointer argument
+12:34 note: aliases with another argument passed here)");
+}
+
+INSTANTIATE_TEST_SUITE_P(ResolverAliasAnalysisTest,
+                         WorkgroupUniformLoad,
+                         ::testing::Combine(::testing::ValuesIn(kWorkgroupUniformLoadActions),
+                                            ::testing::ValuesIn(kWorkgroupUniformLoadActions),
+                                            ::testing::Values(true, false)));
 
 }  // namespace
 }  // namespace tint::resolver

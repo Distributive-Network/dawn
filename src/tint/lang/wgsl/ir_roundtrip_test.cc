@@ -1,23 +1,39 @@
-// Copyright 2023 The Tint Authors.
+// Copyright 2023 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// GEN_BUILD:CONDITION(tint_build_wgsl_reader && tint_build_wgsl_writer && tint_build_ir)
+// GEN_BUILD:CONDITION(tint_build_wgsl_reader && tint_build_wgsl_writer)
 
-#include "src/tint/lang/wgsl/helpers/ir_program_test.h"
+#include "gtest/gtest.h"
+
+#include "src/tint/lang/core/ir/disassembler.h"
 #include "src/tint/lang/wgsl/reader/program_to_ir/program_to_ir.h"
 #include "src/tint/lang/wgsl/reader/reader.h"
 #include "src/tint/lang/wgsl/writer/ir_to_program/ir_to_program.h"
+#include "src/tint/lang/wgsl/writer/raise/raise.h"
 #include "src/tint/lang/wgsl/writer/writer.h"
 #include "src/tint/utils/text/string.h"
 
@@ -26,67 +42,142 @@ namespace {
 
 using namespace tint::core::number_suffixes;  // NOLINT
 
-class IRToProgramRoundtripTest : public helpers::IRProgramTest {
+class IRToProgramRoundtripTest : public testing::Test {
   public:
-    void Test(std::string_view input_wgsl, std::string_view expected_wgsl) {
-        auto input = tint::TrimSpace(input_wgsl);
+    struct Result {
+        /// The resulting WGSL
+        std::string wgsl;
+        /// The resulting AST
+        std::string ast;
+        /// The resulting IR before raising
+        std::string ir_pre_raise;
+        /// The resulting IR after raising
+        std::string ir_post_raise;
+        /// The resulting error
+        std::string err;
+        /// The expected WGSL
+        std::string expected;
+    };
+
+    /// @return the round-tripped string and the expected string
+    Result Run(std::string input_wgsl, std::string expected_wgsl) {
+        std::string input{tint::TrimSpace(input_wgsl)};
+
+        Result result;
+
+        wgsl::reader::Options options;
+        options.allowed_features = wgsl::AllowedFeatures::Everything();
         Source::File file("test.wgsl", std::string(input));
-        auto input_program = wgsl::reader::Parse(&file);
-        ASSERT_TRUE(input_program.IsValid()) << input_program.Diagnostics().str();
-
-        auto ir_module = wgsl::reader::ProgramToIR(&input_program);
-        ASSERT_TRUE(ir_module) << (ir_module ? "" : ir_module.Failure());
-
-        tint::core::ir::Disassembler d{ir_module.Get()};
-        auto disassembly = d.Disassemble();
-
-        auto output_program = wgsl::writer::IRToProgram(ir_module.Get());
-        if (!output_program.IsValid()) {
-            FAIL() << output_program.Diagnostics().str() << std::endl  //
-                   << "IR:" << std::endl                               //
-                   << disassembly << std::endl                         //
-                   << "AST:" << std::endl                              //
-                   << Program::printer(&output_program) << std::endl;
+        auto ir_module = wgsl::reader::WgslToIR(&file, options);
+        if (ir_module != Success) {
+            return result;
         }
 
-        ASSERT_TRUE(output_program.IsValid()) << output_program.Diagnostics().str();
+        result.ir_pre_raise = core::ir::Disassembler(ir_module.Get()).Plain();
 
-        auto output = wgsl::writer::Generate(&output_program, {});
-        ASSERT_TRUE(output) << output.Failure();
+        if (auto res = tint::wgsl::writer::Raise(ir_module.Get()); res != Success) {
+            result.err = res.Failure().reason.Str();
+            return result;
+        }
 
-        auto expected = expected_wgsl.empty() ? input : tint::TrimSpace(expected_wgsl);
-        auto got = tint::TrimSpace(output->wgsl);
-        EXPECT_EQ(expected, got) << "IR:" << std::endl << disassembly;
+        result.ir_post_raise = core::ir::Disassembler(ir_module.Get()).Plain();
+
+        writer::ProgramOptions program_options;
+        program_options.allowed_features = AllowedFeatures::Everything();
+        auto output_program = wgsl::writer::IRToProgram(ir_module.Get(), program_options);
+        if (!output_program.IsValid()) {
+            result.err = output_program.Diagnostics().Str();
+            result.ast = Program::printer(output_program);
+            return result;
+        }
+
+        auto output = wgsl::writer::Generate(output_program, {});
+        if (output != Success) {
+            std::stringstream ss;
+            ss << "wgsl::Generate() errored: " << output.Failure();
+            result.err = ss.str();
+            result.ast = Program::printer(output_program);
+            return result;
+        }
+
+        result.expected = expected_wgsl.empty() ? input : tint::TrimSpace(expected_wgsl);
+        if (!result.expected.empty()) {
+            result.expected = "\n" + result.expected + "\n";
+        }
+
+        result.wgsl = std::string(tint::TrimSpace(output->wgsl));
+        if (!result.wgsl.empty()) {
+            result.wgsl = "\n" + result.wgsl + "\n";
+        }
+
+        return result;
     }
 
-    void Test(std::string_view wgsl) { Test(wgsl, wgsl); }
+    Result Run(std::string wgsl) { return Run(wgsl, wgsl); }
 };
 
+std::ostream& operator<<(std::ostream& o, const IRToProgramRoundtripTest::Result& res) {
+    if (!res.err.empty()) {
+        o << "============================\n"
+          << "== Error                  ==\n"
+          << "============================\n"
+          << res.err << "\n\n";
+    }
+    if (!res.ir_pre_raise.empty()) {
+        o << "============================\n"
+          << "== IR (pre-raise)         ==\n"
+          << "============================\n"
+          << res.ir_pre_raise << "\n\n";
+    }
+    if (!res.ir_post_raise.empty()) {
+        o << "============================\n"
+          << "== IR (post-raise)        ==\n"
+          << "============================\n"
+          << res.ir_post_raise << "\n\n";
+    }
+    if (!res.ast.empty()) {
+        o << "============================\n"
+          << "== AST                    ==\n"
+          << "============================\n"
+          << res.ast << "\n\n";
+    }
+    return o;
+}
+
+#define RUN_TEST(...)                                       \
+    do {                                                    \
+        if (auto res = Run(__VA_ARGS__); res.err.empty()) { \
+            EXPECT_EQ(res.expected, res.wgsl) << res;       \
+        } else {                                            \
+            FAIL() << res;                                  \
+        }                                                   \
+    } while (false)
+
 TEST_F(IRToProgramRoundtripTest, EmptyModule) {
-    Test("");
+    RUN_TEST("");
 }
 
 TEST_F(IRToProgramRoundtripTest, SingleFunction_Empty) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
 }
 )");
 }
 
 TEST_F(IRToProgramRoundtripTest, SingleFunction_Return) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   return;
 }
 )",
-         R"(
+             R"(
 fn f() {
 }
 )");
 }
 
 TEST_F(IRToProgramRoundtripTest, SingleFunction_Return_i32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   return 42i;
 }
@@ -94,9 +185,17 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, SingleFunction_Parameters) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32, u : u32) -> i32 {
   return i;
+}
+)");
+}
+
+TEST_F(IRToProgramRoundtripTest, SingleFunction_UnrestrictedPointerParameters) {
+    RUN_TEST(R"(
+fn f(p : ptr<uniform, i32>) -> i32 {
+  return *(p);
 }
 )");
 }
@@ -105,7 +204,7 @@ fn f(i : i32, u : u32) -> i32 {
 // Struct declaration
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, StructDecl_Scalars) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   b : u32,
@@ -117,7 +216,7 @@ var<private> v : S;
 }
 
 TEST_F(IRToProgramRoundtripTest, StructDecl_MemberAlign) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   @align(32u)
@@ -130,7 +229,7 @@ var<private> v : S;
 }
 
 TEST_F(IRToProgramRoundtripTest, StructDecl_MemberSize) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   @size(32u)
@@ -143,7 +242,7 @@ var<private> v : S;
 }
 
 TEST_F(IRToProgramRoundtripTest, StructDecl_MemberLocation) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   @location(1u)
@@ -156,12 +255,12 @@ var<private> v : S;
 }
 
 TEST_F(IRToProgramRoundtripTest, StructDecl_MemberIndex) {
-    Test(R"(
-enable chromium_internal_dual_source_blending;
+    RUN_TEST(R"(
+enable dual_source_blending;
 
 struct S {
   a : i32,
-  @location(0u) @index(0u)
+  @location(0u) @blend_src(0u)
   b : u32,
   c : f32,
 }
@@ -171,7 +270,7 @@ var<private> v : S;
 }
 
 TEST_F(IRToProgramRoundtripTest, StructDecl_MemberBuiltin) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   @builtin(position)
@@ -184,7 +283,7 @@ var<private> v : S;
 }
 
 TEST_F(IRToProgramRoundtripTest, StructDecl_MemberInterpolateType) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   @location(1u) @interpolate(flat)
@@ -197,7 +296,7 @@ var<private> v : S;
 }
 
 TEST_F(IRToProgramRoundtripTest, StructDecl_MemberInterpolateTypeSampling) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   @location(1u) @interpolate(perspective, centroid)
@@ -210,7 +309,7 @@ var<private> v : S;
 }
 
 TEST_F(IRToProgramRoundtripTest, StructDecl_MemberInvariant) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   @builtin(position) @invariant
@@ -226,7 +325,7 @@ var<private> v : S;
 // Function Call
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, FnCall_NoArgs_NoRet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() {
 }
 
@@ -237,7 +336,7 @@ fn b() {
 }
 
 TEST_F(IRToProgramRoundtripTest, FnCall_NoArgs_Ret_i32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() -> i32 {
   return 1i;
 }
@@ -249,7 +348,7 @@ fn b() {
 }
 
 TEST_F(IRToProgramRoundtripTest, FnCall_3Args_NoRet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(x : i32, y : u32, z : f32) {
 }
 
@@ -260,7 +359,7 @@ fn b() {
 }
 
 TEST_F(IRToProgramRoundtripTest, FnCall_3Args_Ret_f32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(x : i32, y : u32, z : f32) -> f32 {
   return z;
 }
@@ -272,7 +371,7 @@ fn b() {
 }
 
 TEST_F(IRToProgramRoundtripTest, FnCall_PtrArgs) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> y : i32 = 2i;
 
 fn a(px : ptr<function, i32>, py : ptr<private, i32>) -> i32 {
@@ -290,7 +389,7 @@ fn b() -> i32 {
 // Core Builtin Call
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, CoreBuiltinCall_Stmt) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   workgroupBarrier();
 }
@@ -298,7 +397,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CoreBuiltinCall_Expr) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) {
   var i : i32 = max(a, b);
 }
@@ -306,7 +405,7 @@ fn f(a : i32, b : i32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, CoreBuiltinCall_PhonyAssignment) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) {
   _ = max(a, b);
 }
@@ -314,7 +413,7 @@ fn f(a : i32, b : i32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, CoreBuiltinCall_UnusedLet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) {
   let unused = max(a, b);
 }
@@ -322,23 +421,23 @@ fn f(a : i32, b : i32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, CoreBuiltinCall_PtrArg) {
-    Test(R"(
-var<workgroup> v : bool;
+    RUN_TEST(R"(
+@group(0u) @binding(0u) var<storage, read> v : array<u32>;
 
-fn foo() -> bool {
-  return workgroupUniformLoad(&(v));
+fn foo() -> u32 {
+  return arrayLength(&(v));
 }
 )");
 }
 
 TEST_F(IRToProgramRoundtripTest, CoreBuiltinCall_DisableDerivativeUniformity) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(in : f32) {
   let x = dpdx(in);
   let y = dpdy(in);
 }
 )",
-         R"(
+             R"(
 diagnostic(off, derivative_uniformity);
 
 fn f(in : f32) {
@@ -352,7 +451,7 @@ fn f(in : f32) {
 // Type Construct
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_i32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32) {
   var v : i32 = i32(i);
 }
@@ -360,7 +459,7 @@ fn f(i : i32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_u32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : u32) {
   var v : u32 = u32(i);
 }
@@ -368,7 +467,7 @@ fn f(i : u32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_f32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : f32) {
   var v : f32 = f32(i);
 }
@@ -376,7 +475,7 @@ fn f(i : f32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_bool) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : bool) {
   var v : bool = bool(i);
 }
@@ -384,7 +483,7 @@ fn f(i : bool) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_struct) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   b : u32,
@@ -398,7 +497,7 @@ fn f(a : i32, b : u32, c : f32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_array) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32) {
   var v : array<i32, 3u> = array<i32, 3u>(i, i, i);
 }
@@ -406,7 +505,7 @@ fn f(i : i32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_vec3i_Splat) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32) {
   var v : vec3<i32> = vec3<i32>(i);
 }
@@ -414,7 +513,7 @@ fn f(i : i32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_vec3i_Scalars) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32) {
   var v : vec3<i32> = vec3<i32>(i, i, i);
 }
@@ -422,7 +521,7 @@ fn f(i : i32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_mat2x3f_Scalars) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : f32) {
   var v : mat2x3<f32> = mat2x3<f32>(i, i, i, i, i, i);
 }
@@ -430,7 +529,7 @@ fn f(i : f32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConstruct_mat2x3f_Columns) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : f32) {
   var v : mat2x3<f32> = mat2x3<f32>(vec3<f32>(i, i, i), vec3<f32>(i, i, i));
 }
@@ -441,7 +540,7 @@ fn f(i : f32) {
 // Type Convert
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, TypeConvert_i32_to_u32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32) {
   var v : u32 = u32(i);
 }
@@ -449,7 +548,7 @@ fn f(i : i32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConvert_u32_to_f32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : u32) {
   var v : f32 = f32(i);
 }
@@ -457,7 +556,7 @@ fn f(i : u32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConvert_f32_to_i32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : f32) {
   var v : i32 = i32(i);
 }
@@ -465,7 +564,7 @@ fn f(i : f32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConvert_bool_to_u32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : bool) {
   var v : u32 = u32(i);
 }
@@ -473,7 +572,7 @@ fn f(i : bool) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConvert_vec3i_to_vec3u) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : vec3<i32>) {
   var v : vec3<u32> = vec3<u32>(i);
 }
@@ -481,7 +580,7 @@ fn f(i : vec3<i32>) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConvert_vec3u_to_vec3f) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : vec3<u32>) {
   var v : vec3<f32> = vec3<f32>(i);
 }
@@ -489,7 +588,7 @@ fn f(i : vec3<u32>) {
 }
 
 TEST_F(IRToProgramRoundtripTest, TypeConvert_mat2x3f_to_mat2x3h) {
-    Test(R"(
+    RUN_TEST(R"(
 enable f16;
 
 fn f(i : mat2x3<f32>) {
@@ -502,7 +601,7 @@ fn f(i : mat2x3<f32>) {
 // Bitcast
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, Bitcast_i32_to_u32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32) {
   var v : u32 = bitcast<u32>(i);
 }
@@ -510,7 +609,7 @@ fn f(i : i32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, Bitcast_u32_to_f32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : u32) {
   var v : f32 = bitcast<f32>(i);
 }
@@ -518,7 +617,7 @@ fn f(i : u32) {
 }
 
 TEST_F(IRToProgramRoundtripTest, Bitcast_f32_to_i32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : f32) {
   var v : i32 = bitcast<i32>(i);
 }
@@ -529,7 +628,7 @@ fn f(i : f32) {
 // Discard
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, Discard) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   discard;
 }
@@ -540,12 +639,12 @@ fn f() {
 // Access
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, Access_Value_vec3f_1) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : vec3<f32>) -> f32 {
   return v[1];
 }
 )",
-         R"(
+             R"(
 fn f(v : vec3<f32>) -> f32 {
   return v.y;
 }
@@ -553,14 +652,14 @@ fn f(v : vec3<f32>) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Ref_vec3f_1) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> v : vec3<f32>;
 
 fn f() -> f32 {
   return v[1];
 }
 )",
-         R"(
+             R"(
 var<private> v : vec3<f32>;
 
 fn f() -> f32 {
@@ -570,7 +669,7 @@ fn f() -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Value_vec3f_z) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : vec3<f32>) -> f32 {
   return v.z;
 }
@@ -578,7 +677,7 @@ fn f(v : vec3<f32>) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Ref_vec3f_z) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> v : vec3<f32>;
 
 fn f() -> f32 {
@@ -588,12 +687,12 @@ fn f() -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Value_vec3f_g) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : vec3<f32>) -> f32 {
   return v.g;
 }
 )",
-         R"(
+             R"(
 fn f(v : vec3<f32>) -> f32 {
   return v.y;
 }
@@ -601,14 +700,14 @@ fn f(v : vec3<f32>) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Ref_vec3f_g) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> v : vec3<f32>;
 
 fn f() -> f32 {
   return v.g;
 }
 )",
-         R"(
+             R"(
 var<private> v : vec3<f32>;
 
 fn f() -> f32 {
@@ -618,7 +717,7 @@ fn f() -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Value_vec3f_i) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : vec3<f32>, i : i32) -> f32 {
   return v[i];
 }
@@ -626,7 +725,7 @@ fn f(v : vec3<f32>, i : i32) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Ref_vec3f_i) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> v : vec3<f32>;
 
 fn f(i : i32) -> f32 {
@@ -636,12 +735,12 @@ fn f(i : i32) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Value_mat3x2f_1_0) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(m : mat3x2<f32>) -> f32 {
   return m[1][0];
 }
 )",
-         R"(
+             R"(
 fn f(m : mat3x2<f32>) -> f32 {
   return m[1i].x;
 }
@@ -649,14 +748,14 @@ fn f(m : mat3x2<f32>) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Ref_mat3x2f_1_0) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> m : mat3x2<f32>;
 
 fn f() -> f32 {
   return m[1][0];
 }
 )",
-         R"(
+             R"(
 var<private> m : mat3x2<f32>;
 
 fn f() -> f32 {
@@ -666,12 +765,12 @@ fn f() -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Value_mat3x2f_u_0) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(m : mat3x2<f32>, u : u32) -> f32 {
   return m[u][0];
 }
 )",
-         R"(
+             R"(
 fn f(m : mat3x2<f32>, u : u32) -> f32 {
   return m[u].x;
 }
@@ -679,14 +778,14 @@ fn f(m : mat3x2<f32>, u : u32) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Ref_mat3x2f_u_0) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> m : mat3x2<f32>;
 
 fn f(u : u32) -> f32 {
   return m[u][0];
 }
 )",
-         R"(
+             R"(
 var<private> m : mat3x2<f32>;
 
 fn f(u : u32) -> f32 {
@@ -696,7 +795,7 @@ fn f(u : u32) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Value_mat3x2f_u_i) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(m : mat3x2<f32>, u : u32, i : i32) -> f32 {
   return m[u][i];
 }
@@ -704,7 +803,7 @@ fn f(m : mat3x2<f32>, u : u32, i : i32) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Ref_mat3x2f_u_i) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> m : mat3x2<f32>;
 
 fn f(u : u32, i : i32) -> f32 {
@@ -714,7 +813,7 @@ fn f(u : u32, i : i32) -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Value_array_0u) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : array<i32, 4u>) -> i32 {
   return a[0u];
 }
@@ -722,7 +821,7 @@ fn f(a : array<i32, 4u>) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Ref_array_0u) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> a : array<i32, 4u>;
 
 fn f() -> i32 {
@@ -732,7 +831,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Value_array_i) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : array<i32, 4u>, i : i32) -> i32 {
   return a[i];
 }
@@ -740,7 +839,7 @@ fn f(a : array<i32, 4u>, i : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Ref_array_i) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> a : array<i32, 4u>;
 
 fn f(i : i32) -> i32 {
@@ -750,7 +849,7 @@ fn f(i : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ValueStruct) {
-    Test(R"(
+    RUN_TEST(R"(
 struct Y {
   a : i32,
   b : i32,
@@ -770,7 +869,7 @@ fn f(x : X) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ReferenceStruct) {
-    Test(R"(
+    RUN_TEST(R"(
 struct Y {
   a : i32,
   b : i32,
@@ -791,7 +890,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ArrayOfArrayOfArray_123) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> i32 {
   return 1i;
 }
@@ -804,7 +903,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ArrayOfArrayOfArray_213) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> i32 {
   return 1i;
 }
@@ -818,7 +917,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ArrayOfArrayOfArray_312) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> i32 {
   return 1i;
 }
@@ -832,7 +931,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ArrayOfArrayOfArray_321) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> i32 {
   return 1i;
 }
@@ -847,7 +946,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ArrayOfMat3x4f_123) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> i32 {
   return 1i;
 }
@@ -859,7 +958,7 @@ fn f() -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ArrayOfMat3x4f_213) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> i32 {
   return 1i;
 }
@@ -873,7 +972,7 @@ fn f() -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ArrayOfMat3x4f_312) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> i32 {
   return 1i;
 }
@@ -887,7 +986,7 @@ fn f() -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_ArrayOfMat3x4f_321) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> i32 {
   return 1i;
 }
@@ -902,7 +1001,7 @@ fn f() -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_UsePartialChains) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> a : array<array<array<i32, 4u>, 5u>, 6u>;
 
 fn f(i : i32) -> i32 {
@@ -921,7 +1020,7 @@ fn f(i : i32) -> i32 {
 // Swizzle
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, Access_Vec3_Value_xy) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : vec3<f32>) -> vec2<f32> {
   return v.xy;
 }
@@ -929,7 +1028,7 @@ fn f(v : vec3<f32>) -> vec2<f32> {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Vec3_Value_yz) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : vec3<f32>) -> vec2<f32> {
   return v.yz;
 }
@@ -937,7 +1036,7 @@ fn f(v : vec3<f32>) -> vec2<f32> {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Vec3_Value_yzx) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : vec3<f32>) -> vec3<f32> {
   return v.yzx;
 }
@@ -945,7 +1044,7 @@ fn f(v : vec3<f32>) -> vec3<f32> {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Vec3_Value_yzxy) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : vec3<f32>) -> vec4<f32> {
   return v.yzxy;
 }
@@ -953,7 +1052,7 @@ fn f(v : vec3<f32>) -> vec4<f32> {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Vec3_Pointer_xy) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : ptr<function, vec3<f32>>) -> vec2<f32> {
   return (*(v)).xy;
 }
@@ -961,7 +1060,7 @@ fn f(v : ptr<function, vec3<f32>>) -> vec2<f32> {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Vec3_Pointer_yz) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : ptr<function, vec3<f32>>) -> vec2<f32> {
   return (*(v)).yz;
 }
@@ -969,7 +1068,7 @@ fn f(v : ptr<function, vec3<f32>>) -> vec2<f32> {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Vec3_Pointer_yzx) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : ptr<function, vec3<f32>>) -> vec3<f32> {
   return (*(v)).yzx;
 }
@@ -977,7 +1076,7 @@ fn f(v : ptr<function, vec3<f32>>) -> vec3<f32> {
 }
 
 TEST_F(IRToProgramRoundtripTest, Access_Vec3_Pointer_yzxy) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(v : ptr<function, vec3<f32>>) -> vec4<f32> {
   return (*(v)).yzxy;
 }
@@ -988,7 +1087,7 @@ fn f(v : ptr<function, vec3<f32>>) -> vec4<f32> {
 // Unary ops
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, UnaryOp_Negate) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32) -> i32 {
   return -(i);
 }
@@ -996,7 +1095,7 @@ fn f(i : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, UnaryOp_Complement) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : u32) -> u32 {
   return ~(i);
 }
@@ -1004,7 +1103,7 @@ fn f(i : u32) -> u32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, UnaryOp_Not) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(b : bool) -> bool {
   return !(b);
 }
@@ -1015,7 +1114,7 @@ fn f(b : bool) -> bool {
 // Binary ops
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, BinaryOp_Add) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> i32 {
   return (a + b);
 }
@@ -1023,7 +1122,7 @@ fn f(a : i32, b : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_Subtract) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> i32 {
   return (a - b);
 }
@@ -1031,7 +1130,7 @@ fn f(a : i32, b : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_Multiply) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> i32 {
   return (a * b);
 }
@@ -1039,7 +1138,7 @@ fn f(a : i32, b : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_Divide) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> i32 {
   return (a / b);
 }
@@ -1047,7 +1146,7 @@ fn f(a : i32, b : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_Modulo) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> i32 {
   return (a % b);
 }
@@ -1055,7 +1154,7 @@ fn f(a : i32, b : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_And) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> i32 {
   return (a & b);
 }
@@ -1063,7 +1162,7 @@ fn f(a : i32, b : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_Or) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> i32 {
   return (a | b);
 }
@@ -1071,7 +1170,7 @@ fn f(a : i32, b : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_Xor) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> i32 {
   return (a ^ b);
 }
@@ -1079,7 +1178,7 @@ fn f(a : i32, b : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_Equal) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> bool {
   return (a == b);
 }
@@ -1087,7 +1186,7 @@ fn f(a : i32, b : i32) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_NotEqual) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> bool {
   return (a != b);
 }
@@ -1095,7 +1194,7 @@ fn f(a : i32, b : i32) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_LessThan) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> bool {
   return (a < b);
 }
@@ -1103,7 +1202,7 @@ fn f(a : i32, b : i32) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_GreaterThan) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> bool {
   return (a > b);
 }
@@ -1111,7 +1210,7 @@ fn f(a : i32, b : i32) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_LessThanEqual) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> bool {
   return (a <= b);
 }
@@ -1119,7 +1218,7 @@ fn f(a : i32, b : i32) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_GreaterThanEqual) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : i32) -> bool {
   return (a >= b);
 }
@@ -1127,7 +1226,7 @@ fn f(a : i32, b : i32) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_ShiftLeft) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : u32) -> i32 {
   return (a << b);
 }
@@ -1135,7 +1234,7 @@ fn f(a : i32, b : u32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, BinaryOp_ShiftRight) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : i32, b : u32) -> i32 {
   return (a >> b);
 }
@@ -1146,7 +1245,7 @@ fn f(a : i32, b : u32) -> i32 {
 // Short-circuiting binary ops
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_And_Param_2) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool) -> bool {
   return (a && b);
 }
@@ -1154,7 +1253,7 @@ fn f(a : bool, b : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_And_Param_3_ab_c) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool, c : bool) -> bool {
   return ((a && b) && c);
 }
@@ -1162,7 +1261,7 @@ fn f(a : bool, b : bool, c : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_And_Param_3_a_bc) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool, c : bool) -> bool {
   return ((a && b) && c);
 }
@@ -1170,7 +1269,7 @@ fn f(a : bool, b : bool, c : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_And_Let_2) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool) -> bool {
   let l = (a && b);
   return l;
@@ -1179,7 +1278,7 @@ fn f(a : bool, b : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_And_Let_3_ab_c) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool, c : bool) -> bool {
   let l = ((a && b) && c);
   return l;
@@ -1188,7 +1287,7 @@ fn f(a : bool, b : bool, c : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_And_Let_3_a_bc) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool, c : bool) -> bool {
   let l = (a && (b && c));
   return l;
@@ -1197,7 +1296,7 @@ fn f(a : bool, b : bool, c : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_And_Call_2) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() -> bool {
   return true;
 }
@@ -1213,7 +1312,7 @@ fn f() -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_And_Call_3_ab_c) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() -> bool {
   return true;
 }
@@ -1233,7 +1332,7 @@ fn f() -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_And_Call_3_a_bc) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() -> bool {
   return true;
 }
@@ -1253,7 +1352,7 @@ fn f() -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Or_Param_2) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool) -> bool {
   return (a || b);
 }
@@ -1261,7 +1360,7 @@ fn f(a : bool, b : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Or_Param_3_ab_c) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool, c : bool) -> bool {
   return ((a || b) || c);
 }
@@ -1269,7 +1368,7 @@ fn f(a : bool, b : bool, c : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Or_Param_3_a_bc) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool, c : bool) -> bool {
   return (a || (b || c));
 }
@@ -1277,7 +1376,7 @@ fn f(a : bool, b : bool, c : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Or_Let_2) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool) -> bool {
   let l = (a || b);
   return l;
@@ -1286,7 +1385,7 @@ fn f(a : bool, b : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Or_Let_3_ab_c) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool, c : bool) -> bool {
   let l = ((a || b) || c);
   return l;
@@ -1295,7 +1394,7 @@ fn f(a : bool, b : bool, c : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Or_Let_3_a_bc) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(a : bool, b : bool, c : bool) -> bool {
   let l = (a || (b || c));
   return l;
@@ -1304,7 +1403,7 @@ fn f(a : bool, b : bool, c : bool) -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Or_Call_2) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() -> bool {
   return true;
 }
@@ -1320,7 +1419,7 @@ fn f() -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Or_Call_3_ab_c) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() -> bool {
   return true;
 }
@@ -1340,7 +1439,7 @@ fn f() -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Or_Call_3_a_bc) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() -> bool {
   return true;
 }
@@ -1360,7 +1459,7 @@ fn f() -> bool {
 }
 
 TEST_F(IRToProgramRoundtripTest, ShortCircuit_Mixed) {
-    Test(R"(
+    RUN_TEST(R"(
 fn b() -> bool {
   return true;
 }
@@ -1380,7 +1479,7 @@ fn f(a : bool, c : bool) -> bool {
 // Assignment
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, Assign_ArrayOfArrayOfArrayAccess_123456) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1393,7 +1492,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Assign_ArrayOfArrayOfArrayAccess_261345) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1408,7 +1507,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Assign_ArrayOfArrayOfArrayAccess_532614) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1425,7 +1524,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Assign_ArrayOfMatrixAccess_123456) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1438,7 +1537,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Assign_ArrayOfMatrixAccess_261345) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1453,7 +1552,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Assign_ArrayOfMatrixAccess_532614) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1473,13 +1572,13 @@ fn f() {
 // Compound assignment
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_Increment) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var v : i32;
   v++;
 }
 )",
-         R"(
+             R"(
 fn f() {
   var v : i32;
   v = (v + 1i);
@@ -1488,13 +1587,13 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_Decrement) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var v : i32;
   v++;
 }
 )",
-         R"(
+             R"(
 fn f() {
   var v : i32;
   v = (v + 1i);
@@ -1503,13 +1602,13 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_Add) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var v : i32;
   v += 8i;
 }
 )",
-         R"(
+             R"(
 fn f() {
   var v : i32;
   v = (v + 8i);
@@ -1518,13 +1617,13 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_Subtract) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var v : i32;
   v -= 8i;
 }
 )",
-         R"(
+             R"(
 fn f() {
   var v : i32;
   v = (v - 8i);
@@ -1533,13 +1632,13 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_Multiply) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var v : i32;
   v *= 8i;
 }
 )",
-         R"(
+             R"(
 fn f() {
   var v : i32;
   v = (v * 8i);
@@ -1548,13 +1647,13 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_Divide) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var v : i32;
   v /= 8i;
 }
 )",
-         R"(
+             R"(
 fn f() {
   var v : i32;
   v = (v / 8i);
@@ -1563,13 +1662,13 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_Xor) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var v : i32;
   v ^= 8i;
 }
 )",
-         R"(
+             R"(
 fn f() {
   var v : i32;
   v = (v ^ 8i);
@@ -1578,7 +1677,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_ArrayOfArrayOfArrayAccess_123456) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1588,7 +1687,8 @@ fn f() {
   v[e(1i)][e(2i)][e(3i)] += v[e(4i)][e(5i)][e(6i)];
 }
 )",
-         R"(fn e(i : i32) -> i32 {
+             R"(
+fn e(i : i32) -> i32 {
   return i;
 }
 
@@ -1601,7 +1701,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_ArrayOfArrayOfArrayAccess_261345) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1613,7 +1713,8 @@ fn f() {
   v[e(1i)][v_2][e(3i)] += v[e(4i)][e(5i)][v_3];
 }
 )",
-         R"(fn e(i : i32) -> i32 {
+             R"(
+fn e(i : i32) -> i32 {
   return i;
 }
 
@@ -1628,7 +1729,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_ArrayOfArrayOfArrayAccess_532614) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1642,7 +1743,8 @@ fn f() {
   v[e(1i)][v_4][v_3] += v[e(4i)][v_2][v_5];
 }
 )",
-         R"(fn e(i : i32) -> i32 {
+             R"(
+fn e(i : i32) -> i32 {
   return i;
 }
 
@@ -1659,7 +1761,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_ArrayOfMatrixAccess_123456) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1669,7 +1771,8 @@ fn f() {
   v[e(1i)][e(2i)][e(3i)] += v[e(4i)][e(5i)][e(6i)];
 }
 )",
-         R"(fn e(i : i32) -> i32 {
+             R"(
+fn e(i : i32) -> i32 {
   return i;
 }
 
@@ -1683,7 +1786,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_ArrayOfMatrixAccess_261345) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1695,7 +1798,8 @@ fn f() {
   v[e(1i)][v_2][e(3i)] += v[e(4i)][e(5i)][v_3];
 }
 )",
-         R"(fn e(i : i32) -> i32 {
+             R"(
+fn e(i : i32) -> i32 {
   return i;
 }
 
@@ -1711,7 +1815,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, CompoundAssign_ArrayOfMatrixAccess_532614) {
-    Test(R"(
+    RUN_TEST(R"(
 fn e(i : i32) -> i32 {
   return i;
 }
@@ -1725,7 +1829,8 @@ fn f() {
   v[e(1i)][v_4][v_3] += v[e(4i)][v_2][v_5];
 }
 )",
-         R"(fn e(i : i32) -> i32 {
+             R"(
+fn e(i : i32) -> i32 {
   return i;
 }
 
@@ -1745,7 +1850,7 @@ fn f() {
 // Phony Assignment
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, PhonyAssign_PrivateVar) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> p : i32;
 
 fn f() {
@@ -1755,7 +1860,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, PhonyAssign_FunctionVar) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var i : i32;
   _ = i;
@@ -1764,13 +1869,13 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, PhonyAssign_FunctionLet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   let i : i32 = 42i;
   _ = i;
 }
 )",
-         R"(
+             R"(
 fn f() {
   let i = 42i;
 }
@@ -1778,8 +1883,8 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, PhonyAssign_HandleVar) {
-    Test(R"(
-@group(0) @binding(0) var t : texture_2d<f32>;
+    RUN_TEST(R"(
+@group(0u) @binding(0u) var t : texture_2d<f32>;
 
 fn f() {
   _ = t;
@@ -1788,19 +1893,19 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, PhonyAssign_Constant) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   _ = 42i;
 }
 )",
-         R"(
+             R"(
 fn f() {
 }
 )");
 }
 
 TEST_F(IRToProgramRoundtripTest, PhonyAssign_Call) {
-    Test(R"(
+    RUN_TEST(R"(
 fn v() -> i32 {
   return 42;
 }
@@ -1809,7 +1914,7 @@ fn f() {
   _ = v();
 }
 )",
-         R"(
+             R"(
 fn v() -> i32 {
   return 42i;
 }
@@ -1820,11 +1925,26 @@ fn f() {
 )");
 }
 
+TEST_F(IRToProgramRoundtripTest, PhonyAssign_Conversion) {
+    RUN_TEST(R"(
+fn f() {
+  let i = 42i;
+  _ = u32(i);
+}
+)",
+             R"(
+fn f() {
+  let i = 42i;
+  _ = u32(i);
+}
+)");
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // let
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, LetUsedOnce) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : u32) -> u32 {
   let v = ~(i);
   return v;
@@ -1833,7 +1953,7 @@ fn f(i : u32) -> u32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, LetUsedTwice) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32) -> i32 {
   let v = (i * 2i);
   return (v + v);
@@ -1845,19 +1965,25 @@ fn f(i : i32) -> i32 {
 // Module-scope var
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_i32) {
-    Test("var<private> v : i32 = 1i;");
+    RUN_TEST(R"(
+var<private> v : i32 = 1i;
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_u32) {
-    Test("var<private> v : u32 = 1u;");
+    RUN_TEST(R"(
+var<private> v : u32 = 1u;
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_f32) {
-    Test("var<private> v : f32 = 1.0f;");
+    RUN_TEST(R"(
+var<private> v : f32 = 1.0f;
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_f16) {
-    Test(R"(
+    RUN_TEST(R"(
 enable f16;
 
 var<private> v : f16 = 1.0h;
@@ -1865,28 +1991,38 @@ var<private> v : f16 = 1.0h;
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_bool) {
-    Test("var<private> v : bool = true;");
+    RUN_TEST(R"(
+var<private> v : bool = true;
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_array_NoArgs) {
-    Test("var<private> v : array<i32, 4u> = array<i32, 4u>();");
+    RUN_TEST(R"(
+var<private> v : array<i32, 4u> = array<i32, 4u>();
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_array_Zero) {
-    Test("var<private> v : array<i32, 4u> = array<i32, 4u>(0i, 0i, 0i, 0i);",
-         "var<private> v : array<i32, 4u> = array<i32, 4u>();");
+    RUN_TEST(R"(
+var<private> v : array<i32, 4u> = array<i32, 4u>(0i, 0i, 0i, 0i);
+var<private> v : array<i32, 4u> = array<i32, 4u>();
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_array_SameValue) {
-    Test("var<private> v : array<i32, 4u> = array<i32, 4u>(4i, 4i, 4i, 4i);");
+    RUN_TEST(R"(
+var<private> v : array<i32, 4u> = array<i32, 4u>(4i, 4i, 4i, 4i);
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_array_DifferentValues) {
-    Test("var<private> v : array<i32, 4u> = array<i32, 4u>(1i, 2i, 3i, 4i);");
+    RUN_TEST(R"(
+var<private> v : array<i32, 4u> = array<i32, 4u>(1i, 2i, 3i, 4i);
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_struct_NoArgs) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   i : i32,
   u : u32,
@@ -1898,7 +2034,7 @@ var<private> s : S = S();
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_struct_Zero) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   i : i32,
   u : u32,
@@ -1907,7 +2043,7 @@ struct S {
 
 var<private> s : S = S(0i, 0u, 0f);
 )",
-         R"(
+             R"(
 struct S {
   i : i32,
   u : u32,
@@ -1919,7 +2055,7 @@ var<private> s : S = S();
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_struct_SameValue) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   b : i32,
@@ -1931,7 +2067,7 @@ var<private> s : S = S(4i, 4i, 4i);
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_struct_DifferentValues) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   a : i32,
   b : i32,
@@ -1943,78 +2079,104 @@ var<private> s : S = S(1i, 2i, 3i);
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_vec3f_NoArgs) {
-    Test("var<private> v : vec3<f32> = vec3<f32>();");
+    RUN_TEST(R"(
+var<private> v : vec3<f32> = vec3<f32>();
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_vec3f_Zero) {
-    Test("var<private> v : vec3<f32> = vec3<f32>(0f);",
-         "var<private> v : vec3<f32> = vec3<f32>();");
+    RUN_TEST(R"(
+var<private> v : vec3<f32> = vec3<f32>(0f);",
+             "var<private> v : vec3<f32> = vec3<f32>();
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_vec3f_Splat) {
-    Test("var<private> v : vec3<f32> = vec3<f32>(1.0f);");
+    RUN_TEST(R"(
+var<private> v : vec3<f32> = vec3<f32>(1.0f);
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_vec3f_Scalars) {
-    Test("var<private> v : vec3<f32> = vec3<f32>(1.0f, 2.0f, 3.0f);");
+    RUN_TEST(R"(
+var<private> v : vec3<f32> = vec3<f32>(1.0f, 2.0f, 3.0f);
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_mat2x3f_NoArgs) {
-    Test("var<private> v : mat2x3<f32> = mat2x3<f32>();");
+    RUN_TEST(R"(
+var<private> v : mat2x3<f32> = mat2x3<f32>();
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_mat2x3f_Scalars_SameValue) {
-    Test("var<private> v : mat2x3<f32> = mat2x3<f32>(4.0f, 4.0f, 4.0f, 4.0f, 4.0f, 4.0f);",
-         "var<private> v : mat2x3<f32> = mat2x3<f32>(vec3<f32>(4.0f), vec3<f32>(4.0f));");
+    RUN_TEST(R"(
+var<private> v : mat2x3<f32> = mat2x3<f32>(4.0f, 4.0f, 4.0f, 4.0f, 4.0f, 4.0f);
+var<private> v : mat2x3<f32> = mat2x3<f32>(vec3<f32>(4.0f), vec3<f32>(4.0f));
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_mat2x3f_Scalars) {
-    Test("var<private> v : mat2x3<f32> = mat2x3<f32>(1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f);",
-         "var<private> v : mat2x3<f32> = "
-         "mat2x3<f32>(vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(4.0f, 5.0f, 6.0f));");
+    RUN_TEST(R"(
+var<private> v : mat2x3<f32> = mat2x3<f32>(1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f);
+var<private> v : mat2x3<f32> = mat2x3<f32>(vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(4.0f, 5.0f, 6.0f));
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_mat2x3f_Columns) {
-    Test(
-        "var<private> v : mat2x3<f32> = "
-        "mat2x3<f32>(vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(4.0f, 5.0f, 6.0f));");
+    RUN_TEST(
+        R"(
+var<private> v : mat2x3<f32> = mat2x3<f32>(vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(4.0f, 5.0f, 6.0f));
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Private_mat2x3f_Columns_SameValue) {
-    Test(
-        "var<private> v : mat2x3<f32> = "
-        "mat2x3<f32>(vec3<f32>(4.0f, 4.0f, 4.0f), vec3<f32>(4.0f, 4.0f, 4.0f));",
-        "var<private> v : mat2x3<f32> = mat2x3<f32>(vec3<f32>(4.0f), vec3<f32>(4.0f));");
+    RUN_TEST(R"(
+var<private> v : mat2x3<f32> = mat2x3<f32>(vec3<f32>(4.0f, 4.0f, 4.0f), vec3<f32>(4.0f, 4.0f, 4.0f));
+var<private> v : mat2x3<f32> = mat2x3<f32>(vec3<f32>(4.0f), vec3<f32>(4.0f));
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Uniform_vec4i) {
-    Test("@group(10) @binding(20) var<uniform> v : vec4<i32>;");
+    RUN_TEST(R"(
+@group(10u) @binding(20u) var<uniform> v : vec4<i32>;
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_StorageRead_u32) {
-    Test("@group(10) @binding(20) var<storage, read> v : u32;");
+    RUN_TEST(R"(
+@group(10u) @binding(20u) var<storage, read> v : u32;
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_StorageReadWrite_i32) {
-    Test("@group(10) @binding(20) var<storage, read_write> v : i32;");
+    RUN_TEST(R"(
+@group(10u) @binding(20u) var<storage, read_write> v : i32;
+)");
 }
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Handle_Texture2D) {
-    Test("@group(0) @binding(0) var t : texture_2d<f32>;");
+    RUN_TEST(R"(
+@group(0u) @binding(0u) var t : texture_2d<f32>;
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Handle_Sampler) {
-    Test("@group(0) @binding(0) var s : sampler;");
+    RUN_TEST(R"(
+@group(0u) @binding(0u) var s : sampler;
+)");
 }
 
 TEST_F(IRToProgramRoundtripTest, ModuleScopeVar_Handle_SamplerCmp) {
-    Test("@group(0) @binding(0) var s : sampler_comparison;");
+    RUN_TEST(R"(
+@group(0u) @binding(0u) var s : sampler_comparison;
+)");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Function-scope var
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, FunctionScopeVar_i32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var i : i32;
 }
@@ -2022,7 +2184,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, FunctionScopeVar_i32_InitLiteral) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var i : i32 = 42i;
 }
@@ -2030,7 +2192,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, FunctionScopeVar_Chained) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var a : i32 = 42i;
   var b : i32 = a;
@@ -2043,7 +2205,7 @@ fn f() {
 // Function-scope let
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, FunctionScopeLet_i32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(i : i32) -> i32 {
   let a = (42i + i);
   let b = (24i + i);
@@ -2054,7 +2216,7 @@ fn f(i : i32) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, FunctionScopeLet_ptr) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var a : array<i32, 3u>;
   let b = &(a[1i]);
@@ -2069,7 +2231,7 @@ TEST_F(IRToProgramRoundtripTest, FunctionScopeLet_NoConstEvalError) {
     // If their constant values were inlined, then the initializer for 'c' would be treated as a
     // constant expression instead of the authored runtime expression. Evaluating '1 / 0' as a
     // constant expression is a WGSL validation error.
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   let a = 1i;
   let b = 0i;
@@ -2082,7 +2244,7 @@ fn f() {
 // If
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, If_CallFn) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() {
 }
 
@@ -2095,7 +2257,7 @@ fn f(cond : bool) {
 }
 
 TEST_F(IRToProgramRoundtripTest, If_Return) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(cond : bool) {
   if (cond) {
     return;
@@ -2105,7 +2267,7 @@ fn f(cond : bool) {
 }
 
 TEST_F(IRToProgramRoundtripTest, If_Return_i32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var cond : bool = true;
   if (cond) {
@@ -2117,7 +2279,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, If_CallFn_Else_CallFn) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() {
 }
 
@@ -2135,7 +2297,7 @@ fn f(cond : bool) {
 }
 
 TEST_F(IRToProgramRoundtripTest, If_Return_f32_Else_Return_f32) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> f32 {
   var cond : bool = true;
   if (cond) {
@@ -2148,7 +2310,7 @@ fn f() -> f32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, If_Return_u32_Else_CallFn) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() {
 }
 
@@ -2169,7 +2331,7 @@ fn f() -> u32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, If_CallFn_ElseIf_CallFn) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() {
 }
 
@@ -2192,7 +2354,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, If_Else_Chain) {
-    Test(R"(
+    RUN_TEST(R"(
 fn x(i : i32) -> bool {
   return true;
 }
@@ -2215,7 +2377,7 @@ fn f(a : bool, b : bool, c : bool, d : bool) {
 // Switch
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, Switch_Default) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() {
 }
 
@@ -2231,7 +2393,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Switch_3_Cases) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() {
 }
 
@@ -2259,7 +2421,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Switch_3_Cases_AllReturn) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() {
 }
 
@@ -2279,7 +2441,7 @@ fn f() {
   a();
 }
 )",
-         R"(
+             R"(
 fn a() {
 }
 
@@ -2301,7 +2463,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Switch_Nested) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a() {
 }
 
@@ -2339,7 +2501,7 @@ fn f() {
 // For
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, For_Empty) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   for(var i : i32 = 0i; (i < 5i); i = (i + 1i)) {
   }
@@ -2348,7 +2510,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_Empty_NoInit) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var i : i32 = 0i;
   for(; (i < 5i); i = (i + 1i)) {
@@ -2358,14 +2520,14 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_Empty_NoCond) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   for(var i : i32 = 0i; ; i = (i + 1i)) {
     break;
   }
 }
 )",
-         R"(
+             R"(
 fn f() {
   {
     var i : i32 = 0i;
@@ -2382,7 +2544,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_Empty_NoCont) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   for(var i : i32 = 0i; (i < 5i); ) {
   }
@@ -2391,7 +2553,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_ComplexBody) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> bool {
   return (v == 1i);
 }
@@ -2410,7 +2572,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_ComplexBody_NoInit) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> bool {
   return (v == 1i);
 }
@@ -2430,7 +2592,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_ComplexBody_NoCond) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> bool {
   return (v == 1i);
 }
@@ -2445,7 +2607,7 @@ fn f() -> i32 {
   }
 }
 )",
-         R"(
+             R"(
 fn a(v : i32) -> bool {
   return (v == 1i);
 }
@@ -2470,7 +2632,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_ComplexBody_NoCont) {
-    Test(R"(
+    RUN_TEST(R"(
 fn a(v : i32) -> bool {
   return (v == 1i);
 }
@@ -2489,7 +2651,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_CallInInitCondCont) {
-    Test(R"(
+    RUN_TEST(R"(
 fn n(v : i32) -> i32 {
   return (v + 1i);
 }
@@ -2502,7 +2664,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_AssignAsInit) {
-    Test(R"(
+    RUN_TEST(R"(
 fn n() {
 }
 
@@ -2515,7 +2677,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_CompoundAssignAsInit) {
-    Test(R"(
+    RUN_TEST(R"(
 fn n() {
 }
 
@@ -2525,7 +2687,7 @@ fn f() {
   }
 }
 )",
-         R"(
+             R"(
 fn n() {
 }
 
@@ -2538,7 +2700,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_IncrementAsInit) {
-    Test(R"(
+    RUN_TEST(R"(
 fn n() {
 }
 
@@ -2548,7 +2710,7 @@ fn f() {
   }
 }
 )",
-         R"(
+             R"(
 fn n() {
 }
 
@@ -2561,7 +2723,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_DecrementAsInit) {
-    Test(R"(
+    RUN_TEST(R"(
 fn n() {
 }
 
@@ -2571,7 +2733,7 @@ fn f() {
   }
 }
 )",
-         R"(
+             R"(
 fn n() {
 }
 
@@ -2584,7 +2746,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, For_CallAsInit) {
-    Test(R"(
+    RUN_TEST(R"(
 fn n() {
 }
 
@@ -2600,7 +2762,7 @@ fn f() {
 // While
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, While_Empty) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   while(true) {
   }
@@ -2609,7 +2771,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, While_Cond) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(cond : bool) {
   while(cond) {
   }
@@ -2618,7 +2780,7 @@ fn f(cond : bool) {
 }
 
 TEST_F(IRToProgramRoundtripTest, While_Break) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   while(true) {
     break;
@@ -2628,7 +2790,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, While_IfBreak) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(cond : bool) {
   while(true) {
     if (cond) {
@@ -2640,7 +2802,7 @@ fn f(cond : bool) {
 }
 
 TEST_F(IRToProgramRoundtripTest, While_IfReturn) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(cond : bool) {
   while(true) {
     if (cond) {
@@ -2655,7 +2817,7 @@ fn f(cond : bool) {
 // Loop
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, Loop_Break) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   loop {
     break;
@@ -2665,7 +2827,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Loop_IfBreak) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(cond : bool) {
   loop {
     if (cond) {
@@ -2677,7 +2839,7 @@ fn f(cond : bool) {
 }
 
 TEST_F(IRToProgramRoundtripTest, Loop_IfReturn) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f(cond : bool) {
   loop {
     if (cond) {
@@ -2689,7 +2851,7 @@ fn f(cond : bool) {
 }
 
 TEST_F(IRToProgramRoundtripTest, Loop_IfContinuing) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var cond : bool = false;
   loop {
@@ -2706,7 +2868,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Loop_VarsDeclaredOutsideAndInside) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   var b : i32 = 1i;
   loop {
@@ -2724,7 +2886,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Loop_BreakIf_EmptyBody) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   loop {
 
@@ -2737,7 +2899,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Loop_BreakIf_NotFalse) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   loop {
     if (false) {
@@ -2751,7 +2913,7 @@ fn f() {
   }
 }
 )",
-         R"(
+             R"(
 fn f() {
   loop {
     if (!(false)) {
@@ -2767,7 +2929,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Loop_BreakIf_NotTrue) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   loop {
     if (false) {
@@ -2781,7 +2943,7 @@ fn f() {
   }
 }
 )",
-         R"(
+             R"(
 fn f() {
   loop {
     if (!(false)) {
@@ -2797,7 +2959,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Loop_WithReturn) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() {
   loop {
     let i = 42i;
@@ -2811,12 +2973,12 @@ fn f() {
 // Shadowing tests
 ////////////////////////////////////////////////////////////////////////////////
 TEST_F(IRToProgramRoundtripTest, Shadow_f32_With_Fn) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f32() {
   var v = mat4x4f();
 }
 )",
-         R"(
+             R"(
 fn f32_1() {
   var v : mat4x4<f32> = mat4x4<f32>();
 }
@@ -2824,7 +2986,7 @@ fn f32_1() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_f32_With_Struct) {
-    Test(R"(
+    RUN_TEST(R"(
 struct f32 {
   v : i32,
 }
@@ -2833,7 +2995,7 @@ fn f(s : f32) {
   let f = vec2f(1.0f);
 }
 )",
-         R"(
+             R"(
 struct f32_1 {
   v : i32,
 }
@@ -2845,21 +3007,21 @@ fn f(s : f32_1) {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_f32_With_ModVar) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> f32 : vec2f = vec2f(0.0f, 1.0f);
 )",
-         R"(
+             R"(
 var<private> f32_1 : vec2<f32> = vec2<f32>(0.0f, 1.0f);
 )");
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_f32_With_ModVar2) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> f32 : i32 = 1i;
 
 var<private> v = vec2(1.0).x;
 )",
-         R"(
+             R"(
 var<private> f32_1 : i32 = 1i;
 
 var<private> v : f32 = 1.0f;
@@ -2867,14 +3029,14 @@ var<private> v : f32 = 1.0f;
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_f32_With_Alias) {
-    Test(R"(
+    RUN_TEST(R"(
 alias f32 = i32;
 
 fn f() {
   var v = vec3(1.0f, 2.0f, 3.0f);
 }
 )",
-         R"(
+             R"(
 fn f() {
   var v : vec3<f32> = vec3<f32>(1.0f, 2.0f, 3.0f);
 }
@@ -2882,7 +3044,7 @@ fn f() {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_Struct_With_FnVar) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   i : i32,
 }
@@ -2895,7 +3057,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_Struct_With_Param) {
-    Test(R"(
+    RUN_TEST(R"(
 struct S {
   i : i32,
 }
@@ -2907,7 +3069,7 @@ fn f(S : S) -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_ModVar_With_FnVar) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> i : i32 = 1i;
 
 fn f() -> i32 {
@@ -2919,7 +3081,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_ModVar_With_FnLet) {
-    Test(R"(
+    RUN_TEST(R"(
 var<private> i : i32 = 1i;
 
 fn f() -> i32 {
@@ -2931,7 +3093,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_IfVar) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   if (true) {
@@ -2945,7 +3107,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_IfLet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   if (true) {
@@ -2959,7 +3121,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_WhileVar) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   while((i < 4i)) {
@@ -2972,7 +3134,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_WhileLet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   while((i < 4i)) {
@@ -2985,7 +3147,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_ForInitVar) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   for(var i : f32 = 0.0f; (i < 4.0f); ) {
@@ -2997,7 +3159,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_ForInitLet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   for(let i = 0.0f; (i < 4.0f); ) {
@@ -3009,7 +3171,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_ForBodyVar) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   for(var x : i32 = 0i; (i < 4i); ) {
@@ -3022,7 +3184,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_ForBodyLet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   for(var x : i32 = 0i; (i < 4i); ) {
@@ -3035,7 +3197,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_LoopBodyVar) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   loop {
@@ -3053,7 +3215,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_LoopBodyLet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   loop {
@@ -3071,7 +3233,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_LoopContinuingVar) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   loop {
@@ -3090,7 +3252,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_LoopContinuingLet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   loop {
@@ -3109,7 +3271,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_SwitchCaseVar) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   switch(i) {
@@ -3129,7 +3291,7 @@ fn f() -> i32 {
 }
 
 TEST_F(IRToProgramRoundtripTest, Shadow_FnVar_With_SwitchCaseLet) {
-    Test(R"(
+    RUN_TEST(R"(
 fn f() -> i32 {
   var i : i32;
   switch(i) {
@@ -3144,6 +3306,59 @@ fn f() -> i32 {
       return i;
     }
   }
+}
+)");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// chromium_internal_input_attachments
+////////////////////////////////////////////////////////////////////////////////
+TEST_F(IRToProgramRoundtripTest, Call_InputAttachmentLoad) {
+    RUN_TEST(R"(
+enable chromium_internal_input_attachments;
+
+@group(0u) @binding(0u) @input_attachment_index(3u) var input_tex : input_attachment<f32>;
+
+@fragment
+fn main() -> @location(0u) vec4<f32> {
+  return inputAttachmentLoad(input_tex);
+}
+)");
+}
+
+TEST_F(IRToProgramRoundtripTest, WorkgroupSizeLargerThanI32) {
+    RUN_TEST(R"(
+@compute @workgroup_size(4294967295u, 1u, 1u)
+fn main() {
+}
+)");
+}
+
+TEST_F(IRToProgramRoundtripTest, BindingLargerThanI32) {
+    RUN_TEST(R"(
+@group(0u) @binding(4000000000u) var s : sampler;
+)");
+}
+
+TEST_F(IRToProgramRoundtripTest, GroupLargerThanI32) {
+    RUN_TEST(R"(
+@group(4000000000u) @binding(0u) var s : sampler;
+)");
+}
+
+TEST_F(IRToProgramRoundtripTest, LocationInputLargerThanI32) {
+    RUN_TEST(R"(
+@fragment
+fn main(@location(4000000000u) color : vec4<f32>) {
+}
+)");
+}
+
+TEST_F(IRToProgramRoundtripTest, LocationOutputLargerThanI32) {
+    RUN_TEST(R"(
+@fragment
+fn main() -> @location(4000000000u) vec4<f32> {
+  return vec4<f32>();
 }
 )");
 }

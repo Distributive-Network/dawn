@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/spirv/reader/ast_parser/parse.h"
 
@@ -26,7 +39,7 @@ using ParserTest = testing::Test;
 TEST_F(ParserTest, DataEmpty) {
     std::vector<uint32_t> data;
     auto program = Parse(data, {});
-    auto errs = program.Diagnostics().str();
+    auto errs = program.Diagnostics().Str();
     ASSERT_FALSE(program.IsValid()) << errs;
     EXPECT_EQ(errs, "error: line:0: Invalid SPIR-V magic number.");
 }
@@ -63,7 +76,7 @@ TEST_F(ParserTest, AllowNonUniformDerivatives_False) {
     Options options;
     options.allow_non_uniform_derivatives = false;
     auto program = Parse(spv, options);
-    auto errs = program.Diagnostics().str();
+    auto errs = program.Diagnostics().Str();
     EXPECT_FALSE(program.IsValid()) << errs;
     EXPECT_THAT(errs, ::testing::HasSubstr("'dpdx' must only be called from uniform control flow"));
 }
@@ -73,9 +86,46 @@ TEST_F(ParserTest, AllowNonUniformDerivatives_True) {
     Options options;
     options.allow_non_uniform_derivatives = true;
     auto program = Parse(spv, options);
-    auto errs = program.Diagnostics().str();
+    auto errs = program.Diagnostics().Str();
     EXPECT_TRUE(program.IsValid()) << errs;
-    EXPECT_EQ(program.Diagnostics().count(), 0u) << errs;
+    EXPECT_EQ(program.Diagnostics().Count(), 0u) << errs;
+}
+
+TEST_F(ParserTest, WorkgroupIdGuardingBarrier) {
+    auto spv = test::Assemble(R"(
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %foo "foo" %wgid
+               OpExecutionMode %foo LocalSize 1 1 1
+               OpDecorate %wgid BuiltIn WorkgroupId
+       %uint = OpTypeInt 32 0
+      %vec3u = OpTypeVector %uint 3
+%_ptr_Input_vec3u = OpTypePointer Input %vec3u
+     %uint_0 = OpConstant %uint 0
+     %uint_2 = OpConstant %uint 2
+   %uint_264 = OpConstant %uint 264
+       %wgid = OpVariable %_ptr_Input_vec3u Input
+       %void = OpTypeVoid
+       %bool = OpTypeBool
+  %func_type = OpTypeFunction %void
+        %foo = OpFunction %void None %func_type
+  %foo_start = OpLabel
+ %wgid_value = OpLoad %vec3u %wgid
+     %wgid_x = OpCompositeExtract %uint %wgid_value 0
+  %condition = OpIEqual %bool %wgid_x %uint_0
+               OpSelectionMerge %merge None
+               OpBranchConditional %condition %true_branch %merge
+%true_branch = OpLabel
+               OpControlBarrier %uint_2 %uint_2 %uint_264
+               OpBranch %merge
+      %merge = OpLabel
+               OpReturn
+               OpFunctionEnd
+)");
+    auto program = Parse(spv, {});
+    auto errs = program.Diagnostics().Str();
+    EXPECT_TRUE(program.IsValid()) << errs;
+    EXPECT_EQ(program.Diagnostics().Count(), 0u) << errs;
 }
 
 // TODO(dneto): uint32 vec, valid SPIR-V

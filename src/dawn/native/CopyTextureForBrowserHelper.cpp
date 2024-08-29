@@ -1,20 +1,32 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/CopyTextureForBrowserHelper.h"
 
-#include <unordered_set>
 #include <utility>
 
 #include "dawn/common/Log.h"
@@ -187,22 +199,18 @@ static const char sCopyForBrowserShader[] = R"(
             @fragment
             fn copyTexture(@location(0) texcoord : vec2f
             ) -> @location(0) vec4f {
-                var color = textureSample(mySourceTexture, mySampler, texcoord);
-
-                // TODO(crbug.com/tint/1723): Discard before sampling should be valid.
                 discardIfOutsideOfCopy(texcoord);
 
+                var color = textureSample(mySourceTexture, mySampler, texcoord);
                 return transform(color);
             }
 
             @fragment
             fn copyExternalTexture(@location(0) texcoord : vec2f
             ) -> @location(0) vec4f {
-                var color = textureSampleBaseClampToEdge(mySourceExternalTexture, mySampler, texcoord);
-
-                // TODO(crbug.com/tint/1723): Discard before sampling should be valid.
                 discardIfOutsideOfCopy(texcoord);
 
+                var color = textureSampleBaseClampToEdge(mySourceExternalTexture, mySampler, texcoord);
                 return transform(color);
             }
         )";
@@ -355,7 +363,7 @@ ResultOrError<RenderPipelineBase*> GetOrCreateCopyTextureForBrowserPipeline(
         Ref<RenderPipelineBase> pipeline;
         DAWN_TRY_ASSIGN(
             pipeline, CreateCopyForBrowserPipeline(device, dstFormat, shaderModule, "copyTexture"));
-        store->copyTextureForBrowserPipelines.insert({dstFormat, std::move(pipeline)});
+        store->copyTextureForBrowserPipelines.emplace(dstFormat, std::move(pipeline));
     }
 
     return GetCachedCopyTexturePipeline(store, dstFormat);
@@ -371,7 +379,7 @@ ResultOrError<RenderPipelineBase*> GetOrCreateCopyExternalTextureForBrowserPipel
         Ref<RenderPipelineBase> pipeline;
         DAWN_TRY_ASSIGN(pipeline, CreateCopyForBrowserPipeline(device, dstFormat, shaderModule,
                                                                "copyExternalTexture"));
-        store->copyExternalTextureForBrowserPipelines.insert({dstFormat, std::move(pipeline)});
+        store->copyExternalTextureForBrowserPipelines.emplace(dstFormat, std::move(pipeline));
     }
 
     return GetCachedCopyExternalTexturePipeline(store, dstFormat);
@@ -675,7 +683,8 @@ MaybeError ValidateCopyTextureForBrowser(DeviceBase* device,
     // Validate copy common rules and copySize.
     DAWN_INVALID_IF(copySize->depthOrArrayLayers > 1, "Copy is for more than one array layer (%u)",
                     copySize->depthOrArrayLayers);
-    DAWN_TRY(ValidateTextureToTextureCopyCommonRestrictions(*source, *destination, *copySize));
+    DAWN_TRY(
+        ValidateTextureToTextureCopyCommonRestrictions(device, *source, *destination, *copySize));
 
     // Validate options
     DAWN_TRY(ValidateCopyForBrowserOptions(*options));
@@ -747,7 +756,7 @@ MaybeError DoCopyTextureForBrowser(DeviceBase* device,
                                    const CopyTextureForBrowserOptions* options) {
     TextureInfo info;
     info.origin = source->origin;
-    info.size = source->texture->GetSize();
+    info.size = source->texture->GetSize(source->aspect);
 
     Ref<TextureViewBase> srcTextureView = nullptr;
     TextureViewDescriptor srcTextureViewDesc = {};

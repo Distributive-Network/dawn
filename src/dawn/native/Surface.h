@@ -1,23 +1,40 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_DAWN_NATIVE_SURFACE_H_
 #define SRC_DAWN_NATIVE_SURFACE_H_
 
+#include <memory>
+#include <string>
+
 #include "dawn/native/Error.h"
 #include "dawn/native/Forward.h"
 #include "dawn/native/ObjectBase.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 #include "dawn/native/dawn_platform.h"
 
@@ -34,7 +51,19 @@ struct IUnknown;
 
 namespace dawn::native {
 
-MaybeError ValidateSurfaceDescriptor(InstanceBase* instance, const SurfaceDescriptor* descriptor);
+struct PhysicalDeviceSurfaceCapabilities;
+
+// Adapter surface capabilities are cached by the surface
+class AdapterSurfaceCapCache;
+
+ResultOrError<UnpackedPtr<SurfaceDescriptor>> ValidateSurfaceDescriptor(
+    InstanceBase* instance,
+    const SurfaceDescriptor* rawDescriptor);
+
+MaybeError ValidateSurfaceConfiguration(DeviceBase* device,
+                                        const PhysicalDeviceSurfaceCapabilities& capabilities,
+                                        const SurfaceConfiguration* config,
+                                        const Surface* surface);
 
 // A surface is a sum types of all the kind of windows Dawn supports. The OS-specific types
 // aren't used because they would cause compilation errors on other OSes (or require
@@ -43,12 +72,9 @@ MaybeError ValidateSurfaceDescriptor(InstanceBase* instance, const SurfaceDescri
 // replaced.
 class Surface final : public ErrorMonad {
   public:
-    static Surface* MakeError(InstanceBase* instance);
+    static Ref<Surface> MakeError(InstanceBase* instance);
 
-    Surface(InstanceBase* instance, const SurfaceDescriptor* descriptor);
-
-    void SetAttachedSwapChain(SwapChainBase* swapChain);
-    SwapChainBase* GetAttachedSwapChain();
+    Surface(InstanceBase* instance, const UnpackedPtr<SurfaceDescriptor>& descriptor);
 
     // These are valid to call on all Surfaces.
     enum class Type {
@@ -62,6 +88,7 @@ class Surface final : public ErrorMonad {
     };
     Type GetType() const;
     InstanceBase* GetInstance() const;
+    DeviceBase* GetCurrentDevice() const;
 
     // Valid to call if the type is MetalLayer
     void* GetMetalLayer() const;
@@ -87,29 +114,74 @@ class Surface final : public ErrorMonad {
     void* GetXDisplay() const;
     uint32_t GetXWindow() const;
 
+    // TODO(dawn:2320): Remove these 2 accessors once the deprecation period is finished and
+    // Device::APICreateSwapChain gets dropped
+    SwapChainBase* GetAttachedSwapChain();
+    void SetAttachedSwapChain(SwapChainBase* swapChain);
+
+    const std::string& GetLabel() const;
+
+    // Dawn API
+    void APIConfigure(const SurfaceConfiguration* config);
+    wgpu::Status APIGetCapabilities(AdapterBase* adapter, SurfaceCapabilities* capabilities) const;
+    void APIGetCurrentTexture(SurfaceTexture* surfaceTexture) const;
+    wgpu::TextureFormat APIGetPreferredFormat(AdapterBase* adapter) const;
+    void APIPresent();
+    void APIUnconfigure();
+    void APISetLabel(const char* label);
+
   private:
     Surface(InstanceBase* instance, ErrorMonad::ErrorTag tag);
     ~Surface() override;
 
+    MaybeError Configure(const SurfaceConfiguration* config);
+    MaybeError Unconfigure();
+
+    MaybeError GetCapabilities(AdapterBase* adapter, SurfaceCapabilities* capabilities) const;
+    MaybeError GetCurrentTexture(SurfaceTexture* surfaceTexture) const;
+    ResultOrError<wgpu::TextureFormat> GetPreferredFormat(AdapterBase* adapter) const;
+    MaybeError Present();
+
     Ref<InstanceBase> mInstance;
     Type mType;
+    std::string mLabel;
 
-    // The swapchain will set this to null when it is destroyed.
+    // The surface has an associated device only when it is configured
+    Ref<DeviceBase> mCurrentDevice;
+
+    // The swapchain is created when configuring the surface.
     Ref<SwapChainBase> mSwapChain;
 
+    // We keep on storing the previous swap chain after Unconfigure in case we could reuse it
+    Ref<SwapChainBase> mRecycledSwapChain;
+
+    // This ensures that the user does not mix the legacy API (ManagesSwapChain::No, i.e., explicit
+    // call to CreateSwapChain) with the new API (ManagesSwapChain::Yes, i.e., surface.configure).
+    // TODO(dawn:2320): Remove and consider it is always Yes once Device::APICreateSwapChain gets
+    // dropped
+    enum class ManagesSwapChain {
+        Yes,
+        No,
+        Unknown,
+    };
+    ManagesSwapChain mIsSwapChainManagedBySurface = ManagesSwapChain::Unknown;
+
+    // A cache is mutable because potentially modified in const-qualified getters
+    std::unique_ptr<AdapterSurfaceCapCache> mCapabilityCache;
+
     // MetalLayer
-    void* mMetalLayer = nullptr;
+    raw_ptr<void> mMetalLayer = nullptr;
 
     // ANativeWindow
-    void* mAndroidNativeWindow = nullptr;
+    raw_ptr<void> mAndroidNativeWindow = nullptr;
 
     // Wayland
-    void* mWaylandDisplay = nullptr;
-    void* mWaylandSurface = nullptr;
+    raw_ptr<void> mWaylandDisplay = nullptr;
+    raw_ptr<void> mWaylandSurface = nullptr;
 
     // WindowsHwnd
-    void* mHInstance = nullptr;
-    void* mHWND = nullptr;
+    raw_ptr<void> mHInstance = nullptr;
+    raw_ptr<void> mHWND = nullptr;
 
 #if defined(DAWN_USE_WINDOWS_UI)
     // WindowsCoreWindow
@@ -120,7 +192,7 @@ class Surface final : public ErrorMonad {
 #endif  // defined(DAWN_USE_WINDOWS_UI)
 
     // Xlib
-    void* mXDisplay = nullptr;
+    raw_ptr<void> mXDisplay = nullptr;
     uint32_t mXWindow = 0;
 };
 

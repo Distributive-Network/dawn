@@ -1,16 +1,29 @@
-# Copyright 2020 The Dawn Authors
+# Copyright 2020 The Dawn & Tint Authors
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 DawnJSONGenerator(
     TARGET "wire"
@@ -18,7 +31,7 @@ DawnJSONGenerator(
     RESULT_VARIABLE "DAWN_WIRE_GEN_SOURCES"
 )
 
-add_library(dawn_wire ${DAWN_PLACEHOLDER_FILE})
+add_library(dawn_wire)
 common_compile_options(dawn_wire)
 
 target_compile_definitions(dawn_wire PRIVATE "DAWN_WIRE_IMPLEMENTATION")
@@ -27,10 +40,12 @@ if(BUILD_SHARED_LIBS)
 endif()
 
 target_sources(dawn_wire PRIVATE
+  INTERFACE
     "${DAWN_INCLUDE_DIR}/dawn/wire/Wire.h"
     "${DAWN_INCLUDE_DIR}/dawn/wire/WireClient.h"
     "${DAWN_INCLUDE_DIR}/dawn/wire/WireServer.h"
     "${DAWN_INCLUDE_DIR}/dawn/wire/dawn_wire_export.h"
+  PRIVATE
     ${DAWN_WIRE_GEN_SOURCES}
     "BufferConsumer.h"
     "BufferConsumer_impl.h"
@@ -59,6 +74,8 @@ target_sources(dawn_wire PRIVATE
     "client/ClientInlineMemoryTransferService.cpp"
     "client/Device.cpp"
     "client/Device.h"
+    "client/EventManager.cpp"
+    "client/EventManager.h"
     "client/Instance.cpp"
     "client/Instance.h"
     "client/LimitsAndFeatures.cpp"
@@ -71,9 +88,10 @@ target_sources(dawn_wire PRIVATE
     "client/QuerySet.h"
     "client/Queue.cpp"
     "client/Queue.h"
-    "client/RequestTracker.h"
     "client/ShaderModule.cpp"
     "client/ShaderModule.h"
+    "client/Surface.cpp"
+    "client/Surface.h"
     "client/SwapChain.cpp"
     "client/SwapChain.h"
     "client/Texture.cpp"
@@ -90,6 +108,15 @@ target_sources(dawn_wire PRIVATE
     "server/ServerShaderModule.cpp"
 )
 target_link_libraries(dawn_wire
-    PUBLIC dawn_headers
-    PRIVATE dawn_common dawn_internal_config
+    PUBLIC
+      dawn_headers
+    PRIVATE
+      absl::flat_hash_map
+      absl::flat_hash_set
+      dawn_common
+      dawn_internal_config
+      partition_alloc
+      tint_lang_wgsl_features
 )
+
+install_if_enabled(dawn_wire)

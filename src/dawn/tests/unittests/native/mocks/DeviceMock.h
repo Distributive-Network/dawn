@@ -1,21 +1,35 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_DAWN_TESTS_UNITTESTS_NATIVE_MOCKS_DEVICEMOCK_H_
 #define SRC_DAWN_TESTS_UNITTESTS_NATIVE_MOCKS_DEVICEMOCK_H_
 
 #include <memory>
+#include <vector>
 
 #include "dawn/native/Device.h"
 #include "dawn/native/Instance.h"
@@ -32,6 +46,7 @@ class DeviceMock : public DeviceBase {
   public:
     // Exposes some protected functions for testing purposes.
     using DeviceBase::DestroyObjects;
+    using DeviceBase::ForceEnableFeatureForTesting;
     using DeviceBase::ForceSetToggleForTesting;
 
     // TODO(lokokung): Use real DeviceBase constructor instead of mock specific one.
@@ -41,6 +56,8 @@ class DeviceMock : public DeviceBase {
     DeviceMock();
     ~DeviceMock() override;
     dawn::platform::Platform* GetPlatform() const override;
+
+    dawn::native::InstanceBase* GetInstance() const override;
 
     // Mock specific functionality.
     QueueMock* GetQueueMock();
@@ -63,7 +80,6 @@ class DeviceMock : public DeviceBase {
     MOCK_METHOD(uint64_t, GetOptimalBufferToTextureCopyOffsetAlignment, (), (const, override));
 
     MOCK_METHOD(float, GetTimestampPeriodInNS, (), (const, override));
-    MOCK_METHOD(void, ForceEventualFlushOfCommands, (), (override));
 
     MOCK_METHOD(ResultOrError<Ref<BindGroupBase>>,
                 CreateBindGroupImpl,
@@ -75,11 +91,11 @@ class DeviceMock : public DeviceBase {
                 (override));
     MOCK_METHOD(ResultOrError<Ref<BufferBase>>,
                 CreateBufferImpl,
-                (const BufferDescriptor*),
+                (const UnpackedPtr<BufferDescriptor>&),
                 (override));
     MOCK_METHOD(Ref<ComputePipelineBase>,
                 CreateUninitializedComputePipelineImpl,
-                (const ComputePipelineDescriptor*),
+                (const UnpackedPtr<ComputePipelineDescriptor>&),
                 (override));
     MOCK_METHOD(ResultOrError<Ref<ExternalTextureBase>>,
                 CreateExternalTextureImpl,
@@ -87,7 +103,7 @@ class DeviceMock : public DeviceBase {
                 (override));
     MOCK_METHOD(ResultOrError<Ref<PipelineLayoutBase>>,
                 CreatePipelineLayoutImpl,
-                (const PipelineLayoutDescriptor*),
+                (const UnpackedPtr<PipelineLayoutDescriptor>&),
                 (override));
     MOCK_METHOD(ResultOrError<Ref<QuerySetBase>>,
                 CreateQuerySetImpl,
@@ -95,7 +111,7 @@ class DeviceMock : public DeviceBase {
                 (override));
     MOCK_METHOD(Ref<RenderPipelineBase>,
                 CreateUninitializedRenderPipelineImpl,
-                (const RenderPipelineDescriptor*),
+                (const UnpackedPtr<RenderPipelineDescriptor>&),
                 (override));
     MOCK_METHOD(ResultOrError<Ref<SamplerBase>>,
                 CreateSamplerImpl,
@@ -103,34 +119,27 @@ class DeviceMock : public DeviceBase {
                 (override));
     MOCK_METHOD(ResultOrError<Ref<ShaderModuleBase>>,
                 CreateShaderModuleImpl,
-                (const ShaderModuleDescriptor*,
+                (const UnpackedPtr<ShaderModuleDescriptor>&,
+                 const std::vector<tint::wgsl::Extension>&,
                  ShaderModuleParseResult*,
                  OwnedCompilationMessages*),
                 (override));
     MOCK_METHOD(ResultOrError<Ref<SwapChainBase>>,
                 CreateSwapChainImpl,
-                (Surface*, SwapChainBase*, const SwapChainDescriptor*),
+                (Surface*, SwapChainBase*, const SurfaceConfiguration*),
                 (override));
     MOCK_METHOD(ResultOrError<Ref<TextureBase>>,
                 CreateTextureImpl,
-                (const TextureDescriptor*),
+                (const UnpackedPtr<TextureDescriptor>&),
                 (override));
     MOCK_METHOD(ResultOrError<Ref<TextureViewBase>>,
                 CreateTextureViewImpl,
-                (TextureBase*, const TextureViewDescriptor*),
+                (TextureBase*, const UnpackedPtr<TextureViewDescriptor>&),
                 (override));
-
-    MOCK_METHOD(ResultOrError<wgpu::TextureUsage>,
-                GetSupportedSurfaceUsageImpl,
-                (const Surface*),
-                (const, override));
 
     MOCK_METHOD(MaybeError, TickImpl, (), (override));
 
-    MOCK_METHOD(ResultOrError<ExecutionSerial>, CheckAndUpdateCompletedSerials, (), (override));
     MOCK_METHOD(void, DestroyImpl, (), (override));
-    MOCK_METHOD(MaybeError, WaitForIdleForDestruction, (), (override));
-    MOCK_METHOD(bool, HasPendingCommands, (), (const, override));
 
   private:
     Ref<InstanceBase> mInstance;

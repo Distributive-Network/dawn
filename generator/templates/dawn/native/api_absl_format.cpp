@@ -1,16 +1,29 @@
-//* Copyright 2021 The Dawn Authors
+//* Copyright 2021 The Dawn & Tint Authors
 //*
-//* Licensed under the Apache License, Version 2.0 (the "License");
-//* you may not use this file except in compliance with the License.
-//* You may obtain a copy of the License at
+//* Redistribution and use in source and binary forms, with or without
+//* modification, are permitted provided that the following conditions are met:
 //*
-//*     http://www.apache.org/licenses/LICENSE-2.0
+//* 1. Redistributions of source code must retain the above copyright notice, this
+//*    list of conditions and the following disclaimer.
 //*
-//* Unless required by applicable law or agreed to in writing, software
-//* distributed under the License is distributed on an "AS IS" BASIS,
-//* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//* See the License for the specific language governing permissions and
-//* limitations under the License.
+//* 2. Redistributions in binary form must reproduce the above copyright notice,
+//*    this list of conditions and the following disclaimer in the documentation
+//*    and/or other materials provided with the distribution.
+//*
+//* 3. Neither the name of the copyright holder nor the names of its
+//*    contributors may be used to endorse or promote products derived from
+//*    this software without specific prior written permission.
+//*
+//* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+//* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+//* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+//* DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+//* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+//* DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+//* SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+//* CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+//* OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+//* OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 {% set impl_dir = metadata.impl_dir + "/" if metadata.impl_dir else "" %}
 {% set namespace_name = Name(metadata.native_namespace) %}
@@ -19,6 +32,7 @@
 {% set api = metadata.api.lower() %}
 #include "{{native_dir}}/{{api}}_absl_format_autogen.h"
 
+#include "{{native_dir}}/ChainUtils.h"
 #include "{{native_dir}}/ObjectType_autogen.h"
 
 namespace {{native_namespace}} {
@@ -32,8 +46,8 @@ namespace {{native_namespace}} {
             {% if member.name.canonical_case() == "label" %}
                 absl::FormatConvertResult<absl::FormatConversionCharSet::kString>
                 AbslFormatConvert(const {{as_cppType(type.name)}}* value,
-                                    const absl::FormatConversionSpec& spec,
-                                    absl::FormatSink* s) {
+                                  const absl::FormatConversionSpec& spec,
+                                  absl::FormatSink* s) {
                     if (value == nullptr) {
                         s->Append("[null]");
                         return {true};
@@ -45,44 +59,14 @@ namespace {{native_namespace}} {
                     s->Append("]");
                     return {true};
                 }
+                absl::FormatConvertResult<absl::FormatConversionCharSet::kString>
+                AbslFormatConvert(const UnpackedPtr<{{as_cppType(type.name)}}>& value,
+                                  const absl::FormatConversionSpec& spec,
+                                  absl::FormatSink* s) {
+                    return AbslFormatConvert(*value, spec, s);
+                }
             {% endif %}
         {% endfor %}
-    {% endfor %}
-
-    //
-    // Compatible with absl::StrFormat (Needs to be disjoint from having a 'label' for now.)
-    // Currently uses a hard-coded list to determine which structures are actually supported. If
-    // additional structures are added, be sure to update the header file's list as well.
-    //
-    using absl::ParsedFormat;
-
-    {% for type in by_category["structure"] %}
-        {% if type.name.get() in [
-             "buffer binding layout",
-             "sampler binding layout",
-             "texture binding layout",
-             "storage texture binding layout"
-           ]
-        %}
-        absl::FormatConvertResult<absl::FormatConversionCharSet::kString>
-            AbslFormatConvert(const {{as_cppType(type.name)}}& value,
-                              const absl::FormatConversionSpec& spec,
-                              absl::FormatSink* s) {
-            {% set members = [] %}
-            {% set format = [] %}
-            {% set template = [] %}
-            {% for member in type.members %}
-                {% set memberName = member.name.camelCase() %}
-                {% do members.append("value." + memberName) %}
-                {% do format.append(memberName + ": %" + as_formatType(member)) %}
-                {% do template.append("'" + as_formatType(member) + "'") %}
-            {% endfor %}
-            static const auto* const fmt =
-                new ParsedFormat<{{template|join(",")}}>("{ {{format|join(", ")}} }");
-            s->Append(absl::StrFormat(*fmt, {{members|join(", ")}}));
-            return {true};
-        }
-        {% endif %}
     {% endfor %}
 
 }  // namespace {{native_namespace}}

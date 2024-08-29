@@ -1,16 +1,29 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/wire/client/Client.h"
 
@@ -47,6 +60,11 @@ Client::Client(CommandSerializer* serializer, MemoryTransferService* memoryTrans
 }
 
 Client::~Client() {
+    // Transition all event managers to ClientDropped state.
+    for (auto& [_, eventManager] : mEventManagers) {
+        eventManager->TransitionTo(EventManager::State::ClientDropped);
+    }
+
     DestroyAllObjects();
 }
 
@@ -81,15 +99,23 @@ void Client::DestroyAllObjects() {
     }
 }
 
+ReservedBuffer Client::ReserveBuffer(WGPUDevice device, const WGPUBufferDescriptor* descriptor) {
+    Buffer* buffer = Make<Buffer>(FromAPI(device)->GetEventManagerHandle(), descriptor);
+
+    ReservedBuffer result;
+    result.buffer = ToAPI(buffer);
+    result.handle = buffer->GetWireHandle();
+    result.deviceHandle = FromAPI(device)->GetWireHandle();
+    return result;
+}
+
 ReservedTexture Client::ReserveTexture(WGPUDevice device, const WGPUTextureDescriptor* descriptor) {
     Texture* texture = Make<Texture>(descriptor);
 
     ReservedTexture result;
     result.texture = ToAPI(texture);
-    result.id = texture->GetWireId();
-    result.generation = texture->GetWireGeneration();
-    result.deviceId = FromAPI(device)->GetWireId();
-    result.deviceGeneration = FromAPI(device)->GetWireGeneration();
+    result.handle = texture->GetWireHandle();
+    result.deviceHandle = FromAPI(device)->GetWireHandle();
     return result;
 }
 
@@ -99,31 +125,30 @@ ReservedSwapChain Client::ReserveSwapChain(WGPUDevice device,
 
     ReservedSwapChain result;
     result.swapchain = ToAPI(swapChain);
-    result.id = swapChain->GetWireId();
-    result.generation = swapChain->GetWireGeneration();
-    result.deviceId = FromAPI(device)->GetWireId();
-    result.deviceGeneration = FromAPI(device)->GetWireGeneration();
+    result.handle = swapChain->GetWireHandle();
+    result.deviceHandle = FromAPI(device)->GetWireHandle();
     return result;
 }
 
-ReservedDevice Client::ReserveDevice() {
-    Device* device = Make<Device>(nullptr);
-
-    ReservedDevice result;
-    result.device = ToAPI(device);
-    result.id = device->GetWireId();
-    result.generation = device->GetWireGeneration();
-    return result;
-}
-
-ReservedInstance Client::ReserveInstance() {
+ReservedInstance Client::ReserveInstance(const WGPUInstanceDescriptor* descriptor) {
     Instance* instance = Make<Instance>();
+
+    if (instance->Initialize(descriptor) != WireResult::Success) {
+        Free(instance);
+        return {nullptr, {0, 0}};
+    }
+
+    // Reserve an EventManager for the given instance and make the association in the map.
+    mEventManagers.emplace(instance->GetWireHandle(), std::make_unique<EventManager>());
 
     ReservedInstance result;
     result.instance = ToAPI(instance);
-    result.id = instance->GetWireId();
-    result.generation = instance->GetWireGeneration();
+    result.handle = instance->GetWireHandle();
     return result;
+}
+
+void Client::ReclaimBufferReservation(const ReservedBuffer& reservation) {
+    Free(FromAPI(reservation.buffer));
 }
 
 void Client::ReclaimTextureReservation(const ReservedTexture& reservation) {
@@ -142,16 +167,27 @@ void Client::ReclaimInstanceReservation(const ReservedInstance& reservation) {
     Free(FromAPI(reservation.instance));
 }
 
+EventManager& Client::GetEventManager(const ObjectHandle& instance) {
+    auto it = mEventManagers.find(instance);
+    DAWN_ASSERT(it != mEventManagers.end());
+    return *it->second;
+}
+
 void Client::Disconnect() {
     mDisconnected = true;
     mSerializer = ChunkedCommandSerializer(NoopCommandSerializer::GetInstance());
+
+    // Transition all event managers to ClientDropped state.
+    for (auto& [_, eventManager] : mEventManagers) {
+        eventManager->TransitionTo(EventManager::State::ClientDropped);
+    }
 
     auto& deviceList = mObjects[ObjectType::Device];
     {
         for (LinkNode<ObjectBase>* device = deviceList.head(); device != deviceList.end();
              device = device->next()) {
             static_cast<Device*>(device->value())
-                ->HandleDeviceLost(WGPUDeviceLostReason_Undefined, "GPU connection lost");
+                ->HandleDeviceLost(WGPUDeviceLostReason_Unknown, "GPU connection lost");
         }
     }
     for (auto& objectList : mObjects) {

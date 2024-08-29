@@ -1,16 +1,29 @@
-// Copyright 2022 The Tint Authors.
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 package main
 
@@ -35,6 +48,7 @@ import (
 	"time"
 
 	"dawn.googlesource.com/dawn/tools/src/bench"
+	"dawn.googlesource.com/dawn/tools/src/fileutils"
 	"dawn.googlesource.com/dawn/tools/src/git"
 	"github.com/andygrunwald/go-gerrit"
 	"github.com/shirou/gopsutil/cpu"
@@ -396,20 +410,18 @@ func (e env) changesToBenchmark() ([]HashAndDesc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain dawn log:\n  %w", err)
 	}
+	log.Println(len(allChanges), "changes between", e.cfg.RootChange.String(), "and", latest.String())
 	changesWithBenchmarks, err := e.changesWithBenchmarks()
 	if err != nil {
 		return nil, fmt.Errorf("failed to gather changes with existing benchmarks:\n  %w", err)
 	}
+	log.Println(len(changesWithBenchmarks), "changes with existing benchmarks")
+
 	changesToBenchmark := make([]HashAndDesc, 0, len(allChanges))
 	for _, c := range allChanges {
 		if _, exists := changesWithBenchmarks[c.Hash]; !exists {
 			changesToBenchmark = append(changesToBenchmark, HashAndDesc{c.Hash, c.Subject})
 		}
-	}
-	// Reverse the order of changesToBenchmark, so that the oldest comes first.
-	for i := len(changesToBenchmark)/2 - 1; i >= 0; i-- {
-		j := len(changesToBenchmark) - 1 - i
-		changesToBenchmark[i], changesToBenchmark[j] = changesToBenchmark[j], changesToBenchmark[i]
 	}
 
 	return changesToBenchmark, nil
@@ -424,14 +436,14 @@ func (e env) changeToRefineBenchmarks() (*HashAndDesc, error) {
 		return nil, err
 	}
 
-	_, absPath, err := e.resultsFilePaths()
+	resultPaths, err := e.allResultFilePaths()
 	if err != nil {
 		return nil, err
 	}
 
-	results, err := e.loadHistoricResults(absPath)
+	results, err := e.loadHistoricResults(resultPaths...)
 	if err != nil {
-		log.Println(fmt.Errorf("WARNING: failed to open result file '%v':\n  %w", absPath, err))
+		log.Println(err)
 		return nil, nil
 	}
 
@@ -565,14 +577,14 @@ func (e env) changesWithBenchmarks() (map[git.Hash]struct{}, error) {
 		return nil, err
 	}
 
-	_, absPath, err := e.resultsFilePaths()
+	resultPaths, err := e.allResultFilePaths()
 	if err != nil {
 		return nil, err
 	}
 
-	results, err := e.loadHistoricResults(absPath)
+	results, err := e.loadHistoricResults(resultPaths...)
 	if err != nil {
-		log.Println(fmt.Errorf("WARNING: failed to open result file '%v':\n  %w", absPath, err))
+		log.Println(err)
 		return nil, nil
 	}
 
@@ -596,14 +608,14 @@ func (e env) pushUpdatedResults(res CommitResults) error {
 		return err
 	}
 
-	relPath, absPath, err := e.resultsFilePaths()
+	resultPath, err := e.resultsFilePathForDate(res.CommitTime.Year(), res.CommitTime.Month())
 	if err != nil {
 		return err
 	}
 
-	h, err := e.loadHistoricResults(absPath)
+	h, err := e.loadHistoricResults(resultPath)
 	if err != nil {
-		log.Println(fmt.Errorf("failed to open result file '%v'. Creating new file\n  %w", absPath, err))
+		log.Println(err)
 		h = &HistoricResults{System: e.system}
 	}
 
@@ -630,21 +642,21 @@ func (e env) pushUpdatedResults(res CommitResults) error {
 	h.sort()
 
 	// Write the new results to the file
-	f, err := os.Create(absPath)
+	f, err := os.Create(resultPath)
 	if err != nil {
-		return fmt.Errorf("failed to create updated results file '%v':\n  %w", absPath, err)
+		return fmt.Errorf("failed to create updated results file '%v':\n  %w", resultPath, err)
 	}
 	defer f.Close()
 
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(h); err != nil {
-		return fmt.Errorf("failed to encode updated results file '%v':\n  %w", absPath, err)
+		return fmt.Errorf("failed to encode updated results file '%v':\n  %w", resultPath, err)
 	}
 
 	// Stage the file
-	if err := e.resultsRepo.Add(relPath, nil); err != nil {
-		return fmt.Errorf("failed to stage updated results file '%v':\n  %w", relPath, err)
+	if err := e.resultsRepo.Add(resultPath, nil); err != nil {
+		return fmt.Errorf("failed to stage updated results file '%v':\n  %w", resultPath, err)
 	}
 
 	// Commit the change
@@ -654,7 +666,7 @@ func (e env) pushUpdatedResults(res CommitResults) error {
 		AuthorEmail: "tint-perfmon-bot@gmail.com",
 	})
 	if err != nil {
-		return fmt.Errorf("failed to commit updated results file '%v':\n  %w", absPath, err)
+		return fmt.Errorf("failed to commit updated results file '%v':\n  %w", resultPath, err)
 	}
 
 	// Push the change
@@ -662,45 +674,77 @@ func (e env) pushUpdatedResults(res CommitResults) error {
 	if err := e.resultsRepo.Push(hash.String(), e.cfg.Results.Branch, &git.PushOptions{
 		Credentials: e.cfg.Results.Credentials,
 	}); err != nil {
-		return fmt.Errorf("failed to push updated results file '%v':\n  %w", absPath, err)
+		return fmt.Errorf("failed to push updated results file '%v':\n  %w", resultPath, err)
 	}
 
 	return nil
 }
 
-// resultsFilePaths returns the paths to the results.json file, holding the
-// benchmarks for the given system.
-func (e env) resultsFilePaths() (relPath string, absPath string, err error) {
+// resultsFilePathForDate returns the path to the results/{systemID}-{year}-{month}.json file path,
+// holding the benchmarks for the given system and year.
+func (e env) resultsFilePathForDate(year int, month time.Month) (string, error) {
 	dir := filepath.Join(e.resultsDir, "results")
-	if err = os.MkdirAll(dir, 0777); err != nil {
-		err = fmt.Errorf("failed to create results directory '%v':\n  %w", dir, err)
-		return
+	if err := os.MkdirAll(dir, 0777); err != nil {
+		return "", fmt.Errorf("failed to create results directory '%v':\n  %w", dir, err)
 	}
-	relPath = filepath.Join("results", e.systemID+".json")
-	absPath = filepath.Join(dir, e.systemID+".json")
-	return
+	return filepath.Join(dir, fmt.Sprintf("%v-%.4d-%.2d.json", e.systemID, year, month)), nil
 }
 
-// loadHistoricResults loads and returns the results.json file for the given
-// system.
-func (e env) loadHistoricResults(path string) (*HistoricResults, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open result file '%v':\n  %w", path, err)
-	}
-	defer file.Close()
-	res := &HistoricResults{}
-	if err := json.NewDecoder(file).Decode(res); err != nil {
-		return nil, fmt.Errorf("failed to parse result file '%v':\n  %w", path, err)
+// allResultFilePaths returns the paths to the results/{systemID}-{year}.json files,
+// holding the benchmarks for the given system and year.
+func (e env) allResultFilePaths() (paths []string, err error) {
+	year := time.Now().Year()
+	month := time.Now().Month()
+	monthsToScan := 12 * 10 // 10 years
+	for i := 0; i < monthsToScan; i++ {
+		path, err := e.resultsFilePathForDate(year, month)
+		if err != nil {
+			return nil, err
+		}
+		if fileutils.IsFile(path) {
+			paths = append(paths, path)
+		}
+
+		month--
+		if month == 0 {
+			year--
+			month = 12
+		}
 	}
 
-	if !reflect.DeepEqual(res.System, e.system) {
-		log.Printf(`WARNING: results file '%v' has different system information!
+	return paths, nil
+}
+
+// loadHistoricResults loads and returns the result files as a single HistoricResults
+func (e env) loadHistoricResults(paths ...string) (*HistoricResults, error) {
+	results := &HistoricResults{}
+
+	for i, path := range paths {
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open result file '%v':\n  %w", path, err)
+		}
+		defer file.Close()
+
+		yearResults := &HistoricResults{}
+		if err := json.NewDecoder(file).Decode(yearResults); err != nil {
+			return nil, fmt.Errorf("failed to parse result file '%v':\n  %w", path, err)
+		}
+
+		if !reflect.DeepEqual(yearResults.System, e.system) {
+			log.Printf(`WARNING: results file '%v' has different system information!
 File: %+v
-System: %+v`, path, res.System, e.system)
-	}
+System: %+v`, path, yearResults.System, e.system)
+		}
 
-	return res, nil
+		if i == 0 {
+			results.System = yearResults.System
+		}
+		results.Commits = append(results.Commits, yearResults.Commits...)
+	}
+	results.sort()
+
+	return results, nil
 }
 
 // fetchDawnDeps fetches the third party dawn dependencies using gclient.
@@ -726,6 +770,11 @@ func (e env) buildTint() error {
 	if err := os.MkdirAll(e.buildDir, 0777); err != nil {
 		return fmt.Errorf("failed to create build directory at '%v':\n  %w", e.buildDir, err)
 	}
+
+	// Delete any existing tint benchmark executables to ensure we're not using a stale binary
+	os.Remove(filepath.Join(e.buildDir, "tint_benchmark"))
+	os.Remove(filepath.Join(e.buildDir, "tint-benchmark"))
+
 	if _, err := call(tools.cmake, e.buildDir, e.cfg.Timeouts.Build,
 		e.dawnDir,
 		"-GNinja",
@@ -734,7 +783,6 @@ func (e env) buildTint() error {
 		"-DCMAKE_BUILD_TESTS=0",
 		"-DCMAKE_BUILD_SAMPLES=0",
 		"-DTINT_EXTERNAL_BENCHMARK_CORPUS_DIR="+e.cfg.ExternalBenchmarkCorpus,
-		"-DTINT_BUILD_DOCS=0",
 		"-DTINT_BUILD_CMD_TOOLS=0",
 		"-DTINT_BUILD_TESTS=0",
 		"-DTINT_BUILD_SPV_READER=1",
@@ -745,7 +793,7 @@ func (e env) buildTint() error {
 		"-DTINT_BUILD_SPV_WRITER=1",
 		"-DTINT_BUILD_WGSL_WRITER=1",
 		"-DTINT_BUILD_BENCHMARKS=1",
-		"-DDAWN_BUILD_SAMPLES=0",
+		"-DDAWN_BUILD_CMD_TOOLS=0",
 	); err != nil {
 		return errFailedToBuild{fmt.Errorf("failed to generate dawn build config:\n  %w", err)}
 	}
@@ -811,7 +859,14 @@ func (e env) repeatedlyBenchmarkTint() (*bench.Run, error) {
 
 // benchmarkTint runs the tint benchmarks once, returning the results.
 func (e env) benchmarkTint() (*bench.Run, error) {
-	exe := filepath.Join(e.buildDir, "tint-benchmark")
+	exe := filepath.Join(e.buildDir, "tint_benchmark")
+	if _, err := os.Stat(exe); err != nil {
+		exe = filepath.Join(e.buildDir, "tint-benchmark")
+	}
+	if _, err := os.Stat(exe); err != nil {
+		return nil, fmt.Errorf("failed to find tint benchmark executable")
+	}
+
 	out, err := call(exe, e.buildDir, e.cfg.Timeouts.Benchmark,
 		"--benchmark_format=json",
 		"--benchmark_enable_random_interleaving=true",
@@ -950,13 +1005,23 @@ func (e env) benchmarkGerritChange(change gerrit.ChangeInfo) error {
 	}
 
 	postMsg := func(notify, msg string) error {
-		_, _, err = e.gerrit.Changes.SetReview(change.ChangeID, currentHash.String(), &gerrit.ReviewInput{
+		_, resp, err := e.gerrit.Changes.SetReview(change.ChangeID, currentHash.String(), &gerrit.ReviewInput{
 			Message: msg,
 			Tag:     "autogenerated:perfmon",
 			Notify:  notify,
 		})
+
 		if err != nil {
-			return fmt.Errorf("failed to post message to gerrit change:\n  %v", err)
+			info := &strings.Builder{}
+			if resp != nil && resp.Body != nil {
+				body, _ := io.ReadAll(resp.Body)
+				fmt.Fprintln(info, "response:    ", string(body))
+			}
+			fmt.Fprintln(info, "change-id:   ", change.ChangeID)
+			fmt.Fprintln(info, "revision-id: ", currentHash.String())
+			fmt.Fprintln(info, "notify:      ", notify)
+			fmt.Fprintf(info, "msg:\n<<%v>>\n", msg)
+			return fmt.Errorf("failed to post message to gerrit change:\n  %v\n%v", err, info.String())
 		}
 		return nil
 	}
@@ -985,8 +1050,8 @@ func (e env) benchmarkGerritChange(change gerrit.ChangeInfo) error {
 		return err
 	}
 
-	const minDiff = time.Microsecond * 50 // Ignore time diffs less than this duration
-	const minRelDiff = 0.01               // Ignore absolute relative diffs between [1, 1+x]
+	const minDiff = time.Millisecond // Ignore time diffs less than this duration
+	const minRelDiff = 0.05          // Ignore absolute relative diffs between [1, 1+x]
 	diff := bench.Compare(parentRun.Benchmarks, newRun.Benchmarks, minDiff, minRelDiff)
 	diffFmt := bench.DiffFormat{
 		TestName:        true,
@@ -1002,7 +1067,16 @@ func (e env) benchmarkGerritChange(change gerrit.ChangeInfo) error {
 	fmt.Fprintln(msg, "```")
 	fmt.Fprintf(msg, "A: parent change (%v) -> B: patchset %v\n", parent.Commit[:7], current.Number)
 	fmt.Fprintln(msg)
-	for _, line := range strings.Split(diff.Format(diffFmt), "\n") {
+	lines := strings.Split(diff.Format(diffFmt), "\n")
+	const kMaxLines = 50
+	if n := len(lines); n > kMaxLines {
+		trimmed := make([]string, 0, kMaxLines+1)
+		trimmed = append(trimmed, lines[:(kMaxLines/2)]...)
+		trimmed = append(trimmed, fmt.Sprintf("... omitting %v rows ...", n-kMaxLines))
+		trimmed = append(trimmed, lines[n-(kMaxLines/2):]...)
+		lines = trimmed
+	}
+	for _, line := range lines {
 		fmt.Fprintf(msg, "  %v\n", line)
 	}
 	fmt.Fprintln(msg, "```")
@@ -1111,6 +1185,9 @@ func fetchAndCheckoutLatest(repo *git.Repository, cfg GitConfig) error {
 // Note: call fetch() to ensure that this is the latest change on the
 // branch.
 func checkout(hash git.Hash, repo *git.Repository) error {
+	if err := repo.Clean(nil); err != nil {
+		return fmt.Errorf("failed to clean repo '%v':\n  %w", hash, err)
+	}
 	if err := repo.Checkout(hash.String(), nil); err != nil {
 		return fmt.Errorf("failed to checkout '%v':\n  %w", hash, err)
 	}

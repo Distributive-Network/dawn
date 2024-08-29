@@ -1,21 +1,35 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/PhysicalDevice.h"
 
 #include <algorithm>
 #include <memory>
+#include <utility>
 
 #include "dawn/common/Constants.h"
 #include "dawn/common/GPUInfo.h"
@@ -26,8 +40,11 @@
 
 namespace dawn::native {
 
-PhysicalDeviceBase::PhysicalDeviceBase(InstanceBase* instance, wgpu::BackendType backend)
-    : mInstance(instance), mBackend(backend) {}
+FeatureValidationResult::FeatureValidationResult() : success(true) {}
+FeatureValidationResult::FeatureValidationResult(std::string errorMsg)
+    : success(false), errorMessage(errorMsg) {}
+
+PhysicalDeviceBase::PhysicalDeviceBase(wgpu::BackendType backend) : mBackend(backend) {}
 
 PhysicalDeviceBase::~PhysicalDeviceBase() = default;
 
@@ -38,7 +55,7 @@ MaybeError PhysicalDeviceBase::Initialize() {
     EnableFeature(Feature::DawnNative);
     EnableFeature(Feature::DawnInternalUsages);
     EnableFeature(Feature::ImplicitDeviceSynchronization);
-    EnableFeature(Feature::ChromiumExperimentalReadWriteStorageTexture);
+    EnableFeature(Feature::FormatCapabilities);
     InitializeSupportedFeaturesImpl();
 
     DAWN_TRY_CONTEXT(
@@ -52,10 +69,12 @@ MaybeError PhysicalDeviceBase::Initialize() {
     return {};
 }
 
-ResultOrError<Ref<DeviceBase>> PhysicalDeviceBase::CreateDevice(AdapterBase* adapter,
-                                                                const DeviceDescriptor* descriptor,
-                                                                const TogglesState& deviceToggles) {
-    return CreateDeviceImpl(adapter, descriptor, deviceToggles);
+ResultOrError<Ref<DeviceBase>> PhysicalDeviceBase::CreateDevice(
+    AdapterBase* adapter,
+    const UnpackedPtr<DeviceDescriptor>& descriptor,
+    const TogglesState& deviceToggles,
+    Ref<DeviceBase::DeviceLostEvent>&& lostEvent) {
+    return CreateDeviceImpl(adapter, descriptor, deviceToggles, std::move(lostEvent));
 }
 
 void PhysicalDeviceBase::InitializeVendorArchitectureImpl() {
@@ -99,29 +118,24 @@ wgpu::BackendType PhysicalDeviceBase::GetBackendType() const {
     return mBackend;
 }
 
-InstanceBase* PhysicalDeviceBase::GetInstance() const {
-    return mInstance.Get();
-}
-
 bool PhysicalDeviceBase::IsFeatureSupportedWithToggles(wgpu::FeatureName feature,
                                                        const TogglesState& toggles) const {
-    MaybeError validateResult = ValidateFeatureSupportedWithToggles(feature, toggles);
-    if (validateResult.IsError()) {
-        validateResult.AcquireError();
-        return false;
-    } else {
-        return true;
-    }
+    return ValidateFeatureSupportedWithToggles(feature, toggles).success;
+}
+
+void PhysicalDeviceBase::GetDefaultLimitsForSupportedFeatureLevel(Limits* limits) const {
+    // If the physical device does not support core then the defaults are compat defaults.
+    GetDefaultLimits(limits, SupportsFeatureLevel(FeatureLevel::Core)
+                                 ? FeatureLevel::Core
+                                 : FeatureLevel::Compatibility);
 }
 
 FeaturesSet PhysicalDeviceBase::GetSupportedFeatures(const TogglesState& toggles) const {
     FeaturesSet supportedFeaturesWithToggles;
     // Iterate each PhysicalDevice's supported feature and check if it is supported with given
     // toggles
-    for (uint32_t i : IterateBitSet(mSupportedFeatures.featuresBitSet)) {
-        Feature feature = static_cast<Feature>(i);
-        wgpu::FeatureName featureName = FeatureEnumToAPIFeature(feature);
-        if (IsFeatureSupportedWithToggles(featureName, toggles)) {
+    for (Feature feature : IterateBitSet(mSupportedFeatures.featuresBitSet)) {
+        if (IsFeatureSupportedWithToggles(ToAPI(feature), toggles)) {
             supportedFeaturesWithToggles.EnableFeature(feature);
         }
     }
@@ -147,19 +161,27 @@ void PhysicalDeviceBase::EnableFeature(Feature feature) {
     mSupportedFeatures.EnableFeature(feature);
 }
 
-MaybeError PhysicalDeviceBase::ValidateFeatureSupportedWithToggles(
+FeatureValidationResult PhysicalDeviceBase::ValidateFeatureSupportedWithToggles(
     wgpu::FeatureName feature,
     const TogglesState& toggles) const {
-    DAWN_TRY(ValidateFeatureName(feature));
-    DAWN_INVALID_IF(!mSupportedFeatures.IsEnabled(feature),
-                    "Requested feature %s is not supported.", feature);
+    auto validateNameResult = ValidateFeatureName(feature);
+    if (validateNameResult.IsError()) {
+        return FeatureValidationResult(validateNameResult.AcquireError()->GetMessage());
+    }
 
-    const FeatureInfo* featureInfo = GetInstance()->GetFeatureInfo(feature);
+    if (!mSupportedFeatures.IsEnabled(feature)) {
+        return FeatureValidationResult(
+            absl::StrFormat("Requested feature %s is not supported.", feature));
+    }
+
+    const FeatureInfo* featureInfo = GetFeatureInfo(feature);
     // Experimental features are guarded by the AllowUnsafeAPIs toggle.
     if (featureInfo->featureState == FeatureInfo::FeatureState::Experimental) {
         // AllowUnsafeAPIs toggle is by default disabled if not explicitly enabled.
-        DAWN_INVALID_IF(!toggles.IsEnabled(Toggle::AllowUnsafeAPIs),
-                        "Feature %s is guarded by toggle allow_unsafe_apis.", featureInfo->name);
+        if (!toggles.IsEnabled(Toggle::AllowUnsafeAPIs)) {
+            return FeatureValidationResult(absl::StrFormat(
+                "Feature %s is guarded by toggle allow_unsafe_apis.", featureInfo->name));
+        }
     }
 
     // Do backend-specific validation.
@@ -174,13 +196,17 @@ void PhysicalDeviceBase::SetSupportedFeaturesForTesting(
     }
 }
 
-void PhysicalDeviceBase::ResetInternalDeviceForTesting() {
-    mInstance->ConsumedError(ResetInternalDeviceForTestingImpl());
+MaybeError PhysicalDeviceBase::ResetInternalDeviceForTesting() {
+    return ResetInternalDeviceForTestingImpl();
 }
 
 MaybeError PhysicalDeviceBase::ResetInternalDeviceForTestingImpl() {
     return DAWN_INTERNAL_ERROR(
         "ResetInternalDeviceForTesting should only be used with the D3D12 backend.");
 }
+
+void PhysicalDeviceBase::PopulateBackendFormatCapabilities(
+    wgpu::TextureFormat format,
+    UnpackedPtr<FormatCapabilities>& capabilities) const {}
 
 }  // namespace dawn::native

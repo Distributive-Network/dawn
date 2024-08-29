@@ -1,20 +1,34 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/vulkan/BindGroupVk.h"
 
 #include "dawn/common/BitSetIterator.h"
+#include "dawn/common/MatchVariant.h"
 #include "dawn/common/ityp_stack_vec.h"
 #include "dawn/native/ExternalTexture.h"
 #include "dawn/native/vulkan/BindGroupLayoutVk.h"
@@ -50,7 +64,10 @@ BindGroup::BindGroup(Device* device,
         bindingCount);
 
     uint32_t numWrites = 0;
-    for (const auto [_, bindingIndex] : GetLayout()->GetBindingMap()) {
+    for (const auto& bindingItem : GetLayout()->GetBindingMap()) {
+        // We cannot use structured binding here because lambda expressions can only capture
+        // variables, while structured binding doesn't introduce variables.
+        BindingIndex bindingIndex = bindingItem.second;
         const BindingInfo& bindingInfo = GetLayout()->GetBindingInfo(bindingIndex);
 
         auto& write = writes[numWrites];
@@ -62,8 +79,9 @@ BindGroup::BindGroup(Device* device,
         write.descriptorCount = 1;
         write.descriptorType = VulkanDescriptorType(bindingInfo);
 
-        switch (bindingInfo.bindingType) {
-            case BindingInfoType::Buffer: {
+        bool shouldWriteDescriptor = MatchVariant(
+            bindingInfo.bindingLayout,
+            [&](const BufferBindingInfo&) -> bool {
                 BufferBinding binding = GetBindingAsBufferBinding(bindingIndex);
 
                 VkBuffer handle = ToBackend(binding.buffer)->GetHandle();
@@ -72,23 +90,27 @@ BindGroup::BindGroup(Device* device,
                     // a Vulkan Validation Layers error. This bind group won't be used as it
                     // is an error to submit a command buffer that references destroyed
                     // resources.
-                    continue;
+                    return false;
                 }
                 writeBufferInfo[numWrites].buffer = handle;
                 writeBufferInfo[numWrites].offset = binding.offset;
                 writeBufferInfo[numWrites].range = binding.size;
                 write.pBufferInfo = &writeBufferInfo[numWrites];
-                break;
-            }
-
-            case BindingInfoType::Sampler: {
+                return true;
+            },
+            [&](const SamplerBindingInfo&) -> bool {
                 Sampler* sampler = ToBackend(GetBindingAsSampler(bindingIndex));
                 writeImageInfo[numWrites].sampler = sampler->GetHandle();
                 write.pImageInfo = &writeImageInfo[numWrites];
-                break;
-            }
-
-            case BindingInfoType::Texture: {
+                return true;
+            },
+            [&](const StaticSamplerBindingInfo& layout) -> bool {
+                // Static samplers are bound into the Vulkan layout as immutable
+                // samplers at BindGroupLayout creation time. There is no work
+                // to be done at BindGroup creation time.
+                return false;
+            },
+            [&](const TextureBindingInfo&) -> bool {
                 TextureView* view = ToBackend(GetBindingAsTextureView(bindingIndex));
 
                 VkImageView handle = view->GetHandle();
@@ -98,20 +120,16 @@ BindGroup::BindGroup(Device* device,
                     // a Vulkan Validation Layers error. This bind group won't be used as it
                     // is an error to submit a command buffer that references destroyed
                     // resources.
-                    continue;
+                    return false;
                 }
                 writeImageInfo[numWrites].imageView = handle;
-
-                // The layout may be GENERAL here because of interactions between the Sampled
-                // and ReadOnlyStorage usages. See the logic in VulkanImageLayout.
                 writeImageInfo[numWrites].imageLayout = VulkanImageLayout(
-                    ToBackend(view->GetTexture()), wgpu::TextureUsage::TextureBinding);
+                    view->GetTexture()->GetFormat(), wgpu::TextureUsage::TextureBinding);
 
                 write.pImageInfo = &writeImageInfo[numWrites];
-                break;
-            }
-
-            case BindingInfoType::StorageTexture: {
+                return true;
+            },
+            [&](const StorageTextureBindingInfo&) -> bool {
                 TextureView* view = ToBackend(GetBindingAsTextureView(bindingIndex));
 
                 VkImageView handle = VK_NULL_HANDLE;
@@ -126,21 +144,36 @@ BindGroup::BindGroup(Device* device,
                     // a Vulkan Validation Layers error. This bind group won't be used as it
                     // is an error to submit a command buffer that references destroyed
                     // resources.
-                    continue;
+                    return false;
                 }
                 writeImageInfo[numWrites].imageView = handle;
                 writeImageInfo[numWrites].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
                 write.pImageInfo = &writeImageInfo[numWrites];
-                break;
-            }
+                return true;
+            },
+            [&](const InputAttachmentBindingInfo&) -> bool {
+                TextureView* view = ToBackend(GetBindingAsTextureView(bindingIndex));
 
-            case BindingInfoType::ExternalTexture:
-                UNREACHABLE();
-                break;
+                VkImageView handle = view->GetHandle();
+                if (handle == VK_NULL_HANDLE) {
+                    // The Texture was destroyed before the TextureView was created.
+                    // Skip this descriptor write since it would be
+                    // a Vulkan Validation Layers error. This bind group won't be used as it
+                    // is an error to submit a command buffer that references destroyed
+                    // resources.
+                    return false;
+                }
+                writeImageInfo[numWrites].imageView = handle;
+                writeImageInfo[numWrites].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+                write.pImageInfo = &writeImageInfo[numWrites];
+                return true;
+            });
+
+        if (shouldWriteDescriptor) {
+            numWrites++;
         }
-
-        numWrites++;
     }
 
     // TODO(crbug.com/dawn/855): Batch these updates

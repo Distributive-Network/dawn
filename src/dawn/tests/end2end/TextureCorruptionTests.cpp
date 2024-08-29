@@ -1,16 +1,29 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
 #include <vector>
@@ -144,7 +157,7 @@ class TextureCorruptionTests : public DawnTestWithParams<TextureCorruptionTestsP
                         // texture sampling and rendering because either sampling operation will
                         // lead to precision loss or rendering a solid color is easier to implement
                         // and compare.
-                        ASSERT(elementNumPerTexel == 1);
+                        DAWN_ASSERT(elementNumPerTexel == 1);
                         data[i * elementNumPerRow + j] = 0xFFFFFFFF;
                     } else if (type != WriteType::ClearTexture) {
                         data[i * elementNumPerRow + j * elementNumPerTexel + k] = srcValue;
@@ -173,7 +186,7 @@ class TextureCorruptionTests : public DawnTestWithParams<TextureCorruptionTestsP
             case WriteType::RenderFromTextureSample:
             case WriteType::RenderFromTextureLoad: {
                 // Write data into a single layer temp texture and read from this texture if needed
-                ASSERT(format == wgpu::TextureFormat::RGBA8Unorm);
+                DAWN_ASSERT(format == wgpu::TextureFormat::RGBA8Unorm);
                 wgpu::TextureView tempView;
                 if (type != WriteType::RenderConstant) {
                     wgpu::Texture tempTexture = Create2DTexture(copySize, format, 1, 1);
@@ -322,7 +335,7 @@ class TextureCorruptionTests : public DawnTestWithParams<TextureCorruptionTestsP
         // Most 2d-array textures being tested have only 2 layers. But if the texture has a lot of
         // layers, select a few layers to test.
         if (depthOrArrayLayerCount > 2) {
-            ASSERT(sampleCount == 1);
+            DAWN_ASSERT(sampleCount == 1);
             uint32_t divider = 4;
             for (uint32_t i = 1; i <= divider; ++i) {
                 int32_t testedLayer = depthOrArrayLayerCount * i / divider - 1;
@@ -423,8 +436,8 @@ class TextureCorruptionTests_Multisample : public TextureCorruptionTests {
                                      uint32_t sampleCount,
                                      uint32_t srcValue,
                                      wgpu::TextureFormat format) override {
-        ASSERT(depthOrArrayLayer == 0);
-        ASSERT(mipLevel == 0);
+        DAWN_ASSERT(depthOrArrayLayer == 0);
+        DAWN_ASSERT(mipLevel == 0);
         uint32_t bytesPerTexel = utils::GetTexelBlockSizeInBytes(format);
 
         return ExpectMultisampledFloatData(texture, textureSize.width, textureSize.height,

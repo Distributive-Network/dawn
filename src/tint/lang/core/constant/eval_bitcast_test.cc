@@ -1,16 +1,29 @@
-// Copyright 2022 The Tint Authors.
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/constant/eval_test.h"
 
@@ -33,7 +46,7 @@ struct Case {
 
 static std::ostream& operator<<(std::ostream& o, const Case& c) {
     o << "input: " << c.input;
-    if (c.expected) {
+    if (c.expected == Success) {
         o << ", expected: " << c.expected.Get().value;
     } else {
         o << ", expected failed bitcast to " << c.expected.Failure().create_ptrs;
@@ -59,7 +72,7 @@ TEST_P(ConstEvalBitcastTest, Test) {
 
     // Get the target type CreatePtrs
     builder::CreatePtrs target_create_ptrs;
-    if (expected) {
+    if (expected == tint::Success) {
         target_create_ptrs = expected.Get().value.create_ptrs;
     } else {
         target_create_ptrs = expected.Failure().create_ptrs;
@@ -74,7 +87,7 @@ TEST_P(ConstEvalBitcastTest, Test) {
 
     auto* target_sem_ty = target_create_ptrs.sem(*this);
 
-    if (expected) {
+    if (expected == tint::Success) {
         EXPECT_TRUE(r()->Resolve()) << r()->error();
 
         auto* sem = Sem().GetVal(expr);
@@ -99,96 +112,110 @@ const u32 inf_as_u32 = tint::Bitcast<u32>(std::numeric_limits<float>::infinity()
 const i32 inf_as_i32 = tint::Bitcast<i32>(std::numeric_limits<float>::infinity());
 const u32 neg_inf_as_u32 = tint::Bitcast<u32>(-std::numeric_limits<float>::infinity());
 const i32 neg_inf_as_i32 = tint::Bitcast<i32>(-std::numeric_limits<float>::infinity());
+const AInt u32_highest_plus_one = AInt(AInt(u32::kHighestValue).value + 1);
+const AInt i32_lowest_minus_one = AInt(AInt(i32::kLowestValue).value - 1);
 
-INSTANTIATE_TEST_SUITE_P(Bitcast,
-                         ConstEvalBitcastTest,
-                         testing::ValuesIn({
-                             // Bitcast to same (concrete) type, no change
-                             Success(Val(0_u), Val(0_u)),                        //
-                             Success(Val(0_i), Val(0_i)),                        //
-                             Success(Val(0_f), Val(0_f)),                        //
-                             Success(Val(123_u), Val(123_u)),                    //
-                             Success(Val(123_i), Val(123_i)),                    //
-                             Success(Val(123.456_f), Val(123.456_f)),            //
-                             Success(Val(u32::Highest()), Val(u32::Highest())),  //
-                             Success(Val(u32::Lowest()), Val(u32::Lowest())),    //
-                             Success(Val(i32::Highest()), Val(i32::Highest())),  //
-                             Success(Val(i32::Lowest()), Val(i32::Lowest())),    //
-                             Success(Val(f32::Highest()), Val(f32::Highest())),  //
-                             Success(Val(f32::Lowest()), Val(f32::Lowest())),    //
+INSTANTIATE_TEST_SUITE_P(
+    Bitcast,
+    ConstEvalBitcastTest,
+    testing::ValuesIn({
+        // Bitcast to same (concrete) type, no change
+        Success(Val(0_u), Val(0_u)),                        //
+        Success(Val(0_i), Val(0_i)),                        //
+        Success(Val(0_f), Val(0_f)),                        //
+        Success(Val(123_u), Val(123_u)),                    //
+        Success(Val(123_i), Val(123_i)),                    //
+        Success(Val(123.456_f), Val(123.456_f)),            //
+        Success(Val(u32::Highest()), Val(u32::Highest())),  //
+        Success(Val(u32::Lowest()), Val(u32::Lowest())),    //
+        Success(Val(i32::Highest()), Val(i32::Highest())),  //
+        Success(Val(i32::Lowest()), Val(i32::Lowest())),    //
+        Success(Val(f32::Highest()), Val(f32::Highest())),  //
+        Success(Val(f32::Lowest()), Val(f32::Lowest())),    //
 
-                             // Bitcast to different type
-                             Success(Val(0_u), Val(0_i)),               //
-                             Success(Val(0_u), Val(0_f)),               //
-                             Success(Val(0_i), Val(0_u)),               //
-                             Success(Val(0_i), Val(0_f)),               //
-                             Success(Val(0.0_f), Val(0_i)),             //
-                             Success(Val(0.0_f), Val(0_u)),             //
-                             Success(Val(1_u), Val(1_i)),               //
-                             Success(Val(1_u), Val(1.4013e-45_f)),      //
-                             Success(Val(1_i), Val(1_u)),               //
-                             Success(Val(1_i), Val(1.4013e-45_f)),      //
-                             Success(Val(1.0_f), Val(0x3F800000_u)),    //
-                             Success(Val(1.0_f), Val(0x3F800000_i)),    //
-                             Success(Val(123_u), Val(123_i)),           //
-                             Success(Val(123_u), Val(1.7236e-43_f)),    //
-                             Success(Val(123_i), Val(123_u)),           //
-                             Success(Val(123_i), Val(1.7236e-43_f)),    //
-                             Success(Val(123.0_f), Val(0x42F60000_u)),  //
-                             Success(Val(123.0_f), Val(0x42F60000_i)),  //
+        // Bitcast to different type
+        Success(Val(0_u), Val(0_i)),               //
+        Success(Val(0_u), Val(0_f)),               //
+        Success(Val(0_i), Val(0_u)),               //
+        Success(Val(0_i), Val(0_f)),               //
+        Success(Val(0.0_f), Val(0_i)),             //
+        Success(Val(0.0_f), Val(0_u)),             //
+        Success(Val(1_u), Val(1_i)),               //
+        Success(Val(1_u), Val(1.4013e-45_f)),      //
+        Success(Val(1_i), Val(1_u)),               //
+        Success(Val(1_i), Val(1.4013e-45_f)),      //
+        Success(Val(1.0_f), Val(0x3F800000_u)),    //
+        Success(Val(1.0_f), Val(0x3F800000_i)),    //
+        Success(Val(123_u), Val(123_i)),           //
+        Success(Val(123_u), Val(1.7236e-43_f)),    //
+        Success(Val(123_i), Val(123_u)),           //
+        Success(Val(123_i), Val(1.7236e-43_f)),    //
+        Success(Val(123.0_f), Val(0x42F60000_u)),  //
+        Success(Val(123.0_f), Val(0x42F60000_i)),  //
 
-                             // Bitcast from abstract materializes lhs first,
-                             // so same results as above.
-                             Success(Val(0_a), Val(0_i)),               //
-                             Success(Val(0_a), Val(0_f)),               //
-                             Success(Val(0_a), Val(0_u)),               //
-                             Success(Val(0_a), Val(0_f)),               //
-                             Success(Val(0_a), Val(0_i)),               //
-                             Success(Val(0_a), Val(0_u)),               //
-                             Success(Val(1_a), Val(1_i)),               //
-                             Success(Val(1_a), Val(1.4013e-45_f)),      //
-                             Success(Val(1_a), Val(1_u)),               //
-                             Success(Val(1_a), Val(1.4013e-45_f)),      //
-                             Success(Val(1.0_a), Val(0x3F800000_u)),    //
-                             Success(Val(1.0_a), Val(0x3F800000_i)),    //
-                             Success(Val(123_a), Val(123_i)),           //
-                             Success(Val(123_a), Val(1.7236e-43_f)),    //
-                             Success(Val(123_a), Val(123_u)),           //
-                             Success(Val(123_a), Val(1.7236e-43_f)),    //
-                             Success(Val(123.0_a), Val(0x42F60000_u)),  //
-                             Success(Val(123.0_a), Val(0x42F60000_i)),  //
+        // Abstracts
+        Success(Val(0_a), Val(0_i)),                                                  //
+        Success(Val(0_a), Val(0_f)),                                                  //
+        Success(Val(0_a), Val(0_u)),                                                  //
+        Success(Val(0_a), Val(0_f)),                                                  //
+        Success(Val(0_a), Val(0_i)),                                                  //
+        Success(Val(0_a), Val(0_u)),                                                  //
+        Success(Val(1_a), Val(1_i)),                                                  //
+        Success(Val(1_a), Val(1.4013e-45_f)),                                         //
+        Success(Val(1_a), Val(1_u)),                                                  //
+        Success(Val(1_a), Val(1.4013e-45_f)),                                         //
+        Success(Val(1.0_a), Val(0x3F800000_u)),                                       //
+        Success(Val(1.0_a), Val(0x3F800000_i)),                                       //
+        Success(Val(123_a), Val(123_i)),                                              //
+        Success(Val(123_a), Val(1.7236e-43_f)),                                       //
+        Success(Val(123_a), Val(123_u)),                                              //
+        Success(Val(123_a), Val(1.7236e-43_f)),                                       //
+        Success(Val(123.0_a), Val(0x42F60000_u)),                                     //
+        Success(Val(123.0_a), Val(0x42F60000_i)),                                     //
+        Success(Val(AInt(u32::Highest())), Val(u32::Highest())),                      //
+        Success(Val(AInt(u32::Lowest())), Val(u32::Lowest())),                        //
+        Success(Val(AInt(i32::Highest())), Val(tint::Bitcast<u32>(i32::Highest()))),  //
+        Success(Val(AInt(i32::Lowest())), Val(tint::Bitcast<u32>(i32::Lowest()))),    //
+        Success(Val(AInt(i32::Highest())), Val(i32::Highest())),                      //
+        Success(Val(AInt(i32::Lowest())), Val(i32::Lowest())),                        //
 
-                             // u32 <-> i32 sign bit
-                             Success(Val(0xFFFFFFFF_u), Val(-1_i)),           //
-                             Success(Val(-1_i), Val(0xFFFFFFFF_u)),           //
-                             Success(Val(0x80000000_u), Val(i32::Lowest())),  //
-                             Success(Val(i32::Lowest()), Val(0x80000000_u)),  //
+        // u32 <-> i32 sign bit
+        Success(Val(0xFFFFFFFF_u), Val(-1_i)),           //
+        Success(Val(-1_i), Val(0xFFFFFFFF_u)),           //
+        Success(Val(0x80000000_u), Val(i32::Lowest())),  //
+        Success(Val(i32::Lowest()), Val(0x80000000_u)),  //
 
-                             // Vector tests
-                             Success(Vec(0_u, 1_u, 123_u), Vec(0_i, 1_i, 123_i)),
-                             Success(Vec(0.0_f, 1.0_f, 123.0_f),
-                                     Vec(0_i, 0x3F800000_i, 0x42F60000_i)),
+        // Vector tests
+        Success(Vec(0_u, 1_u, 123_u), Vec(0_i, 1_i, 123_i)),
+        Success(Vec(0.0_f, 1.0_f, 123.0_f), Vec(0_i, 0x3F800000_i, 0x42F60000_i)),
+        Success(Vec(0xffffffff_a, -1_a), Vec(0xffffffff_u, 0xffffffff_u)),
 
-                             // Unrepresentable
-                             Failure<f32>(Val(nan_as_u32)),                 //
-                             Failure<f32>(Val(nan_as_i32)),                 //
-                             Failure<f32>(Val(inf_as_u32)),                 //
-                             Failure<f32>(Val(inf_as_i32)),                 //
-                             Failure<f32>(Val(neg_inf_as_u32)),             //
-                             Failure<f32>(Val(neg_inf_as_i32)),             //
-                             Failure<vec2<f32>>(Vec(nan_as_u32, 0_u)),      //
-                             Failure<vec2<f32>>(Vec(nan_as_i32, 0_i)),      //
-                             Failure<vec2<f32>>(Vec(inf_as_u32, 0_u)),      //
-                             Failure<vec2<f32>>(Vec(inf_as_i32, 0_i)),      //
-                             Failure<vec2<f32>>(Vec(neg_inf_as_u32, 0_u)),  //
-                             Failure<vec2<f32>>(Vec(neg_inf_as_i32, 0_i)),  //
-                             Failure<vec2<f32>>(Vec(0_u, nan_as_u32)),      //
-                             Failure<vec2<f32>>(Vec(0_i, nan_as_i32)),      //
-                             Failure<vec2<f32>>(Vec(0_u, inf_as_u32)),      //
-                             Failure<vec2<f32>>(Vec(0_i, inf_as_i32)),      //
-                             Failure<vec2<f32>>(Vec(0_u, neg_inf_as_u32)),  //
-                             Failure<vec2<f32>>(Vec(0_i, neg_inf_as_i32)),  //
-                         }));
+        // Unrepresentable
+        Failure<f32>(Val(nan_as_u32)),                 //
+        Failure<f32>(Val(nan_as_i32)),                 //
+        Failure<f32>(Val(inf_as_u32)),                 //
+        Failure<f32>(Val(inf_as_i32)),                 //
+        Failure<f32>(Val(neg_inf_as_u32)),             //
+        Failure<f32>(Val(neg_inf_as_i32)),             //
+        Failure<vec2<f32>>(Vec(nan_as_u32, 0_u)),      //
+        Failure<vec2<f32>>(Vec(nan_as_i32, 0_i)),      //
+        Failure<vec2<f32>>(Vec(inf_as_u32, 0_u)),      //
+        Failure<vec2<f32>>(Vec(inf_as_i32, 0_i)),      //
+        Failure<vec2<f32>>(Vec(neg_inf_as_u32, 0_u)),  //
+        Failure<vec2<f32>>(Vec(neg_inf_as_i32, 0_i)),  //
+        Failure<vec2<f32>>(Vec(0_u, nan_as_u32)),      //
+        Failure<vec2<f32>>(Vec(0_i, nan_as_i32)),      //
+        Failure<vec2<f32>>(Vec(0_u, inf_as_u32)),      //
+        Failure<vec2<f32>>(Vec(0_i, inf_as_i32)),      //
+        Failure<vec2<f32>>(Vec(0_u, neg_inf_as_u32)),  //
+        Failure<vec2<f32>>(Vec(0_i, neg_inf_as_i32)),  //
+
+        // Abstract too large
+        Failure<u32>(Val(u32_highest_plus_one)),             //
+        Failure<u32>(Val(i32_lowest_minus_one)),             //
+        Failure<vec2<u32>>(Vec(0_a, u32_highest_plus_one)),  //
+        Failure<vec2<u32>>(Vec(i32_lowest_minus_one, 0_a)),  //
+    }));
 
 }  // namespace
 }  // namespace tint::core::constant::test

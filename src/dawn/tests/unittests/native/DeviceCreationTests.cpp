@@ -1,18 +1,32 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "dawn/dawn_proc.h"
@@ -38,11 +52,11 @@ using testing::StrEq;
 class DeviceCreationTest : public testing::Test {
   protected:
     void SetUp() override {
-        dawnProcSetProcs(&dawn::native::GetProcs());
+        dawnProcSetProcs(&GetProcs());
 
         // Create an instance with default toggles and create an adapter from it.
         WGPUInstanceDescriptor safeInstanceDesc = {};
-        instance = std::make_unique<dawn::native::Instance>(&safeInstanceDesc);
+        instance = std::make_unique<Instance>(&safeInstanceDesc);
 
         wgpu::RequestAdapterOptions options = {};
         options.backendType = wgpu::BackendType::Null;
@@ -60,7 +74,7 @@ class DeviceCreationTest : public testing::Test {
         WGPUInstanceDescriptor unsafeInstanceDesc = {};
         unsafeInstanceDesc.nextInChain = &unsafeInstanceTogglesDesc.chain;
 
-        unsafeInstance = std::make_unique<dawn::native::Instance>(&unsafeInstanceDesc);
+        unsafeInstance = std::make_unique<Instance>(&unsafeInstanceDesc);
         unsafeAdapter = unsafeInstance->EnumerateAdapters(&options)[0];
 
         ASSERT_NE(adapter.Get(), nullptr);
@@ -75,14 +89,12 @@ class DeviceCreationTest : public testing::Test {
         dawnProcSetProcs(nullptr);
     }
 
-    static constexpr size_t kTotalFeaturesCount =
-        static_cast<size_t>(dawn::native::Feature::EnumCount);
+    static constexpr size_t kTotalFeaturesCount = static_cast<size_t>(kEnumCount<Feature>);
 
-    std::unique_ptr<dawn::native::Instance> instance;
-    std::unique_ptr<dawn::native::Instance> unsafeInstance;
-    dawn::native::Adapter adapter;
-    dawn::native::Adapter unsafeAdapter;
-    dawn::native::FeaturesInfo featuresInfo;
+    std::unique_ptr<Instance> instance;
+    std::unique_ptr<Instance> unsafeInstance;
+    Adapter adapter;
+    Adapter unsafeAdapter;
 };
 
 // Test successful call to CreateDevice with no descriptor
@@ -111,7 +123,7 @@ TEST_F(DeviceCreationTest, CreateDeviceWithTogglesSuccess) {
     wgpu::Device device = adapter.CreateDevice(&desc);
     EXPECT_NE(device, nullptr);
 
-    auto toggles = dawn::native::GetTogglesUsed(device.Get());
+    auto toggles = GetTogglesUsed(device.Get());
     EXPECT_THAT(toggles, Contains(StrEq(toggle)));
 }
 
@@ -119,21 +131,16 @@ TEST_F(DeviceCreationTest, CreateDeviceWithTogglesSuccess) {
 // instance but can be overriden by device toggles.
 TEST_F(DeviceCreationTest, CreateDeviceRequiringExperimentalFeatures) {
     // Ensure that unsafe apis are disallowed on safe adapter.
-    ASSERT_FALSE(dawn::native::FromAPI(adapter.Get())
-                     ->GetTogglesState()
-                     .IsEnabled(dawn::native::Toggle::AllowUnsafeAPIs));
+    ASSERT_FALSE(FromAPI(adapter.Get())->GetTogglesState().IsEnabled(Toggle::AllowUnsafeAPIs));
     // Ensure that unsafe apis are allowed unsafe adapter(s).
-    ASSERT_TRUE(dawn::native::FromAPI(unsafeAdapter.Get())
-                    ->GetTogglesState()
-                    .IsEnabled(dawn::native::Toggle::AllowUnsafeAPIs));
+    ASSERT_TRUE(FromAPI(unsafeAdapter.Get())->GetTogglesState().IsEnabled(Toggle::AllowUnsafeAPIs));
 
     for (size_t i = 0; i < kTotalFeaturesCount; i++) {
-        dawn::native::Feature feature = static_cast<dawn::native::Feature>(i);
-        wgpu::FeatureName featureName = dawn::native::FeatureEnumToAPIFeature(feature);
+        Feature feature = static_cast<Feature>(i);
+        wgpu::FeatureName featureName = ToAPI(feature);
 
         // Only test experimental features.
-        if (featuresInfo.GetFeatureInfo(featureName)->featureState ==
-            dawn::native::FeatureInfo::FeatureState::Stable) {
+        if (kFeatureNameAndInfoList[feature].featureState == FeatureInfo::FeatureState::Stable) {
             continue;
         }
 
@@ -228,8 +235,7 @@ TEST_F(DeviceCreationTest, CreateDeviceWithCacheSuccess) {
         desc.nextInChain = &cacheDesc;
         wgpu::Device device2 = adapter.CreateDevice(&desc);
 
-        EXPECT_EQ(dawn::native::FromAPI(device1.Get())->GetCacheKey(),
-                  dawn::native::FromAPI(device2.Get())->GetCacheKey());
+        EXPECT_EQ(FromAPI(device1.Get())->GetCacheKey(), FromAPI(device2.Get())->GetCacheKey());
     }
     // Default device descriptor should not have the same cache key as a device descriptor with
     // a non-default cache descriptor.
@@ -245,8 +251,7 @@ TEST_F(DeviceCreationTest, CreateDeviceWithCacheSuccess) {
         wgpu::Device device2 = adapter.CreateDevice(&desc);
         EXPECT_NE(device2, nullptr);
 
-        EXPECT_NE(dawn::native::FromAPI(device1.Get())->GetCacheKey(),
-                  dawn::native::FromAPI(device2.Get())->GetCacheKey());
+        EXPECT_NE(FromAPI(device1.Get())->GetCacheKey(), FromAPI(device2.Get())->GetCacheKey());
     }
     // Two non-default cache descriptors should not have the same cache key.
     {
@@ -264,13 +269,55 @@ TEST_F(DeviceCreationTest, CreateDeviceWithCacheSuccess) {
         wgpu::Device device2 = adapter.CreateDevice(&desc);
         EXPECT_NE(device2, nullptr);
 
-        EXPECT_NE(dawn::native::FromAPI(device1.Get())->GetCacheKey(),
-                  dawn::native::FromAPI(device2.Get())->GetCacheKey());
+        EXPECT_NE(FromAPI(device1.Get())->GetCacheKey(), FromAPI(device2.Get())->GetCacheKey());
     }
 }
 
+class DeviceCreationFutureTest
+    : public DeviceCreationTest,
+      public ::testing::WithParamInterface<std::optional<wgpu::CallbackMode>> {
+  protected:
+    void RequestDevice(const Adapter& a,
+                       const wgpu::DeviceDescriptor* descriptor,
+                       WGPURequestDeviceCallback callback,
+                       void* userdata) {
+        wgpu::Adapter wgpuAdapter(a.Get());
+        if (GetParam() == std::nullopt) {
+            // Legacy RequestDevice. It should call the callback immediately.
+            wgpuAdapter.RequestDevice(descriptor, callback, userdata);
+            return;
+        }
+
+        wgpu::Future future =
+            wgpuAdapter.RequestDevice(descriptor, {nullptr, *GetParam(), callback, userdata});
+        wgpu::Instance wgpuInstance(instance->Get());
+        switch (*GetParam()) {
+            case wgpu::CallbackMode::WaitAnyOnly: {
+                // Callback should complete as soon as poll once.
+                wgpu::FutureWaitInfo waitInfo = {future};
+                EXPECT_EQ(wgpuInstance.WaitAny(1, &waitInfo, 0), wgpu::WaitStatus::Success);
+                ASSERT_TRUE(waitInfo.completed);
+                break;
+            }
+            case wgpu::CallbackMode::AllowSpontaneous:
+                // Callback should already be called.
+                break;
+            case wgpu::CallbackMode::AllowProcessEvents:
+                wgpuInstance.ProcessEvents();
+                break;
+        }
+    }
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    DeviceCreationFutureTest,
+    ::testing::ValuesIn(std::initializer_list<std::optional<wgpu::CallbackMode>>{
+        wgpu::CallbackMode::WaitAnyOnly, wgpu::CallbackMode::AllowProcessEvents,
+        wgpu::CallbackMode::AllowSpontaneous, std::nullopt}));
+
 // Test successful call to RequestDevice with descriptor
-TEST_F(DeviceCreationTest, RequestDeviceSuccess) {
+TEST_P(DeviceCreationFutureTest, RequestDeviceSuccess) {
     WGPUDevice cDevice;
     {
         MockCallback<WGPURequestDeviceCallback> cb;
@@ -278,7 +325,7 @@ TEST_F(DeviceCreationTest, RequestDeviceSuccess) {
             .WillOnce(SaveArg<1>(&cDevice));
 
         wgpu::DeviceDescriptor desc = {};
-        adapter.RequestDevice(&desc, cb.Callback(), cb.MakeUserdata(this));
+        RequestDevice(adapter, &desc, cb.Callback(), cb.MakeUserdata(this));
     }
 
     wgpu::Device device = wgpu::Device::Acquire(cDevice);
@@ -286,14 +333,14 @@ TEST_F(DeviceCreationTest, RequestDeviceSuccess) {
 }
 
 // Test successful call to RequestDevice with a null descriptor
-TEST_F(DeviceCreationTest, RequestDeviceNullDescriptorSuccess) {
+TEST_P(DeviceCreationFutureTest, RequestDeviceNullDescriptorSuccess) {
     WGPUDevice cDevice;
     {
         MockCallback<WGPURequestDeviceCallback> cb;
         EXPECT_CALL(cb, Call(WGPURequestDeviceStatus_Success, NotNull(), nullptr, this))
             .WillOnce(SaveArg<1>(&cDevice));
 
-        adapter.RequestDevice(nullptr, cb.Callback(), cb.MakeUserdata(this));
+        RequestDevice(adapter, nullptr, cb.Callback(), cb.MakeUserdata(this));
     }
 
     wgpu::Device device = wgpu::Device::Acquire(cDevice);
@@ -301,7 +348,7 @@ TEST_F(DeviceCreationTest, RequestDeviceNullDescriptorSuccess) {
 }
 
 // Test failing call to RequestDevice with invalid feature
-TEST_F(DeviceCreationTest, RequestDeviceFailure) {
+TEST_P(DeviceCreationFutureTest, RequestDeviceFailure) {
     MockCallback<WGPURequestDeviceCallback> cb;
     EXPECT_CALL(cb, Call(WGPURequestDeviceStatus_Error, nullptr, NotNull(), this)).Times(1);
 
@@ -310,7 +357,7 @@ TEST_F(DeviceCreationTest, RequestDeviceFailure) {
     desc.requiredFeatures = &invalidFeature;
     desc.requiredFeatureCount = 1;
 
-    adapter.RequestDevice(&desc, cb.Callback(), cb.MakeUserdata(this));
+    RequestDevice(adapter, &desc, cb.Callback(), cb.MakeUserdata(this));
 }
 
 }  // anonymous namespace

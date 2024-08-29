@@ -1,16 +1,29 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <utility>
 #include <vector>
@@ -24,7 +37,7 @@ namespace {
 using Id = uint32_t;
 
 enum class Action {
-    kReference,
+    kAddRef,
     kRelease,
     kAssign,
     kMarker,
@@ -38,8 +51,8 @@ struct Event {
 
 std::ostream& operator<<(std::ostream& os, const Event& event) {
     switch (event.action) {
-        case Action::kReference:
-            os << "Reference " << event.thisId;
+        case Action::kAddRef:
+            os << "AddRef " << event.thisId;
             break;
         case Action::kRelease:
             os << "Release " << event.thisId;
@@ -67,7 +80,7 @@ struct RefTracker {
 
     RefTracker(Id id, Events* events) : mId(id), mEvents(events) {}
 
-    void Reference() const { mEvents->emplace_back(Event{Action::kReference, mId}); }
+    void AddRef() const { mEvents->emplace_back(Event{Action::kAddRef, mId}); }
 
     void Release() const { mEvents->emplace_back(Event{Action::kRelease, mId}); }
 
@@ -92,7 +105,7 @@ struct RefTracker {
 struct RefTrackerTraits {
     static constexpr RefTracker kNullValue{nullptr};
 
-    static void Reference(const RefTracker& handle) { handle.Reference(); }
+    static void AddRef(const RefTracker& handle) { handle.AddRef(); }
 
     static void Release(const RefTracker& handle) { handle.Release(); }
 };
@@ -120,7 +133,7 @@ TEST(RefBase, Detach) {
     Ref ref(tracker);
 
     events.clear();
-    { DAWN_UNUSED(ref.Detach()); }
+    { [[maybe_unused]] auto ptr = ref.Detach(); }
     EXPECT_THAT(events, testing::ElementsAre(Event{Action::kAssign, 1, 0}  // nullify ref
                                              ));
 }
@@ -139,9 +152,9 @@ TEST(RefBase, ConstructDestruct) {
         Ref ref(tracker);
         events.emplace_back(Event{Action::kMarker, 10});
     }
-    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kReference, 1},  // reference tracker
-                                             Event{Action::kMarker, 10},    //
-                                             Event{Action::kRelease, 1}     // destruct ref
+    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kAddRef, 1},   // reference tracker
+                                             Event{Action::kMarker, 10},  //
+                                             Event{Action::kRelease, 1}   // destruct ref
                                              ));
 }
 
@@ -155,9 +168,9 @@ TEST(RefBase, CopyConstruct) {
         Ref refB(refA);
         events.emplace_back(Event{Action::kMarker, 10});
     }
-    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kReference, 1},  // reference tracker
-                                             Event{Action::kMarker, 10},    //
-                                             Event{Action::kRelease, 1}     // destruct ref
+    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kAddRef, 1},   // reference tracker
+                                             Event{Action::kMarker, 10},  //
+                                             Event{Action::kRelease, 1}   // destruct ref
                                              ));
 }
 
@@ -180,14 +193,14 @@ TEST(RefBase, RefCopyAssignment) {
         events.emplace_back(Event{Action::kMarker, 40});
     }
     EXPECT_THAT(events, testing::ElementsAre(Event{Action::kMarker, 10},    //
-                                             Event{Action::kReference, 1},  // reference tracker1
+                                             Event{Action::kAddRef, 1},     // reference tracker1
                                              Event{Action::kAssign, 0, 1},  // copy tracker1
                                              Event{Action::kMarker, 20},    //
-                                             Event{Action::kReference, 2},  // reference tracker2
+                                             Event{Action::kAddRef, 2},     // reference tracker2
                                              Event{Action::kRelease, 1},    // release tracker1
                                              Event{Action::kAssign, 1, 2},  // copy tracker2
                                              Event{Action::kMarker, 30},    //
-                                             Event{Action::kReference, 1},  // reference tracker1
+                                             Event{Action::kAddRef, 1},     // reference tracker1
                                              Event{Action::kRelease, 2},    // release tracker2
                                              Event{Action::kAssign, 2, 1},  // copy tracker1
                                              Event{Action::kMarker, 40},    //
@@ -260,7 +273,7 @@ TEST(RefBase, TCopyAssignment) {
         ref = tracker;
         ref = tracker;
     }
-    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kReference, 1},  //
+    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kAddRef, 1},  //
                                              Event{Action::kAssign, 0, 1}));
 }
 
@@ -271,7 +284,7 @@ TEST(RefBase, TMoveAssignment) {
 
     events.clear();
     { ref = std::move(tracker); }
-    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kReference, 1},  //
+    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kAddRef, 1},  //
                                              Event{Action::kAssign, 0, 1}));
 }
 
@@ -290,17 +303,42 @@ TEST(RefBase, TCopyAssignmentAlternate) {
         ref = tracker1;
         events.emplace_back(Event{Action::kMarker, 30});
     }
-    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kReference, 1},  // reference tracker1
+    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kAddRef, 1},     // reference tracker1
                                              Event{Action::kAssign, 0, 1},  // copy tracker1
                                              Event{Action::kMarker, 10},    //
-                                             Event{Action::kReference, 2},  // reference tracker2
+                                             Event{Action::kAddRef, 2},     // reference tracker2
                                              Event{Action::kRelease, 1},    // release tracker1
                                              Event{Action::kAssign, 1, 2},  // copy tracker2
                                              Event{Action::kMarker, 20},    //
-                                             Event{Action::kReference, 1},  // reference tracker1
+                                             Event{Action::kAddRef, 1},     // reference tracker1
                                              Event{Action::kRelease, 2},    // release tracker2
                                              Event{Action::kAssign, 2, 1},  // copy tracker1
                                              Event{Action::kMarker, 30}));
+}
+
+// Regression test for an issue where RefBase<T*> comparison would end up using operator bool
+// depending on the order in which the compiler did implicit conversions.
+struct FakePtrRefTraits {
+    static constexpr int* kNullValue{nullptr};
+    static void AddRef(int*) {}
+    static void Release(int*) {}
+};
+TEST(RefBase, MissingExplicitOnOperatorBool) {
+    using MyRef = RefBase<int*, FakePtrRefTraits>;
+    int a = 0;
+    int b = 1;
+    MyRef refA(&a);
+    MyRef refB(&b);
+
+    EXPECT_TRUE(refA == refA);
+    EXPECT_FALSE(refA != refA);
+    EXPECT_TRUE((refA) == (refA));
+    EXPECT_FALSE((refA) != (refA));
+
+    EXPECT_FALSE(refA == refB);
+    EXPECT_TRUE(refA != refB);
+    EXPECT_FALSE((refA) == (refB));
+    EXPECT_TRUE((refA) != (refB));
 }
 
 }  // anonymous namespace

@@ -1,16 +1,29 @@
-// Copyright 2021 The Tint Authors.
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/wgsl/resolver/dependency_graph.h"
 
@@ -19,14 +32,16 @@
 #include <variant>
 #include <vector>
 
-#include "src/tint/lang/core/builtin.h"
+#include "src/tint/lang/core/builtin_type.h"
 #include "src/tint/lang/core/builtin_value.h"
 #include "src/tint/lang/wgsl/ast/alias.h"
 #include "src/tint/lang/wgsl/ast/assignment_statement.h"
+#include "src/tint/lang/wgsl/ast/blend_src_attribute.h"
 #include "src/tint/lang/wgsl/ast/block_statement.h"
 #include "src/tint/lang/wgsl/ast/break_if_statement.h"
 #include "src/tint/lang/wgsl/ast/break_statement.h"
 #include "src/tint/lang/wgsl/ast/call_statement.h"
+#include "src/tint/lang/wgsl/ast/color_attribute.h"
 #include "src/tint/lang/wgsl/ast/compound_assignment_statement.h"
 #include "src/tint/lang/wgsl/ast/const.h"
 #include "src/tint/lang/wgsl/ast/continue_statement.h"
@@ -37,7 +52,7 @@
 #include "src/tint/lang/wgsl/ast/identifier.h"
 #include "src/tint/lang/wgsl/ast/if_statement.h"
 #include "src/tint/lang/wgsl/ast/increment_decrement_statement.h"
-#include "src/tint/lang/wgsl/ast/index_attribute.h"
+#include "src/tint/lang/wgsl/ast/input_attachment_index_attribute.h"
 #include "src/tint/lang/wgsl/ast/internal_attribute.h"
 #include "src/tint/lang/wgsl/ast/interpolate_attribute.h"
 #include "src/tint/lang/wgsl/ast/invariant_attribute.h"
@@ -60,7 +75,7 @@
 #include "src/tint/lang/wgsl/ast/variable_decl_statement.h"
 #include "src/tint/lang/wgsl/ast/while_statement.h"
 #include "src/tint/lang/wgsl/ast/workgroup_attribute.h"
-#include "src/tint/lang/wgsl/sem/builtin.h"
+#include "src/tint/lang/wgsl/sem/builtin_fn.h"
 #include "src/tint/utils/containers/map.h"
 #include "src/tint/utils/containers/scope_stack.h"
 #include "src/tint/utils/containers/unique_vector.h"
@@ -93,22 +108,16 @@ struct DependencyEdge {
     const Global* from;
     /// The Global that is depended on by #from
     const Global* to;
-};
 
-/// DependencyEdgeCmp implements the contracts of std::equal_to<DependencyEdge>
-/// and std::hash<DependencyEdge>.
-struct DependencyEdgeCmp {
+    /// @returns the hash code of the DependencyEdge
+    tint::HashCode HashCode() const { return Hash(from, to); }
+
     /// Equality operator
-    bool operator()(const DependencyEdge& lhs, const DependencyEdge& rhs) const {
-        return lhs.from == rhs.from && lhs.to == rhs.to;
-    }
-    /// Hashing operator
-    inline std::size_t operator()(const DependencyEdge& d) const { return Hash(d.from, d.to); }
+    bool operator==(const DependencyEdge& rhs) const { return from == rhs.from && to == rhs.to; }
 };
 
 /// A map of DependencyEdge to DependencyInfo
-using DependencyEdges =
-    Hashmap<DependencyEdge, DependencyInfo, 64, DependencyEdgeCmp, DependencyEdgeCmp>;
+using DependencyEdges = Hashmap<DependencyEdge, DependencyInfo, 64>;
 
 /// Global describes a module-scope variable, type or function.
 struct Global {
@@ -123,19 +132,14 @@ struct Global {
 /// A map of global name to Global
 using GlobalMap = Hashmap<Symbol, Global*, 16>;
 
-/// Raises an ICE that a global ast::Node type was not handled by this system.
-void UnhandledNode(const ast::Node* node) {
-    TINT_ICE() << "unhandled node type: " << node->TypeInfo().name;
+/// @returns a new error diagnostic with the given source.
+diag::Diagnostic& AddError(diag::List& diagnostics, const Source& source) {
+    return diagnostics.AddError(source);
 }
 
-/// Raises an error diagnostic with the given message and source.
-void AddError(diag::List& diagnostics, const std::string& msg, const Source& source) {
-    diagnostics.add_error(diag::System::Resolver, msg, source);
-}
-
-/// Raises a note diagnostic with the given message and source.
-void AddNote(diag::List& diagnostics, const std::string& msg, const Source& source) {
-    diagnostics.add_note(diag::System::Resolver, msg, source);
+/// @returns a new note diagnostic with the given source.
+diag::Diagnostic& AddNote(diag::List& diagnostics, const Source& source) {
+    return diagnostics.AddNote(source);
 }
 
 /// DependencyScanner is used to traverse a module to build the list of
@@ -157,7 +161,7 @@ class DependencyScanner {
           graph_(graph),
           dependency_edges_(edges) {
         // Register all the globals at global-scope
-        for (auto it : globals_by_name) {
+        for (auto& it : globals_by_name) {
             scope_stack_.Set(it.key, it.value->node);
         }
     }
@@ -193,8 +197,13 @@ class DependencyScanner {
             [&](const ast::Enable*) {
                 // Enable directives do not affect the dependency graph.
             },
-            [&](const ast::ConstAssert* assertion) { TraverseExpression(assertion->condition); },
-            [&](Default) { UnhandledNode(global->node); });
+            [&](const ast::Requires*) {
+                // Requires directives do not affect the dependency graph.
+            },
+            [&](const ast::ConstAssert* assertion) {
+                TraverseExpression(assertion->condition);
+            },  //
+            TINT_ICE_ON_NO_MATCH);
     }
 
   private:
@@ -228,7 +237,7 @@ class DependencyScanner {
         TINT_DEFER(scope_stack_.Pop());
 
         for (auto* param : func->params) {
-            if (auto* shadows = scope_stack_.Get(param->name->symbol)) {
+            if (auto shadows = scope_stack_.Get(param->name->symbol)) {
                 graph_.shadows.Add(param, shadows);
             }
             Declare(param->name->symbol, param);
@@ -315,12 +324,10 @@ class DependencyScanner {
                 TraverseStatement(w->body);
             },
             [&](const ast::ConstAssert* assertion) { TraverseExpression(assertion->condition); },
-            [&](Default) {
-                if (TINT_UNLIKELY((!stmt->IsAnyOf<ast::BreakStatement, ast::ContinueStatement,
-                                                  ast::DiscardStatement>()))) {
-                    UnhandledNode(stmt);
-                }
-            });
+            [&](const ast::BreakStatement*) {},     //
+            [&](const ast::ContinueStatement*) {},  //
+            [&](const ast::DiscardStatement*) {},   //
+            TINT_ICE_ON_NO_MATCH);
     }
 
     /// Adds the symbol definition to the current scope, raising an error if two
@@ -329,8 +336,8 @@ class DependencyScanner {
         auto* old = scope_stack_.Set(symbol, node);
         if (old != nullptr && node != old) {
             auto name = symbol.Name();
-            AddError(diagnostics_, "redeclaration of '" + name + "'", node->source);
-            AddNote(diagnostics_, "'" + name + "' previously declared here", old->source);
+            AddError(diagnostics_, node->source) << "redeclaration of '" << name << "'";
+            AddNote(diagnostics_, old->source) << "'" << name << "' previously declared here";
         }
     }
 
@@ -344,23 +351,12 @@ class DependencyScanner {
         Vector<const ast::Expression*, 8> pending{root_expr};
         while (!pending.IsEmpty()) {
             auto* next = pending.Pop();
-            bool ok = ast::TraverseExpressions(next, [&](const ast::Expression* expr) {
-                Switch(
-                    expr,
-                    [&](const ast::IdentifierExpression* e) {
-                        AddDependency(e->identifier, e->identifier->symbol);
-                        if (auto* tmpl_ident = e->identifier->As<ast::TemplatedIdentifier>()) {
-                            for (auto* arg : tmpl_ident->arguments) {
-                                pending.Push(arg);
-                            }
-                        }
-                    },
-                    [&](const ast::CallExpression* call) { TraverseExpression(call->target); },
-                    [&](const ast::BitcastExpression* cast) { TraverseExpression(cast->type); });
+            bool ok = ast::TraverseExpressions(next, [&](const ast::IdentifierExpression* e) {
+                AddDependency(e->identifier, e->identifier->symbol);
                 return ast::TraverseAction::Descend;
             });
             if (!ok) {
-                AddError(diagnostics_, "TraverseExpressions failed", next->source);
+                AddError(diagnostics_, next->source) << "TraverseExpressions failed";
                 return;
             }
         }
@@ -377,69 +373,40 @@ class DependencyScanner {
     /// Traverses the attribute, performing symbol resolution and determining
     /// global dependencies.
     void TraverseAttribute(const ast::Attribute* attr) {
-        bool handled = Switch(
-            attr,
-            [&](const ast::BindingAttribute* binding) {
-                TraverseExpression(binding->expr);
-                return true;
-            },
-            [&](const ast::BuiltinAttribute* builtin) {
-                TraverseExpression(builtin->builtin);
-                return true;
-            },
-            [&](const ast::GroupAttribute* group) {
-                TraverseExpression(group->expr);
-                return true;
-            },
-            [&](const ast::IdAttribute* id) {
-                TraverseExpression(id->expr);
-                return true;
-            },
-            [&](const ast::IndexAttribute* index) {
-                TraverseExpression(index->expr);
-                return true;
-            },
+        Switch(
+            attr,  //
+            [&](const ast::BindingAttribute* binding) { TraverseExpression(binding->expr); },
+            [&](const ast::BuiltinAttribute* builtin) { TraverseExpression(builtin->builtin); },
+            [&](const ast::ColorAttribute* color) { TraverseExpression(color->expr); },
+            [&](const ast::GroupAttribute* group) { TraverseExpression(group->expr); },
+            [&](const ast::IdAttribute* id) { TraverseExpression(id->expr); },
+            [&](const ast::InputAttachmentIndexAttribute* idx) { TraverseExpression(idx->expr); },
+            [&](const ast::BlendSrcAttribute* index) { TraverseExpression(index->expr); },
             [&](const ast::InterpolateAttribute* interpolate) {
                 TraverseExpression(interpolate->type);
                 TraverseExpression(interpolate->sampling);
-                return true;
             },
-            [&](const ast::LocationAttribute* loc) {
-                TraverseExpression(loc->expr);
-                return true;
-            },
-            [&](const ast::StructMemberAlignAttribute* align) {
-                TraverseExpression(align->expr);
-                return true;
-            },
-            [&](const ast::StructMemberSizeAttribute* size) {
-                TraverseExpression(size->expr);
-                return true;
-            },
+            [&](const ast::LocationAttribute* loc) { TraverseExpression(loc->expr); },
+            [&](const ast::StructMemberAlignAttribute* align) { TraverseExpression(align->expr); },
+            [&](const ast::StructMemberSizeAttribute* size) { TraverseExpression(size->expr); },
             [&](const ast::WorkgroupAttribute* wg) {
                 TraverseExpression(wg->x);
                 TraverseExpression(wg->y);
                 TraverseExpression(wg->z);
-                return true;
             },
             [&](const ast::InternalAttribute* i) {
                 for (auto* dep : i->dependencies) {
                     TraverseExpression(dep);
                 }
-                return true;
+            },
+            [&](Default) {
+                if (!attr->IsAnyOf<ast::BuiltinAttribute, ast::DiagnosticAttribute,
+                                   ast::InterpolateAttribute, ast::InvariantAttribute,
+                                   ast::MustUseAttribute, ast::StageAttribute, ast::StrideAttribute,
+                                   ast::StructMemberOffsetAttribute>()) {
+                    TINT_ICE() << "unhandled attribute type: " << attr->TypeInfo().name;
+                }
             });
-        if (handled) {
-            return;
-        }
-
-        if (attr->IsAnyOf<ast::BuiltinAttribute, ast::DiagnosticAttribute,
-                          ast::InterpolateAttribute, ast::InvariantAttribute, ast::MustUseAttribute,
-                          ast::StageAttribute, ast::StrideAttribute,
-                          ast::StructMemberOffsetAttribute>()) {
-            return;
-        }
-
-        UnhandledNode(attr);
     }
 
     /// The type of builtin that a symbol could represent.
@@ -474,8 +441,8 @@ class DependencyScanner {
 
         BuiltinType type = BuiltinType::kNone;
         std::variant<std::monostate,
-                     core::Function,
-                     core::Builtin,
+                     wgsl::BuiltinFn,
+                     core::BuiltinType,
                      core::BuiltinValue,
                      core::AddressSpace,
                      core::TexelFormat,
@@ -489,13 +456,13 @@ class DependencyScanner {
     /// @param symbol the symbol
     /// @returns the builtin info
     DependencyScanner::BuiltinInfo GetBuiltinInfo(Symbol symbol) {
-        return builtin_info_map.GetOrCreate(symbol, [&] {
-            if (auto builtin_fn = core::ParseFunction(symbol.NameView());
-                builtin_fn != core::Function::kNone) {
+        return builtin_info_map.GetOrAdd(symbol, [&] {
+            if (auto builtin_fn = wgsl::ParseBuiltinFn(symbol.NameView());
+                builtin_fn != wgsl::BuiltinFn::kNone) {
                 return BuiltinInfo{BuiltinType::kFunction, builtin_fn};
             }
-            if (auto builtin_ty = core::ParseBuiltin(symbol.NameView());
-                builtin_ty != core::Builtin::kUndefined) {
+            if (auto builtin_ty = core::ParseBuiltinType(symbol.NameView());
+                builtin_ty != core::BuiltinType::kUndefined) {
                 return BuiltinInfo{BuiltinType::kBuiltin, builtin_ty};
             }
             if (auto builtin_val = core::ParseBuiltinValue(symbol.NameView());
@@ -533,15 +500,16 @@ class DependencyScanner {
             auto builtin_info = GetBuiltinInfo(to);
             switch (builtin_info.type) {
                 case BuiltinType::kNone:
-                    graph_.resolved_identifiers.Add(from, UnresolvedIdentifier{to.Name()});
+                    graph_.resolved_identifiers.Add(
+                        from, ResolvedIdentifier::UnresolvedIdentifier{to.Name()});
                     break;
                 case BuiltinType::kFunction:
                     graph_.resolved_identifiers.Add(
-                        from, ResolvedIdentifier(builtin_info.Value<core::Function>()));
+                        from, ResolvedIdentifier(builtin_info.Value<wgsl::BuiltinFn>()));
                     break;
                 case BuiltinType::kBuiltin:
                     graph_.resolved_identifiers.Add(
-                        from, ResolvedIdentifier(builtin_info.Value<core::Builtin>()));
+                        from, ResolvedIdentifier(builtin_info.Value<core::BuiltinType>()));
                     break;
                 case BuiltinType::kBuiltinValue:
                     graph_.resolved_identifiers.Add(
@@ -572,7 +540,7 @@ class DependencyScanner {
             return;
         }
 
-        if (auto global = globals_.Find(to); global && (*global)->node == resolved) {
+        if (auto global = globals_.Get(to); global && (*global)->node == resolved) {
             if (dependency_edges_.Add(DependencyEdge{current_global_, *global},
                                       DependencyInfo{from->source})) {
                 current_global_->deps.Push(*global);
@@ -623,7 +591,7 @@ struct DependencyAnalysis {
 
         graph_.ordered_globals = sorted_.Release();
 
-        return !diagnostics_.contains_errors();
+        return !diagnostics_.ContainsErrors();
     }
 
   private:
@@ -639,11 +607,9 @@ struct DependencyAnalysis {
             [&](const ast::Variable* var) { return var->name->symbol; },
             [&](const ast::DiagnosticDirective*) { return Symbol(); },
             [&](const ast::Enable*) { return Symbol(); },
-            [&](const ast::ConstAssert*) { return Symbol(); },
-            [&](Default) {
-                UnhandledNode(node);
-                return Symbol{};
-            });
+            [&](const ast::Requires*) { return Symbol(); },
+            [&](const ast::ConstAssert*) { return Symbol(); },  //
+            TINT_ICE_ON_NO_MATCH);
     }
 
     /// @param node the ast::Node of the global declaration
@@ -664,10 +630,7 @@ struct DependencyAnalysis {
             [&](const ast::Function*) { return "function"; },         //
             [&](const ast::Variable* v) { return v->Kind(); },        //
             [&](const ast::ConstAssert*) { return "const_assert"; },  //
-            [&](Default) {
-                UnhandledNode(node);
-                return "<unknown>";
-            });
+            TINT_ICE_ON_NO_MATCH);
     }
 
     /// Traverses `module`, collecting all the global declarations and populating
@@ -742,19 +705,19 @@ struct DependencyAnalysis {
     /// SortGlobals sorts the globals into dependency order, erroring if cyclic
     /// dependencies are found. The sorted dependencies are assigned to #sorted.
     void SortGlobals() {
-        if (diagnostics_.contains_errors()) {
+        if (diagnostics_.ContainsErrors()) {
             return;  // This code assumes there are no undeclared identifiers.
         }
 
         // Make sure all directives go before any other global declarations.
         for (auto* global : declaration_order_) {
-            if (global->node->IsAnyOf<ast::DiagnosticDirective, ast::Enable>()) {
+            if (global->node->IsAnyOf<ast::DiagnosticDirective, ast::Enable, ast::Requires>()) {
                 sorted_.Add(global->node);
             }
         }
 
         for (auto* global : declaration_order_) {
-            if (global->node->IsAnyOf<ast::DiagnosticDirective, ast::Enable>()) {
+            if (global->node->IsAnyOf<ast::DiagnosticDirective, ast::Enable, ast::Requires>()) {
                 // Skip directives here, as they are already added.
                 continue;
             }
@@ -793,13 +756,12 @@ struct DependencyAnalysis {
     /// of global `from` depending on `to`.
     /// @note will raise an ICE if the edge is not found.
     DependencyInfo DepInfoFor(const Global* from, const Global* to) const {
-        auto info = dependency_edges_.Find(DependencyEdge{from, to});
+        auto info = dependency_edges_.Get(DependencyEdge{from, to});
         if (TINT_LIKELY(info)) {
             return *info;
         }
         TINT_ICE() << "failed to find dependency info for edge: '" << NameOf(from->node) << "' -> '"
                    << NameOf(to->node) << "'";
-        return {};
     }
 
     /// CyclicDependencyFound() emits an error diagnostic for a cyclic dependency.
@@ -807,8 +769,8 @@ struct DependencyAnalysis {
     /// found in `stack`.
     /// @param stack is the global dependency stack that contains a loop.
     void CyclicDependencyFound(const Global* root, VectorRef<const Global*> stack) {
-        StringStream msg;
-        msg << "cyclic dependency found: ";
+        auto& err = AddError(diagnostics_, root->node->source);
+        err << "cyclic dependency found: ";
         constexpr size_t kLoopNotStarted = ~0u;
         size_t loop_start = kLoopNotStarted;
         for (size_t i = 0; i < stack.Length(); i++) {
@@ -817,19 +779,18 @@ struct DependencyAnalysis {
                 loop_start = i;
             }
             if (loop_start != kLoopNotStarted) {
-                msg << "'" << NameOf(e->node) << "' -> ";
+                err << "'" << NameOf(e->node) << "' -> ";
             }
         }
-        msg << "'" << NameOf(root->node) << "'";
-        AddError(diagnostics_, msg.str(), root->node->source);
+        err << "'" << NameOf(root->node) << "'";
+
         for (size_t i = loop_start; i < stack.Length(); i++) {
             auto* from = stack[i];
             auto* to = (i + 1 < stack.Length()) ? stack[i + 1] : stack[loop_start];
             auto info = DepInfoFor(from, to);
-            AddNote(diagnostics_,
-                    KindOf(from->node) + " '" + NameOf(from->node) + "' references " +
-                        KindOf(to->node) + " '" + NameOf(to->node) + "' here",
-                    info.source);
+            AddNote(diagnostics_, info.source)
+                << KindOf(from->node) + " '" << NameOf(from->node) << "' references "
+                << KindOf(to->node) << " '" << NameOf(to->node) << "' here";
         }
     }
 
@@ -847,7 +808,7 @@ struct DependencyAnalysis {
         printf("------ dependencies ------ \n");
         for (auto* node : sorted_) {
             auto symbol = SymbolOf(node);
-            auto* global = *globals_.Find(symbol);
+            auto* global = *globals_.Get(symbol);
             printf("%s depends on:\n", symbol.Name().c_str());
             for (auto* dep : global->deps) {
                 printf("  %s\n", NameOf(dep->node).c_str());
@@ -915,16 +876,13 @@ std::string ResolvedIdentifier::String() const {
             },
             [&](const ast::Parameter* n) {  //
                 return "parameter '" + n->name->symbol.Name() + "'";
-            },
-            [&](Default) {
-                TINT_UNREACHABLE() << "unhandled ast::Node: " << node->TypeInfo().name;
-                return "<unknown>";
-            });
+            },  //
+            TINT_ICE_ON_NO_MATCH);
     }
-    if (auto builtin_fn = BuiltinFunction(); builtin_fn != core::Function::kNone) {
+    if (auto builtin_fn = BuiltinFn(); builtin_fn != wgsl::BuiltinFn::kNone) {
         return "builtin function '" + tint::ToString(builtin_fn) + "'";
     }
-    if (auto builtin_ty = BuiltinType(); builtin_ty != core::Builtin::kUndefined) {
+    if (auto builtin_ty = BuiltinType(); builtin_ty != core::BuiltinType::kUndefined) {
         return "builtin type '" + tint::ToString(builtin_ty) + "'";
     }
     if (auto builtin_val = BuiltinValue(); builtin_val != core::BuiltinValue::kUndefined) {
@@ -950,7 +908,6 @@ std::string ResolvedIdentifier::String() const {
     }
 
     TINT_UNREACHABLE() << "unhandled ResolvedIdentifier";
-    return "<unknown>";
 }
 
 }  // namespace tint::resolver

@@ -1,16 +1,29 @@
-# Copyright 2020 The Dawn Authors
+# Copyright 2020 The Dawn & Tint Authors
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import("../../../scripts/dawn_overrides_with_defaults.gni")
 
@@ -25,9 +38,6 @@ enable_vulkan_validation_layers = dawn_enable_vulkan_validation_layers &&
 if (enable_vulkan_validation_layers) {
   import("//build_overrides/vulkan_validation_layers.gni")
 }
-
-# ANGLE is an optional dependency; only use it if the path has been set.
-use_angle = dawn_use_angle && defined(dawn_angle_dir)
 
 # Swiftshader is an optional dependency, only use it if the path has been set.
 use_swiftshader = dawn_use_swiftshader && dawn_swiftshader_dir != ""
@@ -45,13 +55,17 @@ if (dawn_enable_vulkan) {
 }
 
 group("abseil") {
-  # When build_with_chromium=true we need to include "//third_party/abseil-cpp:absl" while
+  # When building within Chromium or ANGLE we need to include "//third_party/abseil-cpp:absl" while
   # it's beneficial to be more specific with standalone Dawn, especially when it comes to
   # including it as a dependency in other projects (such as Skia).
-  if (build_with_chromium) {
+  if (build_with_chromium || build_with_angle) {
     public_deps = [ "$dawn_abseil_dir:absl" ]
   } else {
     public_deps = [
+      "${dawn_root}/third_party/gn/abseil-cpp:bits",
+      "${dawn_root}/third_party/gn/abseil-cpp:flat_hash_map",
+      "${dawn_root}/third_party/gn/abseil-cpp:flat_hash_set",
+      "${dawn_root}/third_party/gn/abseil-cpp:inlined_vector",
       "${dawn_root}/third_party/gn/abseil-cpp:str_format",
       "${dawn_root}/third_party/gn/abseil-cpp:strings",
     ]
@@ -76,9 +90,16 @@ config("vulkan_rpath") {
   }
 }
 
-# Config that adds include directory for vulkan-tools.
-config("vulkan_tools_include") {
-  include_dirs = [ "${dawn_vulkan_tools_dir}" ]
+# Config that adds delayloads when built as a shared library or component,
+# useful as we're linking user32.lib which can't always be loaded in the
+# chromium sandbox under win32k lockdown.
+config("win_delayload") {
+  ldflags = [ "/DELAYLOAD:user32.dll" ]
+}
+
+# Config that adds include directory for vulkan-utility-libraries.
+config("vulkan_utility_libraries_include") {
+  include_dirs = [ "${dawn_vulkan_utility_libraries_dir}/include" ]
 }
 
 dawn_json_generator("utils_gen") {
@@ -86,6 +107,8 @@ dawn_json_generator("utils_gen") {
   outputs = [
     "src/dawn/native/ChainUtils_autogen.h",
     "src/dawn/native/ChainUtils_autogen.cpp",
+    "src/dawn/native/Features_autogen.h",
+    "src/dawn/native/Features_autogen.inl",
     "src/dawn/native/ProcTable.cpp",
     "src/dawn/native/dawn_platform_autogen.h",
     "src/dawn/native/wgpu_structs_autogen.h",
@@ -105,7 +128,7 @@ if (dawn_enable_opengl) {
     script = "${dawn_root}/generator/opengl_loader_generator.py"
     args = [
       "--gl-xml",
-      rebase_path("${dawn_root}/third_party/khronos/gl.xml", root_build_dir),
+      rebase_path("${dawn_opengl_registry_dir}/xml/gl.xml", root_build_dir),
       "--supported-extensions",
       rebase_path("opengl/supported_extensions.json", root_build_dir),
     ]
@@ -146,12 +169,8 @@ source_set("sources") {
     ":headers",
     ":utils_gen",
     "${dawn_root}/src/dawn/common",
-    "${dawn_root}/src/tint:libtint",
-
-    # TODO(dawn:286): These should only be necessary if SPIR-V validation is
-    # enabled with dawn_enable_spirv_validation
-    "${dawn_spirv_tools_dir}:spvtools_opt",
-    "${dawn_spirv_tools_dir}:spvtools_val",
+    "${dawn_root}/src/tint/api",
+    "${dawn_root}/src/tint/lang/wgsl/features",
   ]
   defines = []
   libs = []
@@ -173,6 +192,7 @@ source_set("sources") {
   # dawn native target
   public_deps = [
     ":abseil",
+    "${dawn_root}/src/dawn/partition_alloc:raw_ptr",
     "${dawn_root}/src/dawn/platform",
   ]
 
@@ -225,6 +245,7 @@ source_set("sources") {
     "CallbackTaskManager.cpp",
     "CallbackTaskManager.h",
     "ChainUtils.h",
+    "ChainUtilsImpl.inl",
     "CommandAllocator.cpp",
     "CommandAllocator.h",
     "CommandBuffer.cpp",
@@ -245,8 +266,8 @@ source_set("sources") {
     "ComputePipeline.h",
     "CopyTextureForBrowserHelper.cpp",
     "CopyTextureForBrowserHelper.h",
-    "CreatePipelineAsyncTask.cpp",
-    "CreatePipelineAsyncTask.h",
+    "CreatePipelineAsyncEvent.cpp",
+    "CreatePipelineAsyncEvent.h",
     "Device.cpp",
     "Device.h",
     "DynamicUploader.cpp",
@@ -263,6 +284,9 @@ source_set("sources") {
     "ErrorInjector.h",
     "ErrorScope.cpp",
     "ErrorScope.h",
+    "ErrorSink.h",
+    "EventManager.cpp",
+    "EventManager.h",
     "ExecutionQueue.cpp",
     "ExecutionQueue.h",
     "ExternalTexture.cpp",
@@ -311,7 +335,6 @@ source_set("sources") {
     "QuerySet.h",
     "Queue.cpp",
     "Queue.h",
-    "RefCountedWithExternalCount.cpp",
     "RefCountedWithExternalCount.h",
     "RenderBundle.cpp",
     "RenderBundle.h",
@@ -321,6 +344,8 @@ source_set("sources") {
     "RenderEncoderBase.h",
     "RenderPassEncoder.cpp",
     "RenderPassEncoder.h",
+    "RenderPassWorkaroundsHelper.cpp",
+    "RenderPassWorkaroundsHelper.h",
     "RenderPipeline.cpp",
     "RenderPipeline.h",
     "ResourceHeap.h",
@@ -336,11 +361,14 @@ source_set("sources") {
     "Serializable.h",
     "ShaderModule.cpp",
     "ShaderModule.h",
+    "SharedBufferMemory.cpp",
+    "SharedBufferMemory.h",
     "SharedFence.cpp",
     "SharedFence.h",
+    "SharedResourceMemory.cpp",
+    "SharedResourceMemory.h",
     "SharedTextureMemory.cpp",
     "SharedTextureMemory.h",
-    "StreamImplTint.cpp",
     "Subresource.cpp",
     "Subresource.h",
     "SubresourceStorage.h",
@@ -348,6 +376,10 @@ source_set("sources") {
     "Surface.h",
     "SwapChain.cpp",
     "SwapChain.h",
+    "SystemEvent.cpp",
+    "SystemEvent.h",
+    "SystemHandle.cpp",
+    "SystemHandle.h",
     "Texture.cpp",
     "Texture.h",
     "TintUtils.cpp",
@@ -356,9 +388,8 @@ source_set("sources") {
     "Toggles.cpp",
     "Toggles.h",
     "UsageValidationMode.h",
-    "VertexFormat.cpp",
-    "VertexFormat.h",
     "VisitableMembers.h",
+    "WaitAnySystemEvent.h",
     "dawn_platform.h",
     "stream/BlobSource.cpp",
     "stream/BlobSource.h",
@@ -381,10 +412,21 @@ source_set("sources") {
     ]
   }
 
+  if (is_android) {
+    sources += [
+      "AHBFunctions.cpp",
+      "AHBFunctions.h",
+    ]
+  }
+
   # Only win32 app needs to link with user32.lib
   # In UWP, all availiable APIs are defined in WindowsApp.lib
   if (is_win && !dawn_is_winuwp) {
-    libs += [ "user32.lib" ]
+    libs += [
+      "user32.lib",
+      "delayimp.lib",
+    ]
+    public_configs = [ ":win_delayload" ]
   }
 
   if (dawn_is_winuwp && is_debug) {
@@ -414,17 +456,21 @@ source_set("sources") {
       "d3d/D3DError.h",
       "d3d/DeviceD3D.cpp",
       "d3d/DeviceD3D.h",
-      "d3d/ExternalImageDXGIImpl.cpp",
-      "d3d/ExternalImageDXGIImpl.h",
-      "d3d/Fence.cpp",
-      "d3d/Fence.h",
       "d3d/Forward.h",
+      "d3d/KeyedMutex.cpp",
+      "d3d/KeyedMutex.h",
       "d3d/PhysicalDeviceD3D.cpp",
       "d3d/PhysicalDeviceD3D.h",
       "d3d/PlatformFunctions.cpp",
       "d3d/PlatformFunctions.h",
+      "d3d/QueueD3D.cpp",
+      "d3d/QueueD3D.h",
       "d3d/ShaderUtils.cpp",
       "d3d/ShaderUtils.h",
+      "d3d/SharedFenceD3D.cpp",
+      "d3d/SharedFenceD3D.h",
+      "d3d/SharedTextureMemoryD3D.cpp",
+      "d3d/SharedTextureMemoryD3D.h",
       "d3d/SwapChainD3D.cpp",
       "d3d/SwapChainD3D.h",
       "d3d/TextureD3D.cpp",
@@ -458,8 +504,6 @@ source_set("sources") {
       "d3d11/DeviceD3D11.h",
       "d3d11/DeviceInfoD3D11.cpp",
       "d3d11/DeviceInfoD3D11.h",
-      "d3d11/FenceD3D11.cpp",
-      "d3d11/FenceD3D11.h",
       "d3d11/Forward.h",
       "d3d11/PhysicalDeviceD3D11.cpp",
       "d3d11/PhysicalDeviceD3D11.h",
@@ -477,6 +521,10 @@ source_set("sources") {
       "d3d11/SamplerD3D11.h",
       "d3d11/ShaderModuleD3D11.cpp",
       "d3d11/ShaderModuleD3D11.h",
+      "d3d11/SharedFenceD3D11.cpp",
+      "d3d11/SharedFenceD3D11.h",
+      "d3d11/SharedTextureMemoryD3D11.cpp",
+      "d3d11/SharedTextureMemoryD3D11.h",
       "d3d11/SwapChainD3D11.cpp",
       "d3d11/SwapChainD3D11.h",
       "d3d11/TextureD3D11.cpp",
@@ -504,8 +552,6 @@ source_set("sources") {
       "d3d12/BufferD3D12.h",
       "d3d12/CPUDescriptorHeapAllocationD3D12.cpp",
       "d3d12/CPUDescriptorHeapAllocationD3D12.h",
-      "d3d12/CommandAllocatorManager.cpp",
-      "d3d12/CommandAllocatorManager.h",
       "d3d12/CommandBufferD3D12.cpp",
       "d3d12/CommandBufferD3D12.h",
       "d3d12/CommandRecordingContext.cpp",
@@ -516,8 +562,6 @@ source_set("sources") {
       "d3d12/D3D12Info.h",
       "d3d12/DeviceD3D12.cpp",
       "d3d12/DeviceD3D12.h",
-      "d3d12/FenceD3D12.cpp",
-      "d3d12/FenceD3D12.h",
       "d3d12/Forward.h",
       "d3d12/GPUDescriptorHeapAllocationD3D12.cpp",
       "d3d12/GPUDescriptorHeapAllocationD3D12.h",
@@ -556,6 +600,12 @@ source_set("sources") {
       "d3d12/ShaderModuleD3D12.h",
       "d3d12/ShaderVisibleDescriptorAllocatorD3D12.cpp",
       "d3d12/ShaderVisibleDescriptorAllocatorD3D12.h",
+      "d3d12/SharedBufferMemoryD3D12.cpp",
+      "d3d12/SharedBufferMemoryD3D12.h",
+      "d3d12/SharedFenceD3D12.cpp",
+      "d3d12/SharedFenceD3D12.h",
+      "d3d12/SharedTextureMemoryD3D12.cpp",
+      "d3d12/SharedTextureMemoryD3D12.h",
       "d3d12/StagingDescriptorAllocatorD3D12.cpp",
       "d3d12/StagingDescriptorAllocatorD3D12.h",
       "d3d12/StreamImplD3D12.cpp",
@@ -600,6 +650,8 @@ source_set("sources") {
       "metal/DeviceMTL.h",
       "metal/DeviceMTL.mm",
       "metal/Forward.h",
+      "metal/PhysicalDeviceMTL.h",
+      "metal/PhysicalDeviceMTL.mm",
       "metal/PipelineLayoutMTL.h",
       "metal/PipelineLayoutMTL.mm",
       "metal/QuerySetMTL.h",
@@ -612,6 +664,10 @@ source_set("sources") {
       "metal/SamplerMTL.mm",
       "metal/ShaderModuleMTL.h",
       "metal/ShaderModuleMTL.mm",
+      "metal/SharedFenceMTL.h",
+      "metal/SharedFenceMTL.mm",
+      "metal/SharedTextureMemoryMTL.h",
+      "metal/SharedTextureMemoryMTL.mm",
       "metal/SwapChainMTL.h",
       "metal/SwapChainMTL.mm",
       "metal/TextureMTL.h",
@@ -640,11 +696,16 @@ source_set("sources") {
       "SpirvValidation.cpp",
       "SpirvValidation.h",
     ]
+    deps += [
+      "${dawn_spirv_tools_dir}:spvtools_opt",
+      "${dawn_spirv_tools_dir}:spvtools_val",
+    ]
   }
 
   if (dawn_enable_opengl) {
     public_deps += [
       ":opengl_loader_gen",
+      "${dawn_root}/src/tint/api/common:common",
       "${dawn_root}/third_party/khronos:khronos_platform",
     ]
     sources += get_target_outputs(":opengl_loader_gen")
@@ -655,6 +716,7 @@ source_set("sources") {
       "opengl/BindGroupGL.h",
       "opengl/BindGroupLayoutGL.cpp",
       "opengl/BindGroupLayoutGL.h",
+      "opengl/BindingPoint.h",
       "opengl/BufferGL.cpp",
       "opengl/BufferGL.h",
       "opengl/CommandBufferGL.cpp",
@@ -704,8 +766,7 @@ source_set("sources") {
   }
 
   if (dawn_enable_vulkan) {
-    configs += [ ":vulkan_tools_include" ]
-    deps += [ "${dawn_vulkan_tools_dir}:vulkan_tools_headers" ]
+    configs += [ ":vulkan_utility_libraries_include" ]
     public_deps += [ "${dawn_vulkan_headers_dir}:vulkan_headers" ]
     sources += [
       "vulkan/BackendVk.cpp",
@@ -740,10 +801,13 @@ source_set("sources") {
       "vulkan/QuerySetVk.h",
       "vulkan/QueueVk.cpp",
       "vulkan/QueueVk.h",
+      "vulkan/RefCountedVkHandle.h",
       "vulkan/RenderPassCache.cpp",
       "vulkan/RenderPassCache.h",
       "vulkan/RenderPipelineVk.cpp",
       "vulkan/RenderPipelineVk.h",
+      "vulkan/ResolveTextureLoadingUtilsVk.cpp",
+      "vulkan/ResolveTextureLoadingUtilsVk.h",
       "vulkan/ResourceHeapVk.cpp",
       "vulkan/ResourceHeapVk.h",
       "vulkan/ResourceMemoryAllocatorVk.cpp",
@@ -752,6 +816,10 @@ source_set("sources") {
       "vulkan/SamplerVk.h",
       "vulkan/ShaderModuleVk.cpp",
       "vulkan/ShaderModuleVk.h",
+      "vulkan/SharedFenceVk.cpp",
+      "vulkan/SharedFenceVk.h",
+      "vulkan/SharedTextureMemoryVk.cpp",
+      "vulkan/SharedTextureMemoryVk.h",
       "vulkan/StreamImplVk.cpp",
       "vulkan/SwapChainVk.cpp",
       "vulkan/SwapChainVk.h",
@@ -798,22 +866,10 @@ source_set("sources") {
       }
     } else if (is_fuchsia) {
       sources += [
-        "vulkan/external_memory/MemoryServiceImplementationZicronHandle.cpp",
-        "vulkan/external_memory/MemoryServiceImplementationZicronHandle.h",
+        "vulkan/external_memory/MemoryServiceImplementationZirconHandle.cpp",
+        "vulkan/external_memory/MemoryServiceImplementationZirconHandle.h",
         "vulkan/external_semaphore/SemaphoreServiceImplementationZirconHandle.cpp",
         "vulkan/external_semaphore/SemaphoreServiceImplementationZirconHandle.h",
-      ]
-    }
-
-    if (build_with_chromium && is_fuchsia) {
-      # Necessary to ensure that the Vulkan libraries will be in the
-      # final Fuchsia package.
-      data_deps = [
-        "//third_party/fuchsia-sdk:vulkan_base",
-        "//third_party/fuchsia-sdk:vulkan_validation",
-
-        # NOTE: The line below is a work around for http://crbug.com/1001081
-        "//third_party/fuchsia-sdk/sdk:trace_engine",
       ]
     }
     if (dawn_is_winuwp) {
@@ -836,13 +892,6 @@ source_set("sources") {
     if (dawn_enable_spirv_validation) {
       defines += [ "DAWN_ENABLE_SPIRV_VALIDATION" ]
     }
-  }
-
-  if (use_angle) {
-    data_deps += [
-      "${dawn_angle_dir}:libEGL",
-      "${dawn_angle_dir}:libGLESv2",
-    ]
   }
 }
 
@@ -900,6 +949,14 @@ dawn_json_generator("webgpu_dawn_native_proc_gen") {
   outputs = [ "src/dawn/native/webgpu_dawn_native_proc.cpp" ]
 }
 
+source_set("webgpu_dawn_native_proc_sources") {
+  sources = get_target_outputs(":webgpu_dawn_native_proc_gen")
+  deps = [
+    ":headers",
+    ":webgpu_dawn_native_proc_gen",
+  ]
+}
+
 dawn_component("webgpu_dawn") {
   # For a single library - build `webgpu_dawn_shared` with GN args:
   #   dawn_complete_static_libs = true - to package a single lib
@@ -918,9 +975,8 @@ dawn_component("webgpu_dawn") {
   DEFINE_PREFIX = "WGPU"
   output_name = "webgpu_dawn"
 
-  sources = get_target_outputs(":webgpu_dawn_native_proc_gen")
   deps = [
     ":static",
-    ":webgpu_dawn_native_proc_gen",
+    ":webgpu_dawn_native_proc_sources",
   ]
 }

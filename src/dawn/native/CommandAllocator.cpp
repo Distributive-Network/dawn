@@ -1,16 +1,29 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/CommandAllocator.h"
 
@@ -31,7 +44,7 @@ CommandIterator::CommandIterator() {
 }
 
 CommandIterator::~CommandIterator() {
-    ASSERT(IsEmpty());
+    DAWN_ASSERT(IsEmpty());
 }
 
 CommandIterator::CommandIterator(CommandIterator&& other) {
@@ -43,7 +56,7 @@ CommandIterator::CommandIterator(CommandIterator&& other) {
 }
 
 CommandIterator& CommandIterator::operator=(CommandIterator&& other) {
-    ASSERT(IsEmpty());
+    DAWN_ASSERT(IsEmpty());
     if (!other.IsEmpty()) {
         mBlocks = std::move(other.mBlocks);
         other.Reset();
@@ -57,7 +70,7 @@ CommandIterator::CommandIterator(CommandAllocator allocator) : mBlocks(allocator
 }
 
 void CommandIterator::AcquireCommandBlocks(std::vector<CommandAllocator> allocators) {
-    ASSERT(IsEmpty());
+    DAWN_ASSERT(IsEmpty());
     mBlocks.clear();
     for (CommandAllocator& allocator : allocators) {
         CommandBlocks blocks = allocator.AcquireBlocks();
@@ -78,7 +91,7 @@ bool CommandIterator::NextCommandIdInNewBlock(uint32_t* commandId) {
         *commandId = detail::kEndOfBlock;
         return false;
     }
-    mCurrentPtr = AlignPtr(mBlocks[mCurrentBlock].block, alignof(uint32_t));
+    mCurrentPtr = AlignPtr(mBlocks[mCurrentBlock].block.get(), alignof(uint32_t));
     return NextCommandId(commandId);
 }
 
@@ -88,12 +101,9 @@ void CommandIterator::Reset() {
     if (mBlocks.empty()) {
         // This will case the first NextCommandId call to try to move to the next block and stop
         // the iteration immediately, without special casing the initialization.
-        mCurrentPtr = reinterpret_cast<uint8_t*>(&mEndOfBlock);
-        mBlocks.emplace_back();
-        mBlocks[0].size = sizeof(mEndOfBlock);
-        mBlocks[0].block = mCurrentPtr;
+        mCurrentPtr = reinterpret_cast<char*>(&mEndOfBlock);
     } else {
-        mCurrentPtr = AlignPtr(mBlocks[0].block, alignof(uint32_t));
+        mCurrentPtr = AlignPtr(mBlocks[0].block.get(), alignof(uint32_t));
     }
 }
 
@@ -102,16 +112,14 @@ void CommandIterator::MakeEmptyAsDataWasDestroyed() {
         return;
     }
 
-    for (BlockDef& block : mBlocks) {
-        free(block.block);
-    }
+    mCurrentPtr = reinterpret_cast<char*>(&mEndOfBlock);
     mBlocks.clear();
     Reset();
-    ASSERT(IsEmpty());
+    DAWN_ASSERT(IsEmpty());
 }
 
 bool CommandIterator::IsEmpty() const {
-    return mBlocks[0].block == reinterpret_cast<const uint8_t*>(&mEndOfBlock);
+    return mBlocks.empty();
 }
 
 // Potential TODO(crbug.com/dawn/835):
@@ -157,22 +165,19 @@ CommandAllocator& CommandAllocator::operator=(CommandAllocator&& other) {
 }
 
 void CommandAllocator::Reset() {
-    for (BlockDef& block : mBlocks) {
-        free(block.block);
-    }
+    ResetPointers();
     mBlocks.clear();
     mLastAllocationSize = kDefaultBaseAllocationSize;
-    ResetPointers();
 }
 
 bool CommandAllocator::IsEmpty() const {
-    return mCurrentPtr == reinterpret_cast<const uint8_t*>(&mPlaceholderEnum[0]);
+    return mCurrentPtr == reinterpret_cast<const char*>(&mPlaceholderSpace[0]);
 }
 
 CommandBlocks&& CommandAllocator::AcquireBlocks() {
-    ASSERT(mCurrentPtr != nullptr && mEndPtr != nullptr);
-    ASSERT(IsPtrAligned(mCurrentPtr, alignof(uint32_t)));
-    ASSERT(mCurrentPtr + sizeof(uint32_t) <= mEndPtr);
+    DAWN_ASSERT(mCurrentPtr != nullptr && mEndPtr != nullptr);
+    DAWN_ASSERT(IsPtrAligned(mCurrentPtr, alignof(uint32_t)));
+    DAWN_ASSERT(mCurrentPtr + sizeof(uint32_t) <= mEndPtr);
     *reinterpret_cast<uint32_t*>(mCurrentPtr) = detail::kEndOfBlock;
 
     mCurrentPtr = nullptr;
@@ -180,9 +185,9 @@ CommandBlocks&& CommandAllocator::AcquireBlocks() {
     return std::move(mBlocks);
 }
 
-uint8_t* CommandAllocator::AllocateInNewBlock(uint32_t commandId,
-                                              size_t commandSize,
-                                              size_t commandAlignment) {
+char* CommandAllocator::AllocateInNewBlock(uint32_t commandId,
+                                           size_t commandSize,
+                                           size_t commandAlignment) {
     // When there is not enough space, we signal the kEndOfBlock, so that the iterator knows
     // to move to the next one. kEndOfBlock on the last block means the end of the commands.
     uint32_t* idAlloc = reinterpret_cast<uint32_t*>(mCurrentPtr);
@@ -207,20 +212,20 @@ bool CommandAllocator::GetNewBlock(size_t minimumSize) {
     // Allocate blocks doubling sizes each time, to a maximum of 16k (or at least minimumSize).
     mLastAllocationSize = std::max(minimumSize, std::min(mLastAllocationSize * 2, size_t(16384)));
 
-    uint8_t* block = static_cast<uint8_t*>(malloc(mLastAllocationSize));
+    auto block = std::unique_ptr<char[]>(new (std::nothrow) char[mLastAllocationSize]);
     if (DAWN_UNLIKELY(block == nullptr)) {
         return false;
     }
 
-    mBlocks.push_back({mLastAllocationSize, block});
-    mCurrentPtr = AlignPtr(block, alignof(uint32_t));
-    mEndPtr = block + mLastAllocationSize;
+    mCurrentPtr = AlignPtr(block.get(), alignof(uint32_t));
+    mEndPtr = block.get() + mLastAllocationSize;
+    mBlocks.push_back({mLastAllocationSize, std::move(block)});
     return true;
 }
 
 void CommandAllocator::ResetPointers() {
-    mCurrentPtr = reinterpret_cast<uint8_t*>(&mPlaceholderEnum[0]);
-    mEndPtr = reinterpret_cast<uint8_t*>(&mPlaceholderEnum[1]);
+    mCurrentPtr = reinterpret_cast<char*>(&mPlaceholderSpace[0]);
+    mEndPtr = reinterpret_cast<char*>(&mPlaceholderSpace[1]);
 }
 
 }  // namespace dawn::native

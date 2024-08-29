@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_TINT_LANG_SPIRV_WRITER_AST_PRINTER_BUILDER_H_
 #define SRC_TINT_LANG_SPIRV_WRITER_AST_PRINTER_BUILDER_H_
@@ -28,7 +41,6 @@
 #include "src/tint/lang/spirv/writer/common/function.h"
 #include "src/tint/lang/spirv/writer/common/module.h"
 #include "src/tint/lang/wgsl/ast/assignment_statement.h"
-#include "src/tint/lang/wgsl/ast/bitcast_expression.h"
 #include "src/tint/lang/wgsl/ast/break_statement.h"
 #include "src/tint/lang/wgsl/ast/continue_statement.h"
 #include "src/tint/lang/wgsl/ast/discard_statement.h"
@@ -40,7 +52,7 @@
 #include "src/tint/lang/wgsl/ast/unary_op_expression.h"
 #include "src/tint/lang/wgsl/ast/variable_decl_statement.h"
 #include "src/tint/lang/wgsl/program/program_builder.h"
-#include "src/tint/lang/wgsl/sem/builtin.h"
+#include "src/tint/lang/wgsl/sem/builtin_fn.h"
 #include "src/tint/utils/containers/scope_stack.h"
 
 // Forward declarations
@@ -82,7 +94,12 @@ class Builder {
     /// @param program the program
     /// @param zero_initialize_workgroup_memory `true` to initialize all the
     /// variables in the Workgroup address space with OpConstantNull
-    explicit Builder(const Program* program, bool zero_initialize_workgroup_memory = false);
+    /// @param experimental_require_subgroup_uniform_control_flow `true` to require
+    /// `SPV_KHR_subgroup_uniform_control_flow` extension and `SubgroupUniformControlFlowKHR`
+    /// execution mode for compute stage entry points.
+    explicit Builder(const Program& program,
+                     bool zero_initialize_workgroup_memory = false,
+                     bool experimental_require_subgroup_uniform_control_flow = false);
     ~Builder();
 
     /// Generates the SPIR-V instructions for the given program
@@ -93,7 +110,7 @@ class Builder {
     const diag::List& Diagnostics() const { return builder_.Diagnostics(); }
 
     /// @returns true if the builder encountered an error
-    bool has_error() const { return Diagnostics().contains_errors(); }
+    bool has_error() const { return Diagnostics().ContainsErrors(); }
 
     /// @returns the module that this builder has produced
     writer::Module& Module() { return module_; }
@@ -148,7 +165,7 @@ class Builder {
     /// not supported.
     /// @param ext the extension to generate
     /// @returns true on success.
-    bool GenerateExtension(core::Extension ext);
+    bool GenerateExtension(wgsl::Extension ext);
     /// Generates a label for the given id. Emits an error and returns false if
     /// we're currently outside a function.
     /// @param id the id to use for the label
@@ -273,7 +290,7 @@ class Builder {
     /// Generates a bitcast expression
     /// @param expr the expression to generate
     /// @returns the expression ID on success or 0 otherwise
-    uint32_t GenerateBitcastExpression(const ast::BitcastExpression* expr);
+    uint32_t GenerateBitcastExpression(const ast::CallExpression* expr);
     /// Generates a short circuting binary expression
     /// @param expr the expression to generate
     /// @returns teh expression ID on success or 0 otherwise
@@ -291,7 +308,7 @@ class Builder {
     /// @param call the call expression
     /// @param builtin the builtin being called
     /// @returns the expression ID on success or 0 otherwise
-    uint32_t GenerateBuiltinCall(const sem::Call* call, const sem::Builtin* builtin);
+    uint32_t GenerateBuiltinCall(const sem::Call* call, const sem::BuiltinFn* builtin);
     /// Handles generating a value constructor or value conversion expression
     /// @param call the call expression
     /// @param var the variable that is being initialized. May be null.
@@ -306,13 +323,13 @@ class Builder {
     /// parameters
     /// @returns true on success
     bool GenerateTextureBuiltin(const sem::Call* call,
-                                const sem::Builtin* builtin,
+                                const sem::BuiltinFn* builtin,
                                 Operand result_type,
                                 Operand result_id);
     /// Generates a control barrier statement.
     /// @param builtin the semantic information for the barrier builtin call
     /// @returns true on success
-    bool GenerateControlBarrierBuiltin(const sem::Builtin* builtin);
+    bool GenerateControlBarrierBuiltin(const sem::BuiltinFn* builtin);
     /// Generates an atomic builtin call.
     /// @param call the call expression
     /// @param builtin the semantic information for the atomic builtin call
@@ -320,7 +337,7 @@ class Builder {
     /// @param result_id result identifier operand of the texture instruction
     /// @returns true on success
     bool GenerateAtomicBuiltin(const sem::Call* call,
-                               const sem::Builtin* builtin,
+                               const sem::BuiltinFn* builtin,
                                Operand result_type,
                                Operand result_id);
     /// Generates a sampled image
@@ -460,7 +477,7 @@ class Builder {
     /// Determines if the given value constructor is created from constant values
     /// @param expr the expression to check
     /// @returns true if the constructor is constant
-    bool IsConstructorConst(const ast::Expression* expr);
+    bool IsConstructorConst(const ast::CallExpression* expr);
 
   private:
     /// @returns an Operand with a new result ID in it. Increments the next_id_
@@ -510,6 +527,10 @@ class Builder {
     /// Pops the top-most scope
     void PopScope();
 
+    /// Declare all the extensions and capabilities required by `OpSDot` and `OpUDot` using 4x8
+    // packed integer vectors as input.
+    void DeclarePacked4x8IntegerDotProductCapabilitiesAndExtensions();
+
     ProgramBuilder builder_;
     writer::Module module_;
     Function current_function_;
@@ -527,7 +548,7 @@ class Builder {
     std::unordered_map<uint32_t, const sem::Variable*> id_to_var_;
     std::unordered_map<std::string, uint32_t> import_name_to_id_;
     std::unordered_map<Symbol, uint32_t> func_symbol_to_id_;
-    std::unordered_map<sem::CallTargetSignature, uint32_t> func_sig_to_id_;
+    Hashmap<sem::CallTargetSignature, uint32_t, 4> func_sig_to_id_;
     std::unordered_map<const core::type::Type*, uint32_t> type_to_id_;
     std::unordered_map<ScalarConstant, uint32_t> const_to_id_;
     std::unordered_map<const core::type::Type*, uint32_t> const_null_to_id_;
@@ -537,6 +558,7 @@ class Builder {
     std::vector<uint32_t> merge_stack_;
     std::vector<uint32_t> continue_stack_;
     bool zero_initialize_workgroup_memory_ = false;
+    bool experimental_require_subgroup_uniform_control_flow_ = false;
 
     struct ContinuingInfo {
         ContinuingInfo(const ast::Statement* last_statement,

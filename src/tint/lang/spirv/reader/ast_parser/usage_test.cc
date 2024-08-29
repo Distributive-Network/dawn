@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
 #include <vector>
@@ -34,8 +47,9 @@ TEST_F(SpirvASTParserTest, Usage_Trivial_Properties) {
     EXPECT_FALSE(u.IsSampledTexture());
     EXPECT_FALSE(u.IsMultisampledTexture());
     EXPECT_FALSE(u.IsDepthTexture());
-    EXPECT_FALSE(u.IsStorageReadTexture());
-    EXPECT_FALSE(u.IsStorageWriteTexture());
+    EXPECT_FALSE(u.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(u.IsStorageReadWriteTexture());
+    EXPECT_FALSE(u.IsStorageWriteOnlyTexture());
 }
 
 TEST_F(SpirvASTParserTest, Usage_Trivial_Output) {
@@ -87,8 +101,9 @@ TEST_F(SpirvASTParserTest, Usage_Add) {
     EXPECT_FALSE(a.IsSampledTexture());
     EXPECT_FALSE(a.IsMultisampledTexture());
     EXPECT_FALSE(a.IsDepthTexture());
-    EXPECT_TRUE(a.IsStorageReadTexture());
-    EXPECT_FALSE(a.IsStorageWriteTexture());
+    EXPECT_TRUE(a.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(a.IsStorageReadWriteTexture());
+    EXPECT_FALSE(a.IsStorageWriteOnlyTexture());
 
     StringStream ss;
     ss << a;
@@ -108,8 +123,9 @@ TEST_F(SpirvASTParserTest, Usage_AddSampler) {
     EXPECT_FALSE(u.IsSampledTexture());
     EXPECT_FALSE(u.IsMultisampledTexture());
     EXPECT_FALSE(u.IsDepthTexture());
-    EXPECT_FALSE(u.IsStorageReadTexture());
-    EXPECT_FALSE(u.IsStorageWriteTexture());
+    EXPECT_FALSE(u.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(u.IsStorageReadWriteTexture());
+    EXPECT_FALSE(u.IsStorageWriteOnlyTexture());
 
     ss << u;
     EXPECT_THAT(ss.str(), Eq("Usage(Sampler( ))"));
@@ -133,8 +149,9 @@ TEST_F(SpirvASTParserTest, Usage_AddComparisonSampler) {
     EXPECT_FALSE(u.IsSampledTexture());
     EXPECT_FALSE(u.IsMultisampledTexture());
     EXPECT_FALSE(u.IsDepthTexture());
-    EXPECT_FALSE(u.IsStorageReadTexture());
-    EXPECT_FALSE(u.IsStorageWriteTexture());
+    EXPECT_FALSE(u.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(u.IsStorageReadWriteTexture());
+    EXPECT_FALSE(u.IsStorageWriteOnlyTexture());
 
     ss << u;
     EXPECT_THAT(ss.str(), Eq("Usage(Sampler( comparison ))"));
@@ -157,8 +174,9 @@ TEST_F(SpirvASTParserTest, Usage_AddTexture) {
     EXPECT_FALSE(u.IsSampledTexture());
     EXPECT_FALSE(u.IsMultisampledTexture());
     EXPECT_FALSE(u.IsDepthTexture());
-    EXPECT_FALSE(u.IsStorageReadTexture());
-    EXPECT_FALSE(u.IsStorageWriteTexture());
+    EXPECT_FALSE(u.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(u.IsStorageReadWriteTexture());
+    EXPECT_FALSE(u.IsStorageWriteOnlyTexture());
 
     ss << u;
     EXPECT_THAT(ss.str(), Eq("Usage(Texture( ))"));
@@ -181,8 +199,9 @@ TEST_F(SpirvASTParserTest, Usage_AddSampledTexture) {
     EXPECT_TRUE(u.IsSampledTexture());
     EXPECT_FALSE(u.IsMultisampledTexture());
     EXPECT_FALSE(u.IsDepthTexture());
-    EXPECT_FALSE(u.IsStorageReadTexture());
-    EXPECT_FALSE(u.IsStorageWriteTexture());
+    EXPECT_FALSE(u.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(u.IsStorageReadWriteTexture());
+    EXPECT_FALSE(u.IsStorageWriteOnlyTexture());
 
     ss << u;
     EXPECT_THAT(ss.str(), Eq("Usage(Texture( is_sampled ))"));
@@ -205,8 +224,9 @@ TEST_F(SpirvASTParserTest, Usage_AddMultisampledTexture) {
     EXPECT_TRUE(u.IsSampledTexture());
     EXPECT_TRUE(u.IsMultisampledTexture());
     EXPECT_FALSE(u.IsDepthTexture());
-    EXPECT_FALSE(u.IsStorageReadTexture());
-    EXPECT_FALSE(u.IsStorageWriteTexture());
+    EXPECT_FALSE(u.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(u.IsStorageReadWriteTexture());
+    EXPECT_FALSE(u.IsStorageWriteOnlyTexture());
 
     ss << u;
     EXPECT_THAT(ss.str(), Eq("Usage(Texture( is_sampled ms ))"));
@@ -229,8 +249,9 @@ TEST_F(SpirvASTParserTest, Usage_AddDepthTexture) {
     EXPECT_TRUE(u.IsSampledTexture());
     EXPECT_FALSE(u.IsMultisampledTexture());
     EXPECT_TRUE(u.IsDepthTexture());
-    EXPECT_FALSE(u.IsStorageReadTexture());
-    EXPECT_FALSE(u.IsStorageWriteTexture());
+    EXPECT_FALSE(u.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(u.IsStorageReadWriteTexture());
+    EXPECT_FALSE(u.IsStorageWriteOnlyTexture());
 
     ss << u;
     EXPECT_THAT(ss.str(), Eq("Usage(Texture( is_sampled depth ))"));
@@ -253,8 +274,9 @@ TEST_F(SpirvASTParserTest, Usage_AddStorageReadTexture) {
     EXPECT_FALSE(u.IsSampledTexture());
     EXPECT_FALSE(u.IsMultisampledTexture());
     EXPECT_FALSE(u.IsDepthTexture());
-    EXPECT_TRUE(u.IsStorageReadTexture());
-    EXPECT_FALSE(u.IsStorageWriteTexture());
+    EXPECT_TRUE(u.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(u.IsStorageReadWriteTexture());
+    EXPECT_FALSE(u.IsStorageWriteOnlyTexture());
 
     ss << u;
     EXPECT_THAT(ss.str(), Eq("Usage(Texture( read ))"));
@@ -277,13 +299,41 @@ TEST_F(SpirvASTParserTest, Usage_AddStorageWriteTexture) {
     EXPECT_FALSE(u.IsSampledTexture());
     EXPECT_FALSE(u.IsMultisampledTexture());
     EXPECT_FALSE(u.IsDepthTexture());
-    EXPECT_FALSE(u.IsStorageReadTexture());
-    EXPECT_TRUE(u.IsStorageWriteTexture());
+    EXPECT_FALSE(u.IsStorageReadOnlyTexture());
+    EXPECT_FALSE(u.IsStorageReadWriteTexture());
+    EXPECT_TRUE(u.IsStorageWriteOnlyTexture());
 
     ss << u;
     EXPECT_THAT(ss.str(), Eq("Usage(Texture( write ))"));
 
     auto copy(u);
+    u.AddStorageWriteTexture();
+    EXPECT_TRUE(u == copy);
+}
+
+TEST_F(SpirvASTParserTest, Usage_AddStorageReadWriteTexture) {
+    StringStream ss;
+    Usage u;
+    u.AddStorageReadTexture();
+    u.AddStorageWriteTexture();
+
+    EXPECT_TRUE(u.IsValid());
+    EXPECT_TRUE(u.IsComplete());
+    EXPECT_FALSE(u.IsSampler());
+    EXPECT_FALSE(u.IsComparisonSampler());
+    EXPECT_TRUE(u.IsTexture());
+    EXPECT_FALSE(u.IsSampledTexture());
+    EXPECT_FALSE(u.IsMultisampledTexture());
+    EXPECT_FALSE(u.IsDepthTexture());
+    EXPECT_FALSE(u.IsStorageReadOnlyTexture());
+    EXPECT_TRUE(u.IsStorageReadWriteTexture());
+    EXPECT_FALSE(u.IsStorageWriteOnlyTexture());
+
+    ss << u;
+    EXPECT_THAT(ss.str(), Eq("Usage(Texture( read write ))"));
+
+    auto copy(u);
+    u.AddStorageReadTexture();
     u.AddStorageWriteTexture();
     EXPECT_TRUE(u == copy);
 }

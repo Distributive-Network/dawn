@@ -1,38 +1,36 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/wire/server/Server.h"
 
+#include "dawn/wire/Wire.h"
+#include "dawn/wire/WireResult.h"
+
 namespace dawn::wire::server {
-
-namespace {
-
-template <ObjectType objectType, typename Pipeline>
-void HandleCreatePipelineAsyncCallback(KnownObjects<Pipeline>* knownObjects,
-                                       WGPUCreatePipelineAsyncStatus status,
-                                       Pipeline pipeline,
-                                       CreatePipelineAsyncUserData* data) {
-    if (status == WGPUCreatePipelineAsyncStatus_Success) {
-        knownObjects->FillReservation(data->pipelineObjectID, pipeline);
-    } else {
-        // Otherwise, free the ObjectId which will make it unusable.
-        knownObjects->Free(data->pipelineObjectID);
-        ASSERT(pipeline == nullptr);
-    }
-}
-
-}  // anonymous namespace
 
 void Server::OnUncapturedError(ObjectHandle device, WGPUErrorType type, const char* message) {
     ReturnDeviceUncapturedErrorCallbackCmd cmd;
@@ -43,9 +41,13 @@ void Server::OnUncapturedError(ObjectHandle device, WGPUErrorType type, const ch
     SerializeCommand(cmd);
 }
 
-void Server::OnDeviceLost(ObjectHandle device, WGPUDeviceLostReason reason, const char* message) {
+void Server::OnDeviceLost(DeviceLostUserdata* userdata,
+                          WGPUDevice const* device,
+                          WGPUDeviceLostReason reason,
+                          const char* message) {
     ReturnDeviceLostCallbackCmd cmd;
-    cmd.device = device;
+    cmd.eventManager = userdata->eventManager;
+    cmd.future = userdata->future;
     cmd.reason = reason;
     cmd.message = message;
 
@@ -61,22 +63,27 @@ void Server::OnLogging(ObjectHandle device, WGPULoggingType type, const char* me
     SerializeCommand(cmd);
 }
 
-WireResult Server::DoDevicePopErrorScope(Known<WGPUDevice> device, uint64_t requestSerial) {
+WireResult Server::DoDevicePopErrorScope(Known<WGPUDevice> device,
+                                         ObjectHandle eventManager,
+                                         WGPUFuture future) {
     auto userdata = MakeUserdata<ErrorScopeUserdata>();
-    userdata->requestSerial = requestSerial;
     userdata->device = device.AsHandle();
+    userdata->eventManager = eventManager;
+    userdata->future = future;
 
-    mProcs.devicePopErrorScope(device->handle, ForwardToServer<&Server::OnDevicePopErrorScope>,
-                               userdata.release());
+    mProcs.devicePopErrorScope2(device->handle, {nullptr, WGPUCallbackMode_AllowProcessEvents,
+                                                 ForwardToServer2<&Server::OnDevicePopErrorScope>,
+                                                 userdata.release(), nullptr});
     return WireResult::Success;
 }
 
 void Server::OnDevicePopErrorScope(ErrorScopeUserdata* userdata,
+                                   WGPUPopErrorScopeStatus status,
                                    WGPUErrorType type,
                                    const char* message) {
     ReturnDevicePopErrorScopeCallbackCmd cmd;
-    cmd.device = userdata->device;
-    cmd.requestSerial = userdata->requestSerial;
+    cmd.eventManager = userdata->eventManager;
+    cmd.future = userdata->future;
     cmd.type = type;
     cmd.message = message;
 
@@ -85,21 +92,25 @@ void Server::OnDevicePopErrorScope(ErrorScopeUserdata* userdata,
 
 WireResult Server::DoDeviceCreateComputePipelineAsync(
     Known<WGPUDevice> device,
-    uint64_t requestSerial,
+    ObjectHandle eventManager,
+    WGPUFuture future,
     ObjectHandle pipelineObjectHandle,
     const WGPUComputePipelineDescriptor* descriptor) {
-    Known<WGPUComputePipeline> pipeline;
-    WIRE_TRY(ComputePipelineObjects().Allocate(&pipeline, pipelineObjectHandle,
-                                               AllocationState::Reserved));
+    Reserved<WGPUComputePipeline> pipeline;
+    WIRE_TRY(Objects<WGPUComputePipeline>().Allocate(&pipeline, pipelineObjectHandle,
+                                                     AllocationState::Reserved));
 
     auto userdata = MakeUserdata<CreatePipelineAsyncUserData>();
     userdata->device = device.AsHandle();
-    userdata->requestSerial = requestSerial;
+    userdata->eventManager = eventManager;
+    userdata->future = future;
     userdata->pipelineObjectID = pipeline.id;
 
-    mProcs.deviceCreateComputePipelineAsync(
-        device->handle, descriptor, ForwardToServer<&Server::OnCreateComputePipelineAsyncCallback>,
-        userdata.release());
+    mProcs.deviceCreateComputePipelineAsync2(
+        device->handle, descriptor,
+        {nullptr, WGPUCallbackMode_AllowProcessEvents,
+         ForwardToServer2<&Server::OnCreateComputePipelineAsyncCallback>, userdata.release(),
+         nullptr});
     return WireResult::Success;
 }
 
@@ -107,35 +118,41 @@ void Server::OnCreateComputePipelineAsyncCallback(CreatePipelineAsyncUserData* d
                                                   WGPUCreatePipelineAsyncStatus status,
                                                   WGPUComputePipeline pipeline,
                                                   const char* message) {
-    HandleCreatePipelineAsyncCallback<ObjectType::ComputePipeline>(&ComputePipelineObjects(),
-                                                                   status, pipeline, data);
-
     ReturnDeviceCreateComputePipelineAsyncCallbackCmd cmd;
-    cmd.device = data->device;
+    cmd.eventManager = data->eventManager;
+    cmd.future = data->future;
     cmd.status = status;
-    cmd.requestSerial = data->requestSerial;
     cmd.message = message;
 
+    if (status == WGPUCreatePipelineAsyncStatus_Success &&
+        FillReservation(data->pipelineObjectID, pipeline) == WireResult::FatalError) {
+        cmd.status = WGPUCreatePipelineAsyncStatus_Unknown;
+        cmd.message = "Destroyed before request was fulfilled.";
+    }
     SerializeCommand(cmd);
 }
 
 WireResult Server::DoDeviceCreateRenderPipelineAsync(
     Known<WGPUDevice> device,
-    uint64_t requestSerial,
+    ObjectHandle eventManager,
+    WGPUFuture future,
     ObjectHandle pipelineObjectHandle,
     const WGPURenderPipelineDescriptor* descriptor) {
-    Known<WGPURenderPipeline> pipeline;
-    WIRE_TRY(RenderPipelineObjects().Allocate(&pipeline, pipelineObjectHandle,
-                                              AllocationState::Reserved));
+    Reserved<WGPURenderPipeline> pipeline;
+    WIRE_TRY(Objects<WGPURenderPipeline>().Allocate(&pipeline, pipelineObjectHandle,
+                                                    AllocationState::Reserved));
 
     auto userdata = MakeUserdata<CreatePipelineAsyncUserData>();
     userdata->device = device.AsHandle();
-    userdata->requestSerial = requestSerial;
+    userdata->eventManager = eventManager;
+    userdata->future = future;
     userdata->pipelineObjectID = pipeline.id;
 
-    mProcs.deviceCreateRenderPipelineAsync(
-        device->handle, descriptor, ForwardToServer<&Server::OnCreateRenderPipelineAsyncCallback>,
-        userdata.release());
+    mProcs.deviceCreateRenderPipelineAsync2(
+        device->handle, descriptor,
+        {nullptr, WGPUCallbackMode_AllowProcessEvents,
+         ForwardToServer2<&Server::OnCreateRenderPipelineAsyncCallback>, userdata.release(),
+         nullptr});
     return WireResult::Success;
 }
 
@@ -143,15 +160,17 @@ void Server::OnCreateRenderPipelineAsyncCallback(CreatePipelineAsyncUserData* da
                                                  WGPUCreatePipelineAsyncStatus status,
                                                  WGPURenderPipeline pipeline,
                                                  const char* message) {
-    HandleCreatePipelineAsyncCallback<ObjectType::RenderPipeline>(&RenderPipelineObjects(), status,
-                                                                  pipeline, data);
-
     ReturnDeviceCreateRenderPipelineAsyncCallbackCmd cmd;
-    cmd.device = data->device;
+    cmd.eventManager = data->eventManager;
+    cmd.future = data->future;
     cmd.status = status;
-    cmd.requestSerial = data->requestSerial;
     cmd.message = message;
 
+    if (status == WGPUCreatePipelineAsyncStatus_Success &&
+        FillReservation(data->pipelineObjectID, pipeline) == WireResult::FatalError) {
+        cmd.status = WGPUCreatePipelineAsyncStatus_Unknown;
+        cmd.message = "Destroyed before request was fulfilled.";
+    }
     SerializeCommand(cmd);
 }
 

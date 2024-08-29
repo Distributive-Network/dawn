@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/utils/diagnostic/formatter.h"
 
@@ -20,13 +33,16 @@
 #include <vector>
 
 #include "src/tint/utils/diagnostic/diagnostic.h"
-#include "src/tint/utils/diagnostic/printer.h"
+#include "src/tint/utils/macros/defer.h"
 #include "src/tint/utils/text/string_stream.h"
+#include "src/tint/utils/text/styled_text.h"
+#include "src/tint/utils/text/styled_text_printer.h"
+#include "src/tint/utils/text/text_style.h"
 
 namespace tint::diag {
 namespace {
 
-const char* to_str(Severity severity) {
+const char* ToString(Severity severity) {
     switch (severity) {
         case Severity::Note:
             return "note";
@@ -34,15 +50,11 @@ const char* to_str(Severity severity) {
             return "warning";
         case Severity::Error:
             return "error";
-        case Severity::InternalCompilerError:
-            return "internal compiler error";
-        case Severity::Fatal:
-            return "fatal";
     }
     return "";
 }
 
-std::string to_str(const Source::Location& location) {
+std::string ToString(const Source::Location& location) {
     StringStream ss;
     if (location.line > 0) {
         ss << location.line;
@@ -55,142 +67,80 @@ std::string to_str(const Source::Location& location) {
 
 }  // namespace
 
-/// State holds the internal formatter state for a format() call.
-struct Formatter::State {
-    /// Constructs a State associated with the given printer.
-    /// @param p the printer to write formatted messages to.
-    explicit State(Printer* p) : printer(p) {}
-    ~State() { flush(); }
-
-    /// set_style() sets the current style to new_style, flushing any pending
-    /// messages to the printer if the style changed.
-    /// @param new_style the new style to apply for future written messages.
-    void set_style(const diag::Style& new_style) {
-        if (style.color != new_style.color || style.bold != new_style.bold) {
-            flush();
-            style = new_style;
-        }
-    }
-
-    /// flush writes any pending messages to the printer, clearing the buffer.
-    void flush() {
-        auto str = stream.str();
-        if (str.length() > 0) {
-            printer->write(str, style);
-            StringStream reset;
-            stream.swap(reset);
-        }
-    }
-
-    /// operator<< queues msg to be written to the printer.
-    /// @param msg the value or string to write to the printer
-    /// @returns this State so that calls can be chained
-    template <typename T>
-    State& operator<<(T&& msg) {
-        stream << std::forward<T>(msg);
-        return *this;
-    }
-
-    /// newline queues a newline to be written to the printer.
-    void newline() { stream << std::endl; }
-
-    /// repeat queues the character c to be written to the printer n times.
-    /// @param c the character to print `n` times
-    /// @param n the number of times to print character `c`
-    void repeat(char c, size_t n) { stream.repeat(c, n); }
-
-  private:
-    Printer* printer;
-    diag::Style style;
-    StringStream stream;
-};
-
 Formatter::Formatter() {}
 Formatter::Formatter(const Style& style) : style_(style) {}
 
-void Formatter::format(const List& list, Printer* printer) const {
-    State state{printer};
+StyledText Formatter::Format(const List& list) const {
+    StyledText text;
 
     bool first = true;
     for (auto diag : list) {
-        state.set_style({});
         if (!first) {
-            state.newline();
+            text << "\n";
         }
-        format(diag, state);
+        Format(diag, text);
         first = false;
     }
 
     if (style_.print_newline_at_end) {
-        state.newline();
+        text << "\n";
     }
+
+    return text;
 }
 
-void Formatter::format(const Diagnostic& diag, State& state) const {
+void Formatter::Format(const Diagnostic& diag, StyledText& text) const {
     auto const& src = diag.source;
     auto const& rng = src.range;
-    bool has_code = diag.code != nullptr && diag.code[0] != '\0';
 
-    state.set_style({Color::kDefault, true});
+    text << style::Plain;
+    TINT_DEFER(text << style::Plain);
 
-    struct TextAndColor {
+    struct TextAndStyle {
         std::string text;
-        Color color;
-        bool bold = false;
+        TextStyle style = {};
     };
-    std::vector<TextAndColor> prefix;
-    prefix.reserve(6);
+    Vector<TextAndStyle, 6> prefix;
 
     if (style_.print_file && src.file != nullptr) {
         if (rng.begin.line > 0) {
-            prefix.emplace_back(
-                TextAndColor{src.file->path + ":" + to_str(rng.begin), Color::kDefault});
+            prefix.Push(TextAndStyle{src.file->path + ":" + ToString(rng.begin)});
         } else {
-            prefix.emplace_back(TextAndColor{src.file->path, Color::kDefault});
+            prefix.Push(TextAndStyle{src.file->path});
         }
     } else if (rng.begin.line > 0) {
-        prefix.emplace_back(TextAndColor{to_str(rng.begin), Color::kDefault});
+        prefix.Push(TextAndStyle{ToString(rng.begin)});
     }
 
-    Color severity_color = Color::kDefault;
-    switch (diag.severity) {
-        case Severity::Note:
-            break;
-        case Severity::Warning:
-            severity_color = Color::kYellow;
-            break;
-        case Severity::Error:
-            severity_color = Color::kRed;
-            break;
-        case Severity::Fatal:
-        case Severity::InternalCompilerError:
-            severity_color = Color::kMagenta;
-            break;
-    }
     if (style_.print_severity) {
-        prefix.emplace_back(TextAndColor{to_str(diag.severity), severity_color, true});
-    }
-    if (has_code) {
-        prefix.emplace_back(TextAndColor{diag.code, severity_color});
-    }
-
-    for (size_t i = 0; i < prefix.size(); i++) {
-        if (i > 0) {
-            state << " ";
+        TextStyle style;
+        switch (diag.severity) {
+            case Severity::Note:
+                break;
+            case Severity::Warning:
+                style = style::Warning + style::Bold;
+                break;
+            case Severity::Error:
+                style = style::Error + style::Bold;
+                break;
         }
-        state.set_style({prefix[i].color, prefix[i].bold});
-        state << prefix[i].text;
+        prefix.Push(TextAndStyle{ToString(diag.severity), style});
     }
 
-    state.set_style({Color::kDefault, true});
-    if (!prefix.empty()) {
-        state << ": ";
+    for (size_t i = 0; i < prefix.Length(); i++) {
+        if (i > 0) {
+            text << " ";
+        }
+        text << prefix[i].style << prefix[i].text;
     }
-    state << diag.message;
+
+    if (!prefix.IsEmpty()) {
+        text << style::Plain(": ");
+    }
+    text << style::Bold << diag.message;
 
     if (style_.print_line && src.file && rng.begin.line > 0) {
-        state.newline();
-        state.set_style({Color::kDefault, false});
+        text << style::Plain("\n");
 
         for (size_t line_num = rng.begin.line;
              (line_num <= rng.end.line) && (line_num <= src.file->content.lines.size());
@@ -201,16 +151,16 @@ void Formatter::format(const Diagnostic& diag, State& state) const {
             bool is_ascii = true;
             for (auto c : line) {
                 if (c == '\t') {
-                    state.repeat(' ', style_.tab_width);
+                    text.Repeat(' ', style_.tab_width);
                 } else {
-                    state << c;
+                    text << c;
                 }
                 if (c & 0x80) {
                     is_ascii = false;
                 }
             }
 
-            state.newline();
+            text << style::Plain("\n");
 
             // If the line contains non-ascii characters, then we cannot assume that
             // a single utf8 code unit represents a single glyph, so don't attempt to
@@ -219,7 +169,7 @@ void Formatter::format(const Diagnostic& diag, State& state) const {
                 continue;
             }
 
-            state.set_style({Color::kCyan, false});
+            text << style::Squiggle;
 
             // Count the number of glyphs in the line span.
             // start and end use 1-based indexing.
@@ -235,31 +185,22 @@ void Formatter::format(const Diagnostic& diag, State& state) const {
 
             if (line_num == rng.begin.line && line_num == rng.end.line) {
                 // Single line
-                state.repeat(' ', num_glyphs(1, rng.begin.column));
-                state.repeat('^',
-                             std::max<size_t>(num_glyphs(rng.begin.column, rng.end.column), 1));
+                text.Repeat(' ', num_glyphs(1, rng.begin.column));
+                text.Repeat('^', std::max<size_t>(num_glyphs(rng.begin.column, rng.end.column), 1));
             } else if (line_num == rng.begin.line) {
                 // Start of multi-line
-                state.repeat(' ', num_glyphs(1, rng.begin.column));
-                state.repeat('^', num_glyphs(rng.begin.column, line_len + 1));
+                text.Repeat(' ', num_glyphs(1, rng.begin.column));
+                text.Repeat('^', num_glyphs(rng.begin.column, line_len + 1));
             } else if (line_num == rng.end.line) {
                 // End of multi-line
-                state.repeat('^', num_glyphs(1, rng.end.column));
+                text.Repeat('^', num_glyphs(1, rng.end.column));
             } else {
                 // Middle of multi-line
-                state.repeat('^', num_glyphs(1, line_len + 1));
+                text.Repeat('^', num_glyphs(1, line_len + 1));
             }
-            state.newline();
+            text << style::Plain("\n");
         }
-
-        state.set_style({});
     }
-}
-
-std::string Formatter::format(const List& list) const {
-    StringPrinter printer;
-    format(list, &printer);
-    return printer.str();
 }
 
 Formatter::~Formatter() = default;

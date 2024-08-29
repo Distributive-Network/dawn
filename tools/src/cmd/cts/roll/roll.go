@@ -1,25 +1,40 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 package roll
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +45,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	commonAuth "dawn.googlesource.com/dawn/tools/src/auth"
 	"dawn.googlesource.com/dawn/tools/src/buildbucket"
 	"dawn.googlesource.com/dawn/tools/src/cmd/cts/common"
 	"dawn.googlesource.com/dawn/tools/src/container"
@@ -40,9 +56,11 @@ import (
 	"dawn.googlesource.com/dawn/tools/src/gerrit"
 	"dawn.googlesource.com/dawn/tools/src/git"
 	"dawn.googlesource.com/dawn/tools/src/gitiles"
+	"dawn.googlesource.com/dawn/tools/src/glob"
 	"dawn.googlesource.com/dawn/tools/src/resultsdb"
 	"go.chromium.org/luci/auth"
 	"go.chromium.org/luci/auth/client/authcli"
+	"google.golang.org/api/sheets/v4"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -52,26 +70,28 @@ func init() {
 }
 
 const (
-	depsRelPath          = "DEPS"
-	gitLinkPath          = "third_party/webgpu-cts"
-	tsSourcesRelPath     = "third_party/gn/webgpu-cts/ts_sources.txt"
-	testListRelPath      = "third_party/gn/webgpu-cts/test_list.txt"
-	cacheListRelPath     = "third_party/gn/webgpu-cts/cache_list.txt"
-	resourceFilesRelPath = "third_party/gn/webgpu-cts/resource_files.txt"
-	webTestsPath         = "webgpu-cts/webtests"
-	refMain              = "refs/heads/main"
-	noExpectations       = `# Clear all expectations to obtain full list of results`
+	depsRelPath    = "DEPS"
+	gitLinkPath    = "third_party/webgpu-cts"
+	webTestsPath   = "webgpu-cts/webtests"
+	refMain        = "refs/heads/main"
+	noExpectations = `# Clear all expectations to obtain full list of results`
 )
 
 type rollerFlags struct {
-	gitPath  string
-	npmPath  string
-	nodePath string
-	auth     authcli.Flags
-	cacheDir string
-	force    bool // Create a new roll, even if CTS is up to date
-	rebuild  bool // Rebuild the expectations file from scratch
-	preserve bool // If false, abandon past roll changes
+	gitPath             string
+	npmPath             string
+	nodePath            string
+	auth                authcli.Flags
+	cacheDir            string
+	ctsGitURL           string
+	ctsRevision         string
+	force               bool // Create a new roll, even if CTS is up to date
+	rebuild             bool // Rebuild the expectations file from scratch
+	preserve            bool // If false, abandon past roll changes
+	sendToGardener      bool // If true, automatically send to the gardener for review
+	verbose             bool
+	parentSwarmingRunID string
+	maxAttempts         int
 }
 
 type cmd struct {
@@ -89,16 +109,20 @@ func (cmd) Desc() string {
 func (c *cmd) RegisterFlags(ctx context.Context, cfg common.Config) ([]string, error) {
 	gitPath, _ := exec.LookPath("git")
 	npmPath, _ := exec.LookPath("npm")
-	nodePath, _ := exec.LookPath("node")
-	c.flags.auth.Register(flag.CommandLine, common.DefaultAuthOptions())
+	c.flags.auth.Register(flag.CommandLine, commonAuth.DefaultAuthOptions(sheets.SpreadsheetsScope))
 	flag.StringVar(&c.flags.gitPath, "git", gitPath, "path to git")
 	flag.StringVar(&c.flags.npmPath, "npm", npmPath, "path to npm")
-	flag.StringVar(&c.flags.nodePath, "node", nodePath, "path to node")
+	flag.StringVar(&c.flags.nodePath, "node", fileutils.NodePath(), "path to node")
 	flag.StringVar(&c.flags.cacheDir, "cache", common.DefaultCacheDir, "path to the results cache")
+	flag.StringVar(&c.flags.ctsGitURL, "repo", cfg.Git.CTS.HttpsURL(), "the CTS source repo")
+	flag.StringVar(&c.flags.ctsRevision, "revision", refMain, "revision of the CTS to roll")
 	flag.BoolVar(&c.flags.force, "force", false, "create a new roll, even if CTS is up to date")
 	flag.BoolVar(&c.flags.rebuild, "rebuild", false, "rebuild the expectation file from scratch")
 	flag.BoolVar(&c.flags.preserve, "preserve", false, "do not abandon existing rolls")
-
+	flag.BoolVar(&c.flags.sendToGardener, "send-to-gardener", false, "send the CL to the WebGPU gardener for review")
+	flag.BoolVar(&c.flags.verbose, "verbose", false, "emit additional logging")
+	flag.StringVar(&c.flags.parentSwarmingRunID, "parent-swarming-run-id", "", "parent swarming run id. All triggered tasks will be children of this task and will be canceled if the parent is canceled.")
+	flag.IntVar(&c.flags.maxAttempts, "max-attempts", 3, "number of update attempts before giving up")
 	return nil, nil
 }
 
@@ -135,11 +159,7 @@ func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to obtain authentication options: %w", err)
 	}
-	gerrit, err := gerrit.New(cfg.Gerrit.Host, gerrit.Credentials{})
-	if err != nil {
-		return err
-	}
-	chromium, err := gitiles.New(ctx, cfg.Git.CTS.Host, cfg.Git.CTS.Project)
+	gerrit, err := gerrit.New(ctx, auth, cfg.Gerrit.Host)
 	if err != nil {
 		return err
 	}
@@ -151,49 +171,66 @@ func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
 	if err != nil {
 		return err
 	}
-	rdb, err := resultsdb.New(ctx, auth)
+	client, err := resultsdb.NewBigQueryClient(ctx, resultsdb.DefaultQueryProject)
 	if err != nil {
 		return err
 	}
 
 	// Construct the roller, and roll
 	r := roller{
-		cfg:      cfg,
-		flags:    c.flags,
-		auth:     auth,
-		bb:       bb,
-		rdb:      rdb,
-		git:      git,
-		gerrit:   gerrit,
-		chromium: chromium,
-		dawn:     dawn,
-		ctsDir:   ctsDir,
+		cfg:                 cfg,
+		flags:               c.flags,
+		auth:                auth,
+		bb:                  bb,
+		parentSwarmingRunID: c.flags.parentSwarmingRunID,
+		client:              client,
+		git:                 git,
+		gerrit:              gerrit,
+		gitiles:             gitilesRepos{dawn: dawn},
+		ctsDir:              ctsDir,
 	}
 	return r.roll(ctx)
 }
 
+type gitilesRepos struct {
+	dawn *gitiles.Gitiles
+}
+
 type roller struct {
-	cfg      common.Config
-	flags    rollerFlags
-	auth     auth.Options
-	bb       *buildbucket.Buildbucket
-	rdb      *resultsdb.ResultsDB
-	git      *git.Git
-	gerrit   *gerrit.Gerrit
-	chromium *gitiles.Gitiles
-	dawn     *gitiles.Gitiles
-	ctsDir   string
+	cfg                 common.Config
+	flags               rollerFlags
+	auth                auth.Options
+	bb                  *buildbucket.Buildbucket
+	parentSwarmingRunID string
+	client              *resultsdb.BigQueryClient
+	git                 *git.Git
+	gerrit              *gerrit.Gerrit
+	gitiles             gitilesRepos
+	ctsDir              string
 }
 
 func (r *roller) roll(ctx context.Context) error {
 	// Fetch the latest Dawn main revision
-	dawnHash, err := r.dawn.Hash(ctx, refMain)
+	dawnHash, err := r.gitiles.dawn.Hash(ctx, refMain)
 	if err != nil {
 		return err
 	}
 
+	// Checkout the CTS at the latest revision
+	ctsRepo, err := r.checkout("cts", r.ctsDir, r.flags.ctsGitURL, r.flags.ctsRevision)
+	if err != nil {
+		return err
+	}
+
+	// Obtain the target CTS revision hash
+	ctsRevisionLog, err := ctsRepo.Log(&git.LogOptions{From: r.flags.ctsRevision + "^", To: r.flags.ctsRevision})
+	if err != nil {
+		return err
+	}
+	newCTSHash := ctsRevisionLog[0].Hash.String()
+
 	// Update the DEPS file
-	updatedDEPS, newCTSHash, oldCTSHash, err := r.updateDEPS(ctx, dawnHash)
+	updatedDEPS, oldCTSHash, err := r.updateDEPS(ctx, dawnHash, newCTSHash)
 	if err != nil {
 		return err
 	}
@@ -205,12 +242,6 @@ func (r *roller) roll(ctx context.Context) error {
 
 	log.Printf("starting CTS roll from %v to %v...", oldCTSHash[:8], newCTSHash[:8])
 
-	// Checkout the CTS at the latest revision
-	ctsRepo, err := r.checkout("cts", r.ctsDir, r.cfg.Git.CTS.HttpsURL(), newCTSHash)
-	if err != nil {
-		return err
-	}
-
 	// Fetch the log of changes between last roll and now
 	ctsLog, err := ctsRepo.Log(&git.LogOptions{From: oldCTSHash, To: newCTSHash})
 	if err != nil {
@@ -218,30 +249,52 @@ func (r *roller) roll(ctx context.Context) error {
 	}
 	ctsLog = ctsLog[:len(ctsLog)-1] // Don't include the oldest change in the log
 
-	// Download and parse the expectations file
-	expectationsFile, err := r.dawn.DownloadFile(ctx, refMain, common.RelativeExpectationsPath)
-	if err != nil {
-		return err
-	}
-	ex, err := expectations.Parse(common.RelativeExpectationsPath, expectationsFile)
-	if err != nil {
-		return fmt.Errorf("failed to load expectations: %v", err)
+	type ExpectationsFileInfo struct {
+		path            string
+		expectations    expectations.Content
+		newExpectations expectations.Content
+		executionMode   result.ExecutionMode
+		results         result.List
 	}
 
-	// If the user requested a full rebuild of the expecations, strip out
-	// everything but comment chunks.
-	if r.flags.rebuild {
-		rebuilt := ex.Clone()
-		rebuilt.Chunks = rebuilt.Chunks[:0]
-		for _, c := range ex.Chunks {
-			switch {
-			case c.IsBlankLine():
-				rebuilt.MaybeAddBlankLine()
-			case c.IsCommentOnly():
-				rebuilt.Chunks = append(rebuilt.Chunks, c)
-			}
+	var exInfos = []*ExpectationsFileInfo{
+		{
+			path:          common.RelativeExpectationsPath,
+			executionMode: "core",
+			results:       result.List{},
+		},
+		{
+			path:          common.RelativeCompatExpectationsPath,
+			executionMode: "compat",
+			results:       result.List{},
+		},
+	}
+
+	// Download and parse the expectations files
+	for _, exInfo := range exInfos {
+		expectationsFile, err := r.gitiles.dawn.DownloadFile(ctx, refMain, exInfo.path)
+		if err != nil {
+			return err
 		}
-		ex = rebuilt
+		ex, err := expectations.Parse(exInfo.path, expectationsFile)
+		if err != nil {
+			return fmt.Errorf("failed to load expectations: %v", err)
+		}
+
+		// If the user requested a full rebuild of the expectations, strip out
+		// everything but comment chunks.
+		if r.flags.rebuild {
+			rebuilt := ex.Clone()
+			rebuilt.Chunks = rebuilt.Chunks[:0]
+			for _, c := range ex.Chunks {
+				if c.IsCommentOnly() {
+					rebuilt.Chunks = append(rebuilt.Chunks, c)
+				}
+			}
+			ex = rebuilt
+		}
+
+		exInfo.expectations = ex
 	}
 
 	generatedFiles, err := r.generateFiles(ctx)
@@ -251,7 +304,7 @@ func (r *roller) roll(ctx context.Context) error {
 
 	// Pull out the test list from the generated files
 	testlist := func() []query.Query {
-		lines := strings.Split(generatedFiles[testListRelPath], "\n")
+		lines := strings.Split(generatedFiles[common.TestListRelPath], "\n")
 		list := make([]query.Query, len(lines))
 		for i, line := range lines {
 			list[i] = query.Parse(line)
@@ -260,7 +313,7 @@ func (r *roller) roll(ctx context.Context) error {
 	}()
 
 	deletedFiles := []string{}
-	if currentWebTestFiles, err := r.dawn.ListFiles(ctx, dawnHash, webTestsPath); err != nil {
+	if currentWebTestFiles, err := r.gitiles.dawn.ListFiles(ctx, dawnHash, webTestsPath); err != nil {
 		// If there's an error, allow NotFound. It means the directory did not exist, so no files
 		// need to be deleted.
 		if e, ok := status.FromError(err); !ok || e.Code() != codes.NotFound {
@@ -312,10 +365,12 @@ func (r *roller) roll(ctx context.Context) error {
 	}
 
 	// Update the DEPS, expectations, and other generated files.
-	updateExpectationUpdateTimestamp(&ex)
+	for _, exInfo := range exInfos {
+		updateExpectationUpdateTimestamp(&exInfo.expectations)
+		generatedFiles[exInfo.path] = exInfo.expectations.String()
+	}
 	generatedFiles[depsRelPath] = updatedDEPS
 	generatedFiles[gitLinkPath] = newCTSHash
-	generatedFiles[common.RelativeExpectationsPath] = ex.String()
 
 	msg := r.rollCommitMessage(oldCTSHash, newCTSHash, ctsLog, changeID)
 	ps, err := r.gerrit.EditFiles(changeID, msg, generatedFiles, deletedFiles)
@@ -323,13 +378,23 @@ func (r *roller) roll(ctx context.Context) error {
 		return fmt.Errorf("failed to update change '%v': %v", changeID, err)
 	}
 
+	var psResultsByExecutionMode result.ResultsByExecutionMode
+
+	defer func() {
+		// Export the results to the Google Sheets whether the roll succeeded or failed.
+		if psResultsByExecutionMode != nil {
+			log.Println("exporting results...")
+			if err := common.Export(ctx, r.auth, r.cfg.Sheets.ID, r.ctsDir, r.flags.nodePath, r.flags.npmPath, psResultsByExecutionMode); err != nil {
+				log.Println("failed to update results spreadsheet: ", err)
+			}
+		}
+	}()
+
 	// Begin main roll loop
-	const maxAttempts = 3
-	results := result.List{}
 	for attempt := 0; ; attempt++ {
 		// Kick builds
-		log.Printf("building (attempt %v)...\n", attempt)
-		builds, err := common.GetOrStartBuildsAndWait(ctx, r.cfg, ps, r.bb, false)
+		log.Printf("building (pass %v)...\n", attempt+1)
+		builds, err := common.GetOrStartBuildsAndWait(ctx, r.cfg, ps, r.bb, r.parentSwarmingRunID, false)
 		if err != nil {
 			return err
 		}
@@ -348,54 +413,83 @@ func (r *roller) roll(ctx context.Context) error {
 
 		// Gather the build results
 		log.Println("gathering results...")
-		psResults, err := common.CacheResults(ctx, r.cfg, ps, r.flags.cacheDir, r.rdb, builds)
+		psResultsByExecutionMode, err = common.CacheResults(ctx, r.cfg, ps, r.flags.cacheDir, r.client, builds)
 		if err != nil {
 			return err
 		}
 
-		// Merge the new results into the accumulated results
-		log.Println("merging results...")
-		results = result.Merge(results, psResults)
+		// If all the builds attempted, and we updated the expectations at least once, then we're done!
+		if attempt > 0 && len(failingBuilds) == 0 {
+			break
+		}
 
 		// Rebuild the expectations with the accumulated results
 		log.Println("building new expectations...")
-		// Note: The new expectations are not used if the last attempt didn't
-		// fail, but we always want to post the diagnostics
-		newExpectations := ex.Clone()
-		diags, err := newExpectations.Update(results, testlist)
-		if err != nil {
-			return err
-		}
+		for _, exInfo := range exInfos {
+			// Merge the new results into the accumulated results
+			log.Printf("merging results for %s ...\n", exInfo.executionMode)
+			exInfo.results = result.Merge(exInfo.results, psResultsByExecutionMode[exInfo.executionMode])
 
-		// Post statistics and expectation diagnostics
-		log.Println("posting stats & diagnostics...")
-		if err := r.postComments(ps, diags, results); err != nil {
-			return err
-		}
+			exInfo.newExpectations = exInfo.expectations.Clone()
+			diags, err := exInfo.newExpectations.Update(exInfo.results, testlist, r.flags.verbose)
+			if err != nil {
+				return err
+			}
 
-		// If all the builds attempted, then we're done!
-		if len(failingBuilds) == 0 {
-			break
+			// Post statistics and expectation diagnostics
+			log.Printf("posting stats & diagnostics for %s...\n", exInfo.executionMode)
+			if err := r.postComments(ps, exInfo.path, diags, exInfo.results); err != nil {
+				return err
+			}
 		}
 
 		// Otherwise, push the updated expectations, and try again
 		log.Println("updating expectations...")
-		updateExpectationUpdateTimestamp(&newExpectations)
-		ps, err = r.gerrit.EditFiles(changeID, msg, map[string]string{
-			common.RelativeExpectationsPath: newExpectations.String(),
-		}, nil)
+
+		editedFiles := map[string]string{}
+		for _, exInfo := range exInfos {
+			updateExpectationUpdateTimestamp(&exInfo.newExpectations)
+			editedFiles[exInfo.path] = exInfo.newExpectations.String()
+		}
+		ps, err = r.gerrit.EditFiles(changeID, msg, editedFiles, nil)
 		if err != nil {
 			return fmt.Errorf("failed to update change '%v': %v", changeID, err)
 		}
 
-		if attempt >= maxAttempts {
-			err := fmt.Errorf("CTS failed after %v attempts.\nGiving up", attempt)
+		if attempt >= r.flags.maxAttempts {
+			err := fmt.Errorf("CTS failed after %v retries.\nGiving up", attempt)
 			r.gerrit.Comment(ps, err.Error(), nil)
 			return err
 		}
 	}
 
-	if err := r.gerrit.SetReadyForReview(changeID, "CTS roll succeeded"); err != nil {
+	reviewer := ""
+	if r.flags.sendToGardener {
+		resp, err := http.Get("https://chrome-ops-rotation-proxy.appspot.com/current/grotation:webgpu-gardener")
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		jsonResponse, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
+		type StructuredJSONResponse struct {
+			Emails []string
+		}
+		var jsonRes StructuredJSONResponse
+		if err := json.Unmarshal(jsonResponse, &jsonRes); err != nil {
+			return err
+		}
+		if len(jsonRes.Emails) < 1 {
+			return fmt.Errorf("expected at least one email in JSON response %s", jsonRes)
+		}
+		reviewer = jsonRes.Emails[0]
+	}
+
+	if err := r.gerrit.SetReadyForReview(changeID, "CTS roll succeeded", reviewer); err != nil {
 		return fmt.Errorf("failed to mark change as ready for review: %v", err)
 	}
 
@@ -437,7 +531,14 @@ func (r *roller) rollCommitMessage(
 	ctsLog []git.CommitInfo,
 	changeID string) string {
 
+	isExternalRepo := r.flags.ctsGitURL != r.cfg.Git.CTS.HttpsURL()
+
 	msg := &strings.Builder{}
+	if isExternalRepo {
+		// note: intentionally split to fool the pre-submit checks!
+		msg.WriteString("[DO NOT")
+		msg.WriteString(" SUBMIT] ")
+	}
 	msg.WriteString(common.RollSubjectPrefix)
 	msg.WriteString(oldCTSHash[:9])
 	msg.WriteString("..")
@@ -450,11 +551,16 @@ func (r *roller) rollCommitMessage(
 		msg.WriteString(" commits)")
 	}
 	msg.WriteString("\n\n")
+	if isExternalRepo {
+		msg.WriteString("Rolled from external repo: ")
+		msg.WriteString(r.flags.ctsGitURL)
+		msg.WriteString("\n\n")
+	}
 	msg.WriteString("Regenerated:\n")
 	msg.WriteString(" - expectations.txt\n")
+	msg.WriteString(" - compat-expectations.txt\n")
 	msg.WriteString(" - ts_sources.txt\n")
 	msg.WriteString(" - test_list.txt\n")
-	msg.WriteString(" - cache_list.txt\n")
 	msg.WriteString(" - resource_files.txt\n")
 	msg.WriteString(" - webtest .html files\n")
 	msg.WriteString("\n\n")
@@ -497,15 +603,19 @@ func (r *roller) rollCommitMessage(
 		msg.WriteString("\n")
 	}
 	msg.WriteString("Include-Ci-Only-Tests: true\n")
+	if isExternalRepo {
+		msg.WriteString("Commit: false\n")
+	}
 	if changeID != "" {
 		msg.WriteString("Change-Id: ")
 		msg.WriteString(changeID)
 		msg.WriteString("\n")
 	}
+
 	return msg.String()
 }
 
-func (r *roller) postComments(ps gerrit.Patchset, diags []expectations.Diagnostic, results result.List) error {
+func (r *roller) postComments(ps gerrit.Patchset, path string, diags []expectations.Diagnostic, results result.List) error {
 	fc := make([]gerrit.FileComment, len(diags))
 	for i, d := range diags {
 		var prefix string
@@ -518,7 +628,7 @@ func (r *roller) postComments(ps gerrit.Patchset, diags []expectations.Diagnosti
 			prefix = "🟦"
 		}
 		fc[i] = gerrit.FileComment{
-			Path:    common.RelativeExpectationsPath,
+			Path:    path,
 			Side:    gerrit.Left,
 			Line:    d.Line,
 			Message: fmt.Sprintf("%v %v: %v", prefix, d.Severity, d.Message),
@@ -564,7 +674,7 @@ func (r *roller) postComments(ps gerrit.Patchset, diags []expectations.Diagnosti
 		}
 		sb.WriteString("```\n")
 		for i, r := range topN {
-			fmt.Fprintf(sb, "%3.1d: %v\n", i, r)
+			fmt.Fprintf(sb, "%3.1d: %v\n", i+1, r)
 		}
 		sb.WriteString("```\n")
 	}
@@ -611,19 +721,12 @@ func (r *roller) checkout(project, dir, host, hash string) (*git.Repository, err
 // file path to file content for the CTS roll's change. This includes:
 // * type-script source files
 // * CTS test list
-// * CTS cache list
 // * resource file list
 // * webtest file sources
 func (r *roller) generateFiles(ctx context.Context) (map[string]string, error) {
 	// Run 'npm ci' to fetch modules and tsc
-	{
-		log.Printf("fetching npm modules with 'npm ci'...")
-		cmd := exec.CommandContext(ctx, r.flags.npmPath, "ci")
-		cmd.Dir = r.ctsDir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("failed to run 'npm ci': %w\n%v", err, string(out))
-		}
+	if err := common.InstallCTSDeps(ctx, r.ctsDir, r.flags.npmPath); err != nil {
+		return nil, err
 	}
 
 	log.Printf("generating files for changelist...")
@@ -652,10 +755,9 @@ func (r *roller) generateFiles(ctx context.Context) (map[string]string, error) {
 
 	// Generate typescript sources list, test list, resources file list.
 	for relPath, generator := range map[string]func(context.Context) (string, error){
-		tsSourcesRelPath:     r.genTSDepList,
-		testListRelPath:      r.genTestList,
-		cacheListRelPath:     r.genCacheList,
-		resourceFilesRelPath: r.genResourceFilesList,
+		common.TsSourcesRelPath:     r.genTSDepList,
+		common.TestListRelPath:      r.genTestList,
+		common.ResourceFilesRelPath: r.genResourceFilesList,
 	} {
 		relPath, generator := relPath, generator // Capture values, not iterators
 		wg.Add(1)
@@ -683,23 +785,18 @@ func (r *roller) generateFiles(ctx context.Context) (map[string]string, error) {
 	return files, nil
 }
 
-// updateDEPS fetches and updates the Dawn DEPS file at 'dawnRef' so that all
-// CTS hashes are changed to the latest CTS hash.
-func (r *roller) updateDEPS(ctx context.Context, dawnRef string) (newDEPS, newCTSHash, oldCTSHash string, err error) {
-	newCTSHash, err = r.chromium.Hash(ctx, refMain)
+// updateDEPS fetches and updates the Dawn DEPS file at 'dawnRef' so that all CTS hashes are changed to newCTSHash
+func (r *roller) updateDEPS(ctx context.Context, dawnRef, newCTSHash string) (newDEPS, oldCTSHash string, err error) {
+	deps, err := r.gitiles.dawn.DownloadFile(ctx, dawnRef, depsRelPath)
 	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
-	deps, err := r.dawn.DownloadFile(ctx, dawnRef, depsRelPath)
+	newDEPS, oldCTSHash, err = common.UpdateCTSHashInDeps(deps, r.flags.ctsGitURL, newCTSHash)
 	if err != nil {
-		return "", "", "", err
-	}
-	newDEPS, oldCTSHash, err = common.UpdateCTSHashInDeps(deps, newCTSHash)
-	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 
-	return newDEPS, newCTSHash, oldCTSHash, nil
+	return newDEPS, oldCTSHash, nil
 }
 
 // genTSDepList returns a list of source files, for the CTS checkout at r.ctsDir
@@ -738,76 +835,14 @@ func (r *roller) genTSDepList(ctx context.Context) (string, error) {
 
 // genTestList returns the newline delimited list of test names, for the CTS checkout at r.ctsDir
 func (r *roller) genTestList(ctx context.Context) (string, error) {
-	// Run 'src/common/runtime/cmdline.ts' to obtain the full test list
-	cmd := exec.CommandContext(ctx, r.flags.nodePath,
-		"-e", "require('./src/common/tools/setup-ts-in-node.js');require('./src/common/runtime/cmdline.ts');",
-		"--", // Start of arguments
-		// src/common/runtime/helper/sys.ts expects 'node file.js <args>'
-		// and slices away the first two arguments. When running with '-e', args
-		// start at 1, so just inject a placeholder argument.
-		"placeholder-arg",
-		"--list",
-		"webgpu:*",
-	)
-	cmd.Dir = r.ctsDir
-
-	stderr := bytes.Buffer{}
-	cmd.Stderr = &stderr
-
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to generate test list: %w\n%v", err, stderr.String())
-	}
-
-	tests := []string{}
-	for _, test := range strings.Split(string(out), "\n") {
-		if test != "" {
-			tests = append(tests, test)
-		}
-	}
-
-	return strings.Join(tests, "\n"), nil
-}
-
-// genCacheList returns the file list of cached data
-func (r *roller) genCacheList(ctx context.Context) (string, error) {
-	// Run 'src/common/runtime/cmdline.ts' to obtain the full test list
-	cmd := exec.CommandContext(ctx, r.flags.nodePath,
-		"-e", "require('./src/common/tools/setup-ts-in-node.js');require('./src/common/tools/gen_cache.ts');",
-		"--", // Start of arguments
-		// src/common/runtime/helper/sys.ts expects 'node file.js <args>'
-		// and slices away the first two arguments. When running with '-e', args
-		// start at 1, so just inject a placeholder argument.
-		"placeholder-arg",
-		".",
-		"src/webgpu",
-		"--list",
-	)
-	cmd.Dir = r.ctsDir
-
-	stderr := bytes.Buffer{}
-	cmd.Stderr = &stderr
-
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to generate cache list: %w\n%v", err, stderr.String())
-	}
-
-	files := []string{}
-	for _, file := range strings.Split(string(out), "\n") {
-		if file != "" {
-			files = append(files, strings.TrimPrefix(file, "./"))
-		}
-	}
-
-	return strings.Join(files, "\n") + "\n", nil
+	return common.GenTestList(ctx, r.ctsDir, r.flags.nodePath)
 }
 
 // genResourceFilesList returns a list of resource files, for the CTS checkout at r.ctsDir
 // This list can be used to populate the resource_files.txt file.
 func (r *roller) genResourceFilesList(ctx context.Context) (string, error) {
 	dir := filepath.Join(r.ctsDir, "src", "resources")
-	files, err := filepath.Glob(filepath.Join(dir, "*"))
+	files, err := glob.Glob(filepath.Join(dir, "**"))
 	if err != nil {
 		return "", err
 	}

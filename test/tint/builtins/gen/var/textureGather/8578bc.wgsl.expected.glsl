@@ -4,10 +4,15 @@ SKIP: FAILED
 
 uniform highp samplerCubeArray arg_1_arg_2;
 
+layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
+  vec4 inner;
+} prevent_dce;
+
 void textureGather_8578bc() {
   vec3 arg_3 = vec3(1.0f);
   uint arg_4 = 1u;
   vec4 res = textureGather(arg_1_arg_2, vec4(arg_3, float(arg_4)), int(1u));
+  prevent_dce.inner = res;
 }
 
 vec4 vertex_main() {
@@ -23,7 +28,7 @@ void main() {
   gl_Position.z = ((2.0f * gl_Position.z) - gl_Position.w);
   return;
 }
-Error parsing GLSL shader:
+error: Error parsing GLSL shader:
 ERROR: 0:3: 'samplerCubeArray' : Reserved word. 
 ERROR: 0:3: '' : compilation terminated 
 ERROR: 2 compilation errors.  No code generated.
@@ -31,14 +36,20 @@ ERROR: 2 compilation errors.  No code generated.
 
 
 #version 310 es
-precision mediump float;
+precision highp float;
+precision highp int;
 
 uniform highp samplerCubeArray arg_1_arg_2;
+
+layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
+  vec4 inner;
+} prevent_dce;
 
 void textureGather_8578bc() {
   vec3 arg_3 = vec3(1.0f);
   uint arg_4 = 1u;
   vec4 res = textureGather(arg_1_arg_2, vec4(arg_3, float(arg_4)), int(1u));
+  prevent_dce.inner = res;
 }
 
 void fragment_main() {
@@ -49,9 +60,9 @@ void main() {
   fragment_main();
   return;
 }
-Error parsing GLSL shader:
-ERROR: 0:4: 'samplerCubeArray' : Reserved word. 
-ERROR: 0:4: '' : compilation terminated 
+error: Error parsing GLSL shader:
+ERROR: 0:5: 'samplerCubeArray' : Reserved word. 
+ERROR: 0:5: '' : compilation terminated 
 ERROR: 2 compilation errors.  No code generated.
 
 
@@ -60,10 +71,15 @@ ERROR: 2 compilation errors.  No code generated.
 
 uniform highp samplerCubeArray arg_1_arg_2;
 
+layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
+  vec4 inner;
+} prevent_dce;
+
 void textureGather_8578bc() {
   vec3 arg_3 = vec3(1.0f);
   uint arg_4 = 1u;
   vec4 res = textureGather(arg_1_arg_2, vec4(arg_3, float(arg_4)), int(1u));
+  prevent_dce.inner = res;
 }
 
 void compute_main() {
@@ -75,7 +91,7 @@ void main() {
   compute_main();
   return;
 }
-Error parsing GLSL shader:
+error: Error parsing GLSL shader:
 ERROR: 0:3: 'samplerCubeArray' : Reserved word. 
 ERROR: 0:3: '' : compilation terminated 
 ERROR: 2 compilation errors.  No code generated.

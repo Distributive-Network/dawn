@@ -1,31 +1,41 @@
-// Copyright 2022 The Tint Authors.
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/wgsl/ast/transform/hoist_to_decl_before.h"
 
 #include <utility>
 
-#include "src/tint/lang/core/type/reference.h"
 #include "src/tint/lang/wgsl/ast/builder.h"
 #include "src/tint/lang/wgsl/program/clone_context.h"
 #include "src/tint/lang/wgsl/sem/block_statement.h"
 #include "src/tint/lang/wgsl/sem/for_loop_statement.h"
 #include "src/tint/lang/wgsl/sem/if_statement.h"
-#include "src/tint/lang/wgsl/sem/variable.h"
 #include "src/tint/lang/wgsl/sem/while_statement.h"
 #include "src/tint/utils/containers/hashmap.h"
-#include "src/tint/utils/containers/reverse.h"
 #include "src/tint/utils/containers/transform.h"
 
 namespace tint::ast::transform {
@@ -158,11 +168,11 @@ struct HoistToDeclBefore::State {
     /// automatically called.
     /// @warning the returned reference is invalid if this is called a second time, or the
     /// #for_loops map is mutated.
-    auto ForLoop(const sem::ForLoopStatement* for_loop) {
+    LoopInfo& ForLoop(const sem::ForLoopStatement* for_loop) {
         if (for_loops.IsEmpty()) {
             RegisterForLoopTransform();
         }
-        return for_loops.GetOrZero(for_loop);
+        return for_loops.GetOrAddZero(for_loop);
     }
 
     /// @returns a new LoopInfo reference for the given @p while_loop.
@@ -170,11 +180,11 @@ struct HoistToDeclBefore::State {
     /// automatically called.
     /// @warning the returned reference is invalid if this is called a second time, or the
     /// #for_loops map is mutated.
-    auto WhileLoop(const sem::WhileStatement* while_loop) {
+    LoopInfo& WhileLoop(const sem::WhileStatement* while_loop) {
         if (while_loops.IsEmpty()) {
             RegisterWhileLoopTransform();
         }
-        return while_loops.GetOrZero(while_loop);
+        return while_loops.GetOrAddZero(while_loop);
     }
 
     /// @returns a new ElseIfInfo reference for the given @p else_if.
@@ -182,11 +192,11 @@ struct HoistToDeclBefore::State {
     /// automatically called.
     /// @warning the returned reference is invalid if this is called a second time, or the
     /// #else_ifs map is mutated.
-    auto ElseIf(const IfStatement* else_if) {
+    ElseIfInfo& ElseIf(const IfStatement* else_if) {
         if (else_ifs.IsEmpty()) {
             RegisterElseIfTransform();
         }
-        return else_ifs.GetOrZero(else_if);
+        return else_ifs.GetOrAddZero(else_if);
     }
 
     /// Registers the handler for transforming for-loops based on the content of the #for_loops map.
@@ -195,7 +205,7 @@ struct HoistToDeclBefore::State {
             auto& sem = ctx.src->Sem();
 
             if (auto* fl = sem.Get(stmt)) {
-                if (auto info = for_loops.Find(fl)) {
+                if (auto info = for_loops.Get(fl)) {
                     auto* for_loop = fl->Declaration();
                     // For-loop needs to be decomposed to a loop.
                     // Build the loop body's statements.
@@ -254,7 +264,7 @@ struct HoistToDeclBefore::State {
             auto& sem = ctx.src->Sem();
 
             if (auto* w = sem.Get(stmt)) {
-                if (auto info = while_loops.Find(w)) {
+                if (auto info = while_loops.Get(w)) {
                     auto* while_loop = w->Declaration();
                     // While needs to be decomposed to a loop.
                     // Build the loop body's statements.
@@ -291,7 +301,7 @@ struct HoistToDeclBefore::State {
     void RegisterElseIfTransform() const {
         // Decompose 'else-if' statements into 'else { if }' blocks.
         ctx.ReplaceAll([&](const IfStatement* stmt) -> const Statement* {
-            if (auto info = else_ifs.Find(stmt)) {
+            if (auto info = else_ifs.Get(stmt)) {
                 // Build the else block's body statements, starting with let decls for the
                 // conditional expression.
                 auto body_stmts = Build(info->cond_decls);
@@ -323,10 +333,10 @@ struct HoistToDeclBefore::State {
         if (else_if && else_if->Parent()->Is<sem::IfStatement>()) {
             // Insertion point is an 'else if' condition.
             // Need to convert 'else if' to 'else { if }'.
-            auto else_if_info = ElseIf(else_if->Declaration());
+            auto& else_if_info = ElseIf(else_if->Declaration());
 
             // Index the map to decompose this else if, even if `stmt` is nullptr.
-            auto& decls = else_if_info->cond_decls;
+            auto& decls = else_if_info.cond_decls;
             if constexpr (!std::is_same_v<BUILDER, Decompose>) {
                 decls.Push(std::forward<BUILDER>(builder));
             }
@@ -338,7 +348,7 @@ struct HoistToDeclBefore::State {
             // For-loop needs to be decomposed to a loop.
 
             // Index the map to decompose this for-loop, even if `stmt` is nullptr.
-            auto& decls = ForLoop(fl)->cond_decls;
+            auto& decls = ForLoop(fl).cond_decls;
             if constexpr (!std::is_same_v<BUILDER, Decompose>) {
                 decls.Push(std::forward<BUILDER>(builder));
             }
@@ -350,7 +360,7 @@ struct HoistToDeclBefore::State {
             // While needs to be decomposed to a loop.
 
             // Index the map to decompose this while, even if `stmt` is nullptr.
-            auto& decls = WhileLoop(w)->cond_decls;
+            auto& decls = WhileLoop(w).cond_decls;
             if constexpr (!std::is_same_v<BUILDER, Decompose>) {
                 decls.Push(std::forward<BUILDER>(builder));
             }
@@ -377,7 +387,7 @@ struct HoistToDeclBefore::State {
                 // For-loop needs to be decomposed to a loop.
 
                 // Index the map to decompose this for-loop, even if `stmt` is nullptr.
-                auto& decls = ForLoop(fl)->init_decls;
+                auto& decls = ForLoop(fl).init_decls;
                 if constexpr (!std::is_same_v<BUILDER, Decompose>) {
                     decls.Push(std::forward<BUILDER>(builder));
                 }
@@ -390,7 +400,7 @@ struct HoistToDeclBefore::State {
                 // For-loop needs to be decomposed to a loop.
 
                 // Index the map to decompose this for-loop, even if `stmt` is nullptr.
-                auto& decls = ForLoop(fl)->cont_decls;
+                auto& decls = ForLoop(fl).cont_decls;
                 if constexpr (!std::is_same_v<BUILDER, Decompose>) {
                     decls.Push(std::forward<BUILDER>(builder));
                 }

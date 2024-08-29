@@ -1,19 +1,34 @@
-// Copyright 2023 The Dawn Authors
+// Copyright 2023 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/BlitBufferToDepthStencil.h"
 
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include "dawn/common/Assert.h"
@@ -64,7 +79,25 @@ struct Params {
 
 )";
 
-constexpr char kBlitStencilShaders[] = R"(
+constexpr std::string_view kTexture2DHead = R"(
+fn textureLoadGeneral(tex: texture_2d<u32>, coords: vec2u, level: u32) -> vec4<u32> {
+    return textureLoad(tex, coords, level);
+}
+@group(0) @binding(0) var src_tex : texture_2d<u32>;
+)";
+
+constexpr std::string_view kTexture2DArrayHead = R"(
+fn textureLoadGeneral(tex: texture_2d_array<u32>, coords: vec2u, level: u32) -> vec4<u32> {
+    return textureLoad(tex, coords, 0u, level);
+}
+@group(0) @binding(0) var src_tex : texture_2d_array<u32>;
+)";
+
+constexpr std::string_view kBlitStencilShaderCommon = R"(
+struct Params {
+  origin : vec2u
+};
+@group(0) @binding(1) var<uniform> params : Params;
 
 struct VertexOutputs {
   @location(0) @interpolate(flat) stencil_val : u32,
@@ -90,13 +123,6 @@ struct VertexOutputs {
   );
 }
 
-struct Params {
-  origin : vec2u
-};
-
-@group(0) @binding(0) var src_tex : texture_2d<u32>;
-@group(0) @binding(1) var<uniform> params : Params;
-
 // Do nothing (but also don't discard). Used for clearing
 // stencil to 0.
 @fragment fn frag_noop() {}
@@ -105,7 +131,7 @@ struct Params {
 // have the stencil_val.
 @fragment fn frag_check_src_stencil(input : VertexOutputs) {
   // Load the source stencil value.
-  let src_val : u32 = textureLoad(
+  let src_val : u32 = textureLoadGeneral(
     src_tex, vec2u(input.position.xy) - params.origin, 0u)[0];
 
   // Discard it if it doesn't contain the stencil reference.
@@ -113,7 +139,6 @@ struct Params {
     discard;
   }
 }
-
 )";
 
 ResultOrError<Ref<RenderPipelineBase>> GetOrCreateRG8ToDepth16UnormPipeline(DeviceBase* device) {
@@ -155,10 +180,11 @@ ResultOrError<Ref<RenderPipelineBase>> GetOrCreateRG8ToDepth16UnormPipeline(Devi
 ResultOrError<InternalPipelineStore::BlitR8ToStencilPipelines> GetOrCreateR8ToStencilPipelines(
     DeviceBase* device,
     wgpu::TextureFormat format,
+    wgpu::TextureViewDimension viewDimension,
     BindGroupLayoutBase* bgl) {
     InternalPipelineStore* store = device->GetInternalPipelineStore();
     {
-        auto it = store->blitR8ToStencilPipelines.find(format);
+        auto it = store->blitR8ToStencilPipelines.find({format, viewDimension});
         if (it != store->blitR8ToStencilPipelines.end()) {
             return InternalPipelineStore::BlitR8ToStencilPipelines{it->second};
         }
@@ -176,7 +202,20 @@ ResultOrError<InternalPipelineStore::BlitR8ToStencilPipelines> GetOrCreateR8ToSt
     ShaderModuleWGSLDescriptor wgslDesc = {};
     ShaderModuleDescriptor shaderModuleDesc = {};
     shaderModuleDesc.nextInChain = &wgslDesc;
-    wgslDesc.code = kBlitStencilShaders;
+
+    std::string shader;
+    switch (viewDimension) {
+        case wgpu::TextureViewDimension::e2D:
+            shader = kTexture2DHead;
+            break;
+        case wgpu::TextureViewDimension::e2DArray:
+            shader = kTexture2DArrayHead;
+            break;
+        default:
+            DAWN_UNREACHABLE();
+    }
+    shader += kBlitStencilShaderCommon;
+    wgslDesc.code = shader.c_str();
 
     Ref<ShaderModuleBase> shaderModule;
     DAWN_TRY_ASSIGN(shaderModule, device->CreateShaderModule(&shaderModuleDesc));
@@ -214,7 +253,7 @@ ResultOrError<InternalPipelineStore::BlitR8ToStencilPipelines> GetOrCreateR8ToSt
 
     InternalPipelineStore::BlitR8ToStencilPipelines pipelines{std::move(clearPipeline),
                                                               std::move(setStencilPipelines)};
-    store->blitR8ToStencilPipelines[format] = pipelines;
+    store->blitR8ToStencilPipelines.emplace(std::make_pair(format, viewDimension), pipelines);
     return pipelines;
 }
 
@@ -223,9 +262,9 @@ MaybeError BlitRG8ToDepth16Unorm(DeviceBase* device,
                                  TextureBase* dataTexture,
                                  const TextureCopy& dst,
                                  const Extent3D& copyExtent) {
-    ASSERT(device->IsLockedByCurrentThreadIfNeeded());
-    ASSERT(dst.texture->GetFormat().format == wgpu::TextureFormat::Depth16Unorm);
-    ASSERT(dataTexture->GetFormat().format == wgpu::TextureFormat::RG8Uint);
+    DAWN_ASSERT(device->IsLockedByCurrentThreadIfNeeded());
+    DAWN_ASSERT(dst.texture->GetFormat().format == wgpu::TextureFormat::Depth16Unorm);
+    DAWN_ASSERT(dataTexture->GetFormat().format == wgpu::TextureFormat::RG8Uint);
 
     // Allow internal usages since we need to use the destination
     // as a render attachment.
@@ -313,18 +352,28 @@ MaybeError BlitRG8ToDepth16Unorm(DeviceBase* device,
     return {};
 }
 
+}  // anonymous namespace
+
 MaybeError BlitR8ToStencil(DeviceBase* device,
                            CommandEncoder* commandEncoder,
                            TextureBase* dataTexture,
                            const TextureCopy& dst,
                            const Extent3D& copyExtent) {
-    ASSERT(device->IsLockedByCurrentThreadIfNeeded());
+    DAWN_ASSERT(device->IsLockedByCurrentThreadIfNeeded());
     const Format& format = dst.texture->GetFormat();
-    ASSERT(dst.aspect == Aspect::Stencil);
+    DAWN_ASSERT(dst.aspect == Aspect::Stencil);
 
     // Allow internal usages since we need to use the destination
     // as a render attachment.
     auto scope = commandEncoder->MakeInternalUsageScope();
+
+    // In compat mode view dimension needs to match texture binding view dimension.
+    wgpu::TextureViewDimension textureViewDimension;
+    if (device->IsCompatibilityMode()) {
+        textureViewDimension = dataTexture->GetCompatibilityTextureBindingViewDimension();
+    } else {
+        textureViewDimension = wgpu::TextureViewDimension::e2D;
+    }
 
     // This bgl is the same for all the render pipelines.
     Ref<BindGroupLayoutBase> bgl;
@@ -334,6 +383,7 @@ MaybeError BlitR8ToStencil(DeviceBase* device,
         bglEntries[0].binding = 0;
         bglEntries[0].visibility = wgpu::ShaderStage::Fragment;
         bglEntries[0].texture.sampleType = wgpu::TextureSampleType::Uint;
+        bglEntries[0].texture.viewDimension = textureViewDimension;
         // Binding 1: the params buffer.
         bglEntries[1].binding = 1;
         bglEntries[1].visibility = wgpu::ShaderStage::Fragment;
@@ -348,7 +398,8 @@ MaybeError BlitR8ToStencil(DeviceBase* device,
     }
 
     InternalPipelineStore::BlitR8ToStencilPipelines pipelines;
-    DAWN_TRY_ASSIGN(pipelines, GetOrCreateR8ToStencilPipelines(device, format.format, bgl.Get()));
+    DAWN_TRY_ASSIGN(pipelines, GetOrCreateR8ToStencilPipelines(device, format.format,
+                                                               textureViewDimension, bgl.Get()));
 
     // Build the params buffer, containing the copy dst origin.
     Ref<BufferBase> paramsBuffer;
@@ -370,7 +421,7 @@ MaybeError BlitR8ToStencil(DeviceBase* device,
         Ref<TextureViewBase> srcView;
         {
             TextureViewDescriptor viewDesc = {};
-            viewDesc.dimension = wgpu::TextureViewDimension::e2D;
+            viewDesc.dimension = textureViewDimension;
             viewDesc.baseArrayLayer = z;
             viewDesc.arrayLayerCount = 1;
             viewDesc.mipLevelCount = 1;
@@ -380,7 +431,7 @@ MaybeError BlitR8ToStencil(DeviceBase* device,
         Ref<TextureViewBase> dstView;
         {
             TextureViewDescriptor viewDesc = {};
-            viewDesc.dimension = wgpu::TextureViewDimension::e2D;
+            viewDesc.dimension = textureViewDimension;
             viewDesc.baseArrayLayer = dst.origin.z + z;
             viewDesc.arrayLayerCount = 1;
             viewDesc.baseMipLevel = dst.mipLevel;
@@ -445,15 +496,13 @@ MaybeError BlitR8ToStencil(DeviceBase* device,
     return {};
 }
 
-}  // anonymous namespace
-
 MaybeError BlitStagingBufferToDepth(DeviceBase* device,
                                     BufferBase* buffer,
                                     const TextureDataLayout& src,
                                     const TextureCopy& dst,
                                     const Extent3D& copyExtent) {
     const Format& format = dst.texture->GetFormat();
-    ASSERT(format.format == wgpu::TextureFormat::Depth16Unorm);
+    DAWN_ASSERT(format.format == wgpu::TextureFormat::Depth16Unorm);
 
     TextureDescriptor dataTextureDesc = {};
     dataTextureDesc.format = wgpu::TextureFormat::RG8Uint;
@@ -492,7 +541,7 @@ MaybeError BlitBufferToDepth(DeviceBase* device,
                              const TextureCopy& dst,
                              const Extent3D& copyExtent) {
     const Format& format = dst.texture->GetFormat();
-    ASSERT(format.format == wgpu::TextureFormat::Depth16Unorm);
+    DAWN_ASSERT(format.format == wgpu::TextureFormat::Depth16Unorm);
 
     TextureDescriptor dataTextureDesc = {};
     dataTextureDesc.format = wgpu::TextureFormat::RG8Uint;

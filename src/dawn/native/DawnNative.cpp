@@ -1,16 +1,29 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/DawnNative.h"
 
@@ -29,6 +42,11 @@
 
 namespace dawn::native {
 
+const char MemoryDump::kNameSize[] = "size";
+const char MemoryDump::kNameObjectCount[] = "object_count";
+const char MemoryDump::kUnitsBytes[] = "bytes";
+const char MemoryDump::kUnitsObjects[] = "objects";
+
 const DawnProcTable& GetProcsAutogen();
 
 const DawnProcTable& GetProcs() {
@@ -45,7 +63,7 @@ Adapter::Adapter() = default;
 
 Adapter::Adapter(AdapterBase* impl) : mImpl(impl) {
     if (mImpl != nullptr) {
-        mImpl->Reference();
+        mImpl->AddRef();
     }
 }
 
@@ -65,18 +83,26 @@ Adapter& Adapter::operator=(const Adapter& other) {
         }
         mImpl = other.mImpl;
         if (mImpl) {
-            mImpl->Reference();
+            mImpl->AddRef();
         }
     }
     return *this;
 }
 
-void Adapter::GetProperties(wgpu::AdapterProperties* properties) const {
-    GetProperties(reinterpret_cast<WGPUAdapterProperties*>(properties));
+wgpu::Status Adapter::GetInfo(wgpu::AdapterInfo* info) const {
+    return GetInfo(reinterpret_cast<WGPUAdapterInfo*>(info));
 }
 
-void Adapter::GetProperties(WGPUAdapterProperties* properties) const {
-    mImpl->APIGetProperties(FromAPI(properties));
+wgpu::Status Adapter::GetInfo(WGPUAdapterInfo* info) const {
+    return mImpl->APIGetInfo(FromAPI(info));
+}
+
+wgpu::Status Adapter::GetProperties(wgpu::AdapterProperties* properties) const {
+    return GetProperties(reinterpret_cast<WGPUAdapterProperties*>(properties));
+}
+
+wgpu::Status Adapter::GetProperties(WGPUAdapterProperties* properties) const {
+    return mImpl->APIGetProperties(FromAPI(properties));
 }
 
 WGPUAdapter Adapter::Get() const {
@@ -88,7 +114,7 @@ std::vector<const char*> Adapter::GetSupportedFeatures() const {
     return supportedFeaturesSet.GetEnabledFeatureNames();
 }
 
-bool Adapter::GetLimits(WGPUSupportedLimits* limits) const {
+wgpu::ConvertibleStatus Adapter::GetLimits(WGPUSupportedLimits* limits) const {
     return mImpl->APIGetLimits(FromAPI(limits));
 }
 
@@ -127,13 +153,9 @@ void Adapter::RequestDevice(const WGPUDeviceDescriptor* descriptor,
 }
 
 void Adapter::ResetInternalDeviceForTesting() {
-    mImpl->GetPhysicalDevice()->ResetInternalDeviceForTesting();
+    [[maybe_unused]] bool hadError = mImpl->GetInstance()->ConsumedError(
+        mImpl->GetPhysicalDevice()->ResetInternalDeviceForTesting());
 }
-
-// AdapterDiscoverOptionsBase
-
-PhysicalDeviceDiscoveryOptionsBase::PhysicalDeviceDiscoveryOptionsBase(WGPUBackendType type)
-    : backendType(type) {}
 
 // DawnInstanceDescriptor
 
@@ -143,9 +165,10 @@ DawnInstanceDescriptor::DawnInstanceDescriptor() {
 
 bool DawnInstanceDescriptor::operator==(const DawnInstanceDescriptor& rhs) const {
     return (nextInChain == rhs.nextInChain) &&
-           std::tie(additionalRuntimeSearchPathsCount, additionalRuntimeSearchPaths, platform) ==
+           std::tie(additionalRuntimeSearchPathsCount, additionalRuntimeSearchPaths, platform,
+                    backendValidationLevel, beginCaptureOnStartup) ==
                std::tie(rhs.additionalRuntimeSearchPathsCount, rhs.additionalRuntimeSearchPaths,
-                        rhs.platform);
+                        rhs.platform, rhs.backendValidationLevel, rhs.beginCaptureOnStartup);
 }
 
 // Instance
@@ -155,39 +178,18 @@ Instance::Instance(const WGPUInstanceDescriptor* desc)
     tint::Initialize();
 }
 
+Instance::Instance(InstanceBase* impl) : mImpl(impl) {
+    if (mImpl != nullptr) {
+        mImpl->APIAddRef();
+    }
+    tint::Initialize();
+}
+
 Instance::~Instance() {
     if (mImpl != nullptr) {
         mImpl->APIRelease();
         mImpl = nullptr;
     }
-}
-
-void Instance::DiscoverDefaultPhysicalDevices() {
-    mImpl->DiscoverDefaultPhysicalDevices();
-}
-
-bool Instance::DiscoverPhysicalDevices(const PhysicalDeviceDiscoveryOptionsBase* options) {
-    return mImpl->DiscoverPhysicalDevices(options);
-}
-
-// Deprecated.
-void Instance::DiscoverDefaultAdapters() {
-    mImpl->DiscoverDefaultPhysicalDevices();
-}
-
-// Deprecated.
-bool Instance::DiscoverAdapters(const AdapterDiscoveryOptionsBase* options) {
-    return mImpl->DiscoverPhysicalDevices(options);
-}
-
-std::vector<Adapter> Instance::GetAdapters() const {
-    dawn::WarningLog() << "GetAdapters() is deprecated. Call EnumerateAdapters(options) instead.";
-    // Adapters are owned by mImpl so it is safe to return non RAII pointers to them
-    std::vector<Adapter> adapters;
-    for (const Ref<AdapterBase>& adapter : mImpl->GetAdapters()) {
-        adapters.push_back(Adapter(adapter.Get()));
-    }
-    return adapters;
 }
 
 std::vector<Adapter> Instance::EnumerateAdapters(const WGPURequestAdapterOptions* options) const {
@@ -207,46 +209,28 @@ const ToggleInfo* Instance::GetToggleInfo(const char* toggleName) {
     return mImpl->GetToggleInfo(toggleName);
 }
 
-const FeatureInfo* Instance::GetFeatureInfo(WGPUFeatureName feature) {
-    return mImpl->GetFeatureInfo(static_cast<wgpu::FeatureName>(feature));
-}
-
-void Instance::EnableBackendValidation(bool enableBackendValidation) {
-    if (enableBackendValidation) {
-        mImpl->SetBackendValidationLevel(BackendValidationLevel::Full);
-    }
-}
-
 void Instance::SetBackendValidationLevel(BackendValidationLevel level) {
     mImpl->SetBackendValidationLevel(level);
-}
-
-void Instance::EnableBeginCaptureOnStartup(bool beginCaptureOnStartup) {
-    mImpl->EnableBeginCaptureOnStartup(beginCaptureOnStartup);
-}
-
-void Instance::EnableAdapterBlocklist(bool enable) {
-    mImpl->EnableAdapterBlocklist(enable);
 }
 
 uint64_t Instance::GetDeviceCountForTesting() const {
     return mImpl->GetDeviceCountForTesting();
 }
 
+uint64_t Instance::GetDeprecationWarningCountForTesting() const {
+    return mImpl->GetDeprecationWarningCountForTesting();
+}
+
 WGPUInstance Instance::Get() const {
     return ToAPI(mImpl);
 }
 
+void Instance::DisconnectDawnPlatform() {
+    mImpl->DisconnectDawnPlatform();
+}
+
 size_t GetLazyClearCountForTesting(WGPUDevice device) {
     return FromAPI(device)->GetLazyClearCountForTesting();
-}
-
-size_t GetDeprecationWarningCountForTesting(WGPUDevice device) {
-    return FromAPI(device)->GetDeprecationWarningCountForTesting();
-}
-
-size_t GetPhysicalDeviceCountForTesting(WGPUInstance instance) {
-    return FromAPI(instance)->GetPhysicalDeviceCountForTesting();
 }
 
 bool IsTextureSubresourceInitialized(WGPUTexture texture,
@@ -277,7 +261,7 @@ DAWN_NATIVE_EXPORT bool DeviceTick(WGPUDevice device) {
 }
 
 DAWN_NATIVE_EXPORT bool InstanceProcessEvents(WGPUInstance instance) {
-    return FromAPI(instance)->APIProcessEvents();
+    return FromAPI(instance)->ProcessEvents();
 }
 
 // ExternalImageDescriptor
@@ -307,6 +291,22 @@ const char* GetObjectLabelForTesting(void* objectHandle) {
 
 uint64_t GetAllocatedSizeForTesting(WGPUBuffer buffer) {
     return FromAPI(buffer)->GetAllocatedSize();
+}
+
+std::vector<const ToggleInfo*> AllToggleInfos() {
+    return TogglesInfo::AllToggleInfos();
+}
+
+const FeatureInfo* GetFeatureInfo(wgpu::FeatureName feature) {
+    Feature f = FromAPI(feature);
+    if (f == Feature::InvalidEnum) {
+        return nullptr;
+    }
+    return &kFeatureNameAndInfoList[FromAPI(feature)];
+}
+
+void DumpMemoryStatistics(WGPUDevice device, MemoryDump* dump) {
+    FromAPI(device)->DumpMemoryStatistics(dump);
 }
 
 }  // namespace dawn::native

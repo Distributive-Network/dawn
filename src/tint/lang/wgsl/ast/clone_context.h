@@ -1,16 +1,29 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_TINT_LANG_WGSL_AST_CLONE_CONTEXT_H_
 #define SRC_TINT_LANG_WGSL_AST_CLONE_CONTEXT_H_
@@ -114,9 +127,7 @@ class CloneContext {
     ast::Type Clone(const ast::Type& ty);
 
     /// Clones the Source `s` into #dst
-    /// TODO(bclayton) - Currently this 'clone' is a shallow copy. If/when
-    /// `Source.File`s are owned by the Program this should make a copy of the
-    /// file.
+    /// @note this 'clone' is a shallow copy.
     /// @param s the `Source` to clone
     /// @return the cloned source
     Source Clone(const Source& s) const { return s; }
@@ -173,14 +184,14 @@ class CloneContext {
     void Clone(tint::Vector<T*, N>& to, const tint::Vector<T*, N>& from) {
         to.Reserve(from.Length());
 
-        auto transforms = list_transforms_.Find(&from);
+        auto transforms = list_transforms_.Get(&from);
 
         if (transforms) {
             for (auto& builder : transforms->insert_front_) {
                 to.Push(CheckedCast<T>(builder()));
             }
             for (auto& el : from) {
-                if (auto insert_before = transforms->insert_before_.Find(el)) {
+                if (auto insert_before = transforms->insert_before_.Get(el)) {
                     for (auto& builder : *insert_before) {
                         to.Push(CheckedCast<T>(builder()));
                     }
@@ -188,7 +199,7 @@ class CloneContext {
                 if (!transforms->remove_.Contains(el)) {
                     to.Push(Clone(el));
                 }
-                if (auto insert_after = transforms->insert_after_.Find(el)) {
+                if (auto insert_after = transforms->insert_after_.Get(el)) {
                     for (auto& builder : *insert_after) {
                         to.Push(CheckedCast<T>(builder()));
                     }
@@ -201,10 +212,12 @@ class CloneContext {
             for (auto& el : from) {
                 to.Push(Clone(el));
 
-                // Clone(el) may have updated the transformation list, adding an `insert_after`
-                // transform for `from`.
+                if (!transforms) {
+                    // Clone(el) may have create a transformation list
+                    transforms = list_transforms_.Get(&from);
+                }
                 if (transforms) {
-                    if (auto insert_after = transforms->insert_after_.Find(el)) {
+                    if (auto insert_after = transforms->insert_after_.Get(el)) {
                         for (auto& builder : *insert_after) {
                             to.Push(CheckedCast<T>(builder()));
                         }
@@ -212,8 +225,10 @@ class CloneContext {
                 }
             }
 
-            // Clone(el) may have updated the transformation list, adding an `insert_back_`
-            // transform for `from`.
+            if (!transforms) {
+                // Clone(el) may have create a transformation list
+                transforms = list_transforms_.Get(&from);
+            }
             if (transforms) {
                 for (auto& builder : transforms->insert_back_) {
                     to.Push(CheckedCast<T>(builder()));
@@ -302,7 +317,6 @@ class CloneContext {
         if (TINT_UNLIKELY(symbol_transform_)) {
             TINT_ICE() << "ReplaceAll(const SymbolTransform&) called multiple times on the same "
                           "CloneContext";
-            return *this;
         }
         symbol_transform_ = replacer;
         return *this;
@@ -361,7 +375,7 @@ class CloneContext {
             return *this;
         }
 
-        list_transforms_.GetOrZero(&vector)->remove_.Add(object);
+        list_transforms_.GetOrAddZero(&vector).remove_.Add(object);
         return *this;
     }
 
@@ -383,7 +397,7 @@ class CloneContext {
     /// @returns this CloneContext so calls can be chained
     template <typename T, size_t N, typename BUILDER>
     CloneContext& InsertFront(const tint::Vector<T, N>& vector, BUILDER&& builder) {
-        list_transforms_.GetOrZero(&vector)->insert_front_.Push(std::forward<BUILDER>(builder));
+        list_transforms_.GetOrAddZero(&vector).insert_front_.Push(std::forward<BUILDER>(builder));
         return *this;
     }
 
@@ -406,7 +420,7 @@ class CloneContext {
     /// @returns this CloneContext so calls can be chained
     template <typename T, size_t N, typename BUILDER>
     CloneContext& InsertBack(const tint::Vector<T, N>& vector, BUILDER&& builder) {
-        list_transforms_.GetOrZero(&vector)->insert_back_.Push(std::forward<BUILDER>(builder));
+        list_transforms_.GetOrAddZero(&vector).insert_back_.Push(std::forward<BUILDER>(builder));
         return *this;
     }
 
@@ -427,7 +441,7 @@ class CloneContext {
             return *this;
         }
 
-        list_transforms_.GetOrZero(&vector)->insert_before_.GetOrZero(before)->Push(
+        list_transforms_.GetOrAddZero(&vector).insert_before_.GetOrAddZero(before).Push(
             [object] { return object; });
         return *this;
     }
@@ -446,7 +460,7 @@ class CloneContext {
     CloneContext& InsertBefore(const tint::Vector<T, N>& vector,
                                const BEFORE* before,
                                BUILDER&& builder) {
-        list_transforms_.GetOrZero(&vector)->insert_before_.GetOrZero(before)->Push(
+        list_transforms_.GetOrAddZero(&vector).insert_before_.GetOrAddZero(before).Push(
             std::forward<BUILDER>(builder));
         return *this;
     }
@@ -468,7 +482,7 @@ class CloneContext {
             return *this;
         }
 
-        list_transforms_.GetOrZero(&vector)->insert_after_.GetOrZero(after)->Push(
+        list_transforms_.GetOrAddZero(&vector).insert_after_.GetOrAddZero(after).Push(
             [object] { return object; });
         return *this;
     }
@@ -487,7 +501,7 @@ class CloneContext {
     CloneContext& InsertAfter(const tint::Vector<T, N>& vector,
                               const AFTER* after,
                               BUILDER&& builder) {
-        list_transforms_.GetOrZero(&vector)->insert_after_.GetOrZero(after)->Push(
+        list_transforms_.GetOrAddZero(&vector).insert_after_.GetOrAddZero(after).Push(
             std::forward<BUILDER>(builder));
         return *this;
     }
@@ -553,16 +567,14 @@ class CloneContext {
             return cast;
         }
         CheckedCastFailure(obj, tint::TypeInfo::Of<TO>());
-        return nullptr;
     }
 
     /// Clones a Node object, using any replacements or transforms that have
     /// been configured.
     const ast::Node* CloneNode(const ast::Node* object);
 
-    /// Adds an error diagnostic to Diagnostics() that the cloned object was not
-    /// of the expected type.
-    void CheckedCastFailure(const ast::Node* got, const TypeInfo& expected);
+    /// Aborts with an ICE describing that the cloned object type was not as required.
+    [[noreturn]] void CheckedCastFailure(const ast::Node* got, const TypeInfo& expected);
 
     /// @returns the diagnostic list of #dst
     diag::List& Diagnostics() const;

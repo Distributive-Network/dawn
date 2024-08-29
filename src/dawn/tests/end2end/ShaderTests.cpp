@@ -1,16 +1,29 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <numeric>
 #include <string>
@@ -25,15 +38,22 @@ namespace {
 
 class ShaderTests : public DawnTest {
   public:
-    wgpu::Buffer CreateBuffer(const uint32_t count) {
-        std::vector<uint32_t> data(count, 0);
+    wgpu::Buffer CreateBuffer(const std::vector<uint32_t>& data,
+                              wgpu::BufferUsage usage = wgpu::BufferUsage::Storage |
+                                                        wgpu::BufferUsage::CopySrc) {
         uint64_t bufferSize = static_cast<uint64_t>(data.size() * sizeof(uint32_t));
-        return utils::CreateBufferFromData(device, data.data(), bufferSize,
-                                           wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc);
+        return utils::CreateBufferFromData(device, data.data(), bufferSize, usage);
     }
+
+    wgpu::Buffer CreateBuffer(const uint32_t count,
+                              wgpu::BufferUsage usage = wgpu::BufferUsage::Storage |
+                                                        wgpu::BufferUsage::CopySrc) {
+        return CreateBuffer(std::vector<uint32_t>(count, 0), usage);
+    }
+
     wgpu::ComputePipeline CreateComputePipeline(
         const std::string& shader,
-        const char* entryPoint,
+        const char* entryPoint = nullptr,
         const std::vector<wgpu::ConstantEntry>* constants = nullptr) {
         wgpu::ComputePipelineDescriptor csDesc;
         csDesc.compute.module = utils::CreateShaderModule(device, shader.c_str());
@@ -308,9 +328,7 @@ fn fragmentMain(input : VertexOut) -> @location(0) vec4f {
 
     utils::ComboRenderPipelineDescriptor rpDesc;
     rpDesc.vertex.module = shaderModule;
-    rpDesc.vertex.entryPoint = "vertexMain";
     rpDesc.cFragment.module = shaderModule;
-    rpDesc.cFragment.entryPoint = "fragmentMain";
     rpDesc.vertex.bufferCount = 1;
     rpDesc.cBuffers[0].attributeCount = 2;
     rpDesc.cBuffers[0].arrayStride = 28;
@@ -349,9 +367,7 @@ fn fragmentMain(input : ShaderIO) -> @location(0) vec4f {
 
     utils::ComboRenderPipelineDescriptor rpDesc;
     rpDesc.vertex.module = shaderModule;
-    rpDesc.vertex.entryPoint = "vertexMain";
     rpDesc.cFragment.module = shaderModule;
-    rpDesc.cFragment.entryPoint = "fragmentMain";
     wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
 }
 
@@ -393,9 +409,7 @@ fn fragmentMain(input : FragmentIn) -> @location(0) vec4f {
 
     utils::ComboRenderPipelineDescriptor rpDesc;
     rpDesc.vertex.module = shaderModule;
-    rpDesc.vertex.entryPoint = "vertexMain";
     rpDesc.cFragment.module = shaderModule;
-    rpDesc.cFragment.entryPoint = "fragmentMain";
     wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
 }
 
@@ -433,9 +447,7 @@ fn fragmentMain(input : FragmentIn) -> @location(0) vec4f {
 
     utils::ComboRenderPipelineDescriptor rpDesc;
     rpDesc.vertex.module = shaderModule;
-    rpDesc.vertex.entryPoint = "vertexMain";
     rpDesc.cFragment.module = shaderModule;
-    rpDesc.cFragment.entryPoint = "fragmentMain";
     wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
 }
 
@@ -473,9 +485,7 @@ fn fragmentMain(input : FragmentIn) -> @location(0) vec4f {
 
     utils::ComboRenderPipelineDescriptor rpDesc;
     rpDesc.vertex.module = shaderModule;
-    rpDesc.vertex.entryPoint = "vertexMain";
     rpDesc.cFragment.module = shaderModule;
-    rpDesc.cFragment.entryPoint = "fragmentMain";
     wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
 }
 
@@ -512,9 +522,7 @@ fn fragmentMain(input : FragmentIn) -> @location(0) vec4f {
 
     utils::ComboRenderPipelineDescriptor rpDesc;
     rpDesc.vertex.module = shaderModule;
-    rpDesc.vertex.entryPoint = "vertexMain";
     rpDesc.cFragment.module = shaderModule;
-    rpDesc.cFragment.entryPoint = "fragmentMain";
     wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
 }
 
@@ -546,9 +554,7 @@ fn fragmentMain() -> @location(0) vec4f {
 
     utils::ComboRenderPipelineDescriptor rpDesc;
     rpDesc.vertex.module = shaderModule;
-    rpDesc.vertex.entryPoint = "vertexMain";
     rpDesc.cFragment.module = shaderModule;
-    rpDesc.cFragment.entryPoint = "fragmentMain";
     wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
 }
 
@@ -582,9 +588,7 @@ fn fragmentMain(@builtin(position) position : vec4<f32>) -> @location(0) vec4f {
 
     utils::ComboRenderPipelineDescriptor rpDesc;
     rpDesc.vertex.module = shaderModule;
-    rpDesc.vertex.entryPoint = "vertexMain";
     rpDesc.cFragment.module = shaderModule;
-    rpDesc.cFragment.entryPoint = "fragmentMain";
     wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
 }
 
@@ -592,9 +596,6 @@ fn fragmentMain(@builtin(position) position : vec4<f32>) -> @location(0) vec4f {
 // the BindingRemapper, causing an intermediate AST to be invalid (and fail the overall
 // compilation).
 TEST_P(ShaderTests, FirstIndexOffsetRegisterConflictInHLSLTransforms) {
-    // TODO(crbug.com/dawn/658): Crashes on bots because there are two entrypoints in the shader.
-    DAWN_SUPPRESS_TEST_IF(IsOpenGL() || IsOpenGLES());
-
     const char* shader = R"(
 // Dumped WGSL:
 
@@ -621,9 +622,7 @@ struct S1 { data : array<vec4u, 20> }
 
     utils::ComboRenderPipelineDescriptor rpDesc;
     rpDesc.vertex.module = module;
-    rpDesc.vertex.entryPoint = "vsMain";
     rpDesc.cFragment.module = module;
-    rpDesc.cFragment.entryPoint = "fsMain";
     rpDesc.vertex.bufferCount = 1;
     rpDesc.cBuffers[0].attributeCount = 1;
     rpDesc.cBuffers[0].arrayStride = 16;
@@ -637,6 +636,9 @@ TEST_P(ShaderTests, SampleIndex) {
     // TODO(crbug.com/dawn/673): Work around or enforce via validation that sample variables are not
     // supported on some platforms.
     DAWN_TEST_UNSUPPORTED_IF(HasToggleEnabled("disable_sample_variables"));
+
+    // Compat mode does not support sample_index
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
 
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
 @vertex
@@ -1133,17 +1135,14 @@ TEST_P(ShaderTests, ConflictingBindingsDueToTransformOrder) {
 
     utils::ComboRenderPipelineDescriptor desc;
     desc.vertex.module = module;
-    desc.vertex.entryPoint = "vertex";
     desc.cFragment.module = module;
-    desc.cFragment.entryPoint = "fragment";
 
     device.CreateRenderPipeline(&desc);
 }
 
 // Check that chromium_disable_uniformity_analysis can be used. It is normally disallowed as unsafe
 // but DawnTests allow all unsafe APIs by default.
-// TODO(crbug.com/tint/1728): Enable again when uniformity failures are errors again
-TEST_P(ShaderTests, DISABLED_CheckUsageOf_chromium_disable_uniformity_analysis) {
+TEST_P(ShaderTests, CheckUsageOf_chromium_disable_uniformity_analysis) {
     wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
         enable chromium_disable_uniformity_analysis;
 
@@ -1169,9 +1168,6 @@ TEST_P(ShaderTests, DISABLED_CheckUsageOf_chromium_disable_uniformity_analysis) 
 // Test that it is not possible to override the builtins in a way that breaks the robustness
 // transform.
 TEST_P(ShaderTests, ShaderOverridingRobustnessBuiltins) {
-    // TODO(dawn:1585): The OpenGL backend doesn't use the Renamer tint transform yet.
-    DAWN_SUPPRESS_TEST_IF(IsOpenGL() || IsOpenGLES());
-
     // Make the test compute pipeline.
     wgpu::ComputePipelineDescriptor cDesc;
     cDesc.compute.module = utils::CreateShaderModule(device, R"(
@@ -1193,7 +1189,6 @@ TEST_P(ShaderTests, ShaderOverridingRobustnessBuiltins) {
             result = values[index];
         }
     )");
-    cDesc.compute.entryPoint = "little_bobby_tables";
     wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&cDesc);
 
     // Test 4-byte buffer that will receive the result.
@@ -1222,9 +1217,6 @@ TEST_P(ShaderTests, ShaderOverridingRobustnessBuiltins) {
 // Test that when fragment input is a subset of the vertex output, the render pipeline should be
 // valid.
 TEST_P(ShaderTests, FragmentInputIsSubsetOfVertexOutput) {
-    // TODO(dawn:1610): Fails on Adreno (Pixel 4)
-    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsQualcomm() && IsVulkan());
-
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
 struct ShaderIO {
     @location(1) var1: f32,
@@ -1288,9 +1280,6 @@ struct ShaderIO {
 // Test that when fragment input is a subset of the vertex output and the order of them is
 // different, the render pipeline should be valid.
 TEST_P(ShaderTests, FragmentInputIsSubsetOfVertexOutputWithDifferentOrder) {
-    // TODO(dawn:1610): Fails on Adreno (Pixel 4)
-    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsQualcomm() && IsVulkan());
-
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
 struct ShaderIO {
     @location(5) @align(16) var5: f32,
@@ -1504,6 +1493,1070 @@ fn main() -> @location(0) vec4f {
     EXPECT_PIXEL_RGBA8_EQ(utils::RGBA8(255, 255, 255, 255), renderPass.color, 0, 0);
 }
 
+// Test that matrices can be passed by value, which can cause issues on Qualcomm devices.
+// See crbug.com/tint/2045#c5
+TEST_P(ShaderTests, PassMatrixByValue) {
+    std::vector<float> inputs{0.1, 0.2, 0.3, 0.0, 0.4, 0.5, 0.6, 0.0, 0.7, 0.8, 0.9, 0.0};
+    std::vector<float> expected{1.1, 1.2, 1.3, 0.0, 1.4, 1.5, 1.6, 0.0, 1.7, 1.8, 1.9, 0.0};
+    uint64_t bufferSize = static_cast<uint64_t>(inputs.size() * sizeof(float));
+    wgpu::Buffer buffer = utils::CreateBufferFromData(
+        device, inputs.data(), bufferSize, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc);
+
+    std::string shader = R"(
+@group(0) @binding(0)
+var<storage, read_write> buffer : mat3x3f;
+
+fn foo(rhs : mat3x3f) {
+  buffer = buffer + rhs;
+}
+
+@compute @workgroup_size(1)
+fn main() {
+  let rhs = mat3x3f(1, 1, 1, 1, 1, 1, 1, 1, 1);
+  foo(rhs);
+}
+)";
+
+    wgpu::ComputePipeline pipeline = CreateComputePipeline(shader, "main");
+
+    wgpu::BindGroup bindGroup =
+        utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0), {{0, buffer}});
+
+    wgpu::CommandBuffer commands;
+    {
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
+        pass.SetPipeline(pipeline);
+        pass.SetBindGroup(0, bindGroup);
+        pass.DispatchWorkgroups(1);
+        pass.End();
+
+        commands = encoder.Finish();
+    }
+
+    queue.Submit(1, &commands);
+
+    EXPECT_BUFFER_FLOAT_RANGE_EQ(expected.data(), buffer, 0, expected.size());
+}
+
+// Test that matrices in structs can be passed by value, which can cause issues on Qualcomm devices.
+// See crbug.com/tint/2045#c5
+TEST_P(ShaderTests, PassMatrixInStructByValue) {
+    std::vector<float> inputs{0.1, 0.2, 0.3, 0.0, 0.4, 0.5, 0.6, 0.0, 0.7, 0.8, 0.9, 0.0};
+    std::vector<float> expected{1.1, 1.2, 1.3, 0.0, 1.4, 1.5, 1.6, 0.0, 1.7, 1.8, 1.9, 0.0};
+    uint64_t bufferSize = static_cast<uint64_t>(inputs.size() * sizeof(float));
+    wgpu::Buffer buffer = utils::CreateBufferFromData(
+        device, inputs.data(), bufferSize, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc);
+
+    std::string shader = R"(
+struct S {
+    m : mat3x3f,
+}
+
+@group(0) @binding(0)
+var<storage, read_write> buffer : S;
+
+fn foo(rhs : S) {
+  buffer = S(buffer.m + rhs.m);
+}
+
+@compute @workgroup_size(1)
+fn main() {
+  let rhs = S(mat3x3(1, 1, 1, 1, 1, 1, 1, 1, 1));
+  foo(rhs);
+}
+)";
+
+    wgpu::ComputePipeline pipeline = CreateComputePipeline(shader, "main");
+
+    wgpu::BindGroup bindGroup =
+        utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0), {{0, buffer}});
+
+    wgpu::CommandBuffer commands;
+    {
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
+        pass.SetPipeline(pipeline);
+        pass.SetBindGroup(0, bindGroup);
+        pass.DispatchWorkgroups(1);
+        pass.End();
+
+        commands = encoder.Finish();
+    }
+
+    queue.Submit(1, &commands);
+
+    EXPECT_BUFFER_FLOAT_RANGE_EQ(expected.data(), buffer, 0, expected.size());
+}
+
+// Test that robustness works correctly on uniform buffers that contain mat4x3 types, which can
+// cause issues on Qualcomm devices. See crbug.com/tint/2074.
+TEST_P(ShaderTests, Robustness_Uniform_Mat4x3) {
+    // Note: Using non-zero values would make the test more robust, but this involves small changes
+    // to the shader which stop the miscompile in the original bug from happening.
+    std::vector<float> inputs{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    std::vector<uint32_t> constantData{0};
+    std::vector<uint32_t> outputs{0xDEADBEEFu};
+    uint64_t bufferSize = static_cast<uint64_t>(inputs.size() * sizeof(float));
+    wgpu::Buffer buffer =
+        utils::CreateBufferFromData(device, inputs.data(), bufferSize, wgpu::BufferUsage::Uniform);
+    wgpu::Buffer constants =
+        utils::CreateBufferFromData(device, constantData.data(), 4, wgpu::BufferUsage::Uniform);
+    wgpu::Buffer output = utils::CreateBufferFromData(
+        device, outputs.data(), 4, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc);
+
+    // Note: This shader was lifted from WebGPU CTS, and triggers a miscompile for the second case.
+    // The miscompile disappears when too much of the unrelated code is deleted or changed, so the
+    // shader is left in it's original form.
+    std::string shader = R"(
+    struct Constants {
+      zero: u32
+    };
+    @group(0) @binding(2) var<uniform> constants: Constants;
+
+    struct Result {
+      value: u32
+    };
+    @group(0) @binding(1) var<storage, read_write> result: Result;
+
+    struct TestData {
+      data: mat4x3<f32>,
+    };
+    @group(0) @binding(0) var<uniform> s: TestData;
+
+    fn runTest() -> u32 {
+      {
+        let index = (0u);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1001u; }
+      }
+      {
+        let index = (4u - 1u);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1002u; }
+      }
+      {
+        let index = (4u);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1003u; }
+      }
+      {
+        let index = (1000000u);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1004u; }
+      }
+      {
+        let index = (4294967295u);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1005u; }
+      }
+      {
+        let index = (2147483647u);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1006u; }
+      }
+      {
+        let index = (0u) + 0u;
+        if (any(s.data[index] != vec3<f32>())) { return 0x1007u; }
+      }
+      {
+        let index = (4u - 1u) + 0u;
+        if (any(s.data[index] != vec3<f32>())) { return 0x1008u; }
+      }
+      {
+        let index = (4u) + 0u;
+        if (any(s.data[index] != vec3<f32>())) { return 0x1009u; }
+      }
+      {
+        let index = (1000000u) + 0u;
+        if (any(s.data[index] != vec3<f32>())) { return 0x100au; }
+      }
+      {
+        let index = (4294967295u) + 0u;
+        if (any(s.data[index] != vec3<f32>())) { return 0x100bu; }
+      }
+      {
+        let index = (2147483647u) + 0u;
+        if (any(s.data[index] != vec3<f32>())) { return 0x100cu; }
+      }
+      {
+        let index = (0u) + u32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x100du; }
+      }
+      {
+        let index = (4u - 1u) + u32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x100eu; }
+      }
+      {
+        let index = (4u) + u32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x100fu; }
+      }
+      {
+        let index = (1000000u) + u32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1010u; }
+      }
+      {
+        let index = (4294967295u) + u32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1011u; }
+      }
+      {
+        let index = (2147483647u) + u32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1012u; }
+      }
+      {
+        let index = (0);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1013u; }
+      }
+      {
+        let index = (4 - 1);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1014u; }
+      }
+      {
+        let index = (-1);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1015u; }
+      }
+      {
+        let index = (4);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1016u; }
+      }
+      {
+        let index = (-1000000);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1017u; }
+      }
+      {
+        let index = (1000000);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1018u; }
+      }
+      {
+        let index = (-2147483648);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1019u; }
+      }
+      {
+        let index = (2147483647);
+        if (any(s.data[index] != vec3<f32>())) { return 0x101au; }
+      }
+      {
+        let index = (0) + 0;
+        if (any(s.data[index] != vec3<f32>())) { return 0x101bu; }
+      }
+      {
+        let index = (4 - 1) + 0;
+        if (any(s.data[index] != vec3<f32>())) { return 0x101cu; }
+      }
+      {
+        let index = (-1) + 0;
+        if (any(s.data[index] != vec3<f32>())) { return 0x101du; }
+      }
+      {
+        let index = (4) + 0;
+        if (any(s.data[index] != vec3<f32>())) { return 0x101eu; }
+      }
+      {
+        let index = (-1000000) + 0;
+        if (any(s.data[index] != vec3<f32>())) { return 0x101fu; }
+      }
+      {
+        let index = (1000000) + 0;
+        if (any(s.data[index] != vec3<f32>())) { return 0x1020u; }
+      }
+      {
+        let index = (-2147483648) + 0;
+        if (any(s.data[index] != vec3<f32>())) { return 0x1021u; }
+      }
+      {
+        let index = (2147483647) + 0;
+        if (any(s.data[index] != vec3<f32>())) { return 0x1022u; }
+      }
+      {
+        let index = (0) + i32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1023u; }
+      }
+      {
+        let index = (4 - 1) + i32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1024u; }
+      }
+      {
+        let index = (-1) + i32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1025u; }
+      }
+      {
+        let index = (4) + i32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1026u; }
+      }
+      {
+        let index = (-1000000) + i32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1027u; }
+      }
+      {
+        let index = (1000000) + i32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1028u; }
+      }
+      {
+        let index = (-2147483648) + i32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x1029u; }
+      }
+      {
+        let index = (2147483647) + i32(constants.zero);
+        if (any(s.data[index] != vec3<f32>())) { return 0x102au; }
+      }
+      return 0u;
+    }
+
+    @compute @workgroup_size(1)
+    fn main() {
+      result.value = runTest();
+    }
+)";
+
+    wgpu::ComputePipeline pipeline = CreateComputePipeline(shader, "main");
+
+    wgpu::BindGroup bindGroup = utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0),
+                                                     {{0, buffer}, {1, output}, {2, constants}});
+
+    wgpu::CommandBuffer commands;
+    {
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
+        pass.SetPipeline(pipeline);
+        pass.SetBindGroup(0, bindGroup);
+        pass.DispatchWorkgroups(1);
+        pass.End();
+
+        commands = encoder.Finish();
+    }
+
+    queue.Submit(1, &commands);
+
+    outputs[0] = 0u;
+    EXPECT_BUFFER_U32_RANGE_EQ(outputs.data(), output, 0, outputs.size());
+}
+
+// SSBOs declared with the same name in multiple shader stages must contain the same members in
+// GLSL. If not renamed properly, names of binding at (2, 2) in the vertex stage and (0, 3) in the
+// fragment stage can possibly collide.
+TEST_P(ShaderTests, StorageAcrossStages) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
+
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        @group(2) @binding(2) var<storage> u0_2: f32;
+        @group(1) @binding(1) var<storage> u0_1: f32;
+        @group(0) @binding(0) var<storage> u0_0: f32;
+
+        @group(0) @binding(3) var<storage> u1_3: f32;
+        @group(2) @binding(2) var<storage> u1_2: f32;
+        @group(1) @binding(1) var<storage> u1_1: f32;
+        @group(0) @binding(0) var<storage> u1_0: f32;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+          _ = u0_0;
+          _ = u0_1;
+          _ = u0_2;
+          return vec4f(0);
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+          _ = u1_0;
+          _ = u1_1;
+          _ = u1_2;
+          _ = u1_3;
+          return vec4f(0);
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// SSBOs declared with the same name in multiple shader stages must contain the same members in
+// GLSL. If not renamed properly, names of binding at (2, 2) in the vertex stage and (0, 3) in the
+// fragment stage can possibly collide.
+TEST_P(ShaderTests, StorageAcrossStagesStruct) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
+
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        struct block {
+            inner: f32
+        }
+        @group(2) @binding(2) var<storage> u0_2: block;
+
+        @group(0) @binding(3) var<storage> u1_3: f32;
+        @group(2) @binding(2) var<storage> u1_2: f32;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+          _ = u0_2.inner;
+          return vec4f(0);
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+          _ = u1_2;
+          _ = u1_3;
+          return vec4f(0);
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// SSBOs declared with the same name in multiple shader stages must contain the same members in
+// GLSL. If not renamed properly, names of binding at (2, 2) in the vertex stage and (0, 3) in the
+// fragment stage can possibly collide.
+TEST_P(ShaderTests, StorageAcrossStagesSeparateModules) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
+
+    wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
+        @group(2) @binding(2) var<storage> u0_2: f32;
+        @group(1) @binding(1) var<storage> u0_1: f32;
+        @group(0) @binding(0) var<storage> u0_0: f32;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+          _ = u0_0;
+          _ = u0_1;
+          _ = u0_2;
+          return vec4f(0);
+        }
+    )");
+    wgpu::ShaderModule fsModule = utils::CreateShaderModule(device, R"(
+        @group(0) @binding(3) var<storage> u1_3: f32;
+        @group(2) @binding(2) var<storage> u1_2: f32;
+        @group(1) @binding(1) var<storage> u1_1: f32;
+        @group(0) @binding(0) var<storage> u1_0: f32;
+
+        @fragment fn fragment() -> @location(0) vec4f {
+          _ = u1_0;
+          _ = u1_1;
+          _ = u1_2;
+          _ = u1_3;
+          return vec4f(0);
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = vsModule;
+    desc.cFragment.module = fsModule;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// Deliberately mismatch an SSBO block name at differrent stages.
+TEST_P(ShaderTests, StorageAcrossStagesSeparateModuleMismatch) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
+
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        @group(0) @binding(0) var<storage> tint_symbol_ubo_0: f32;
+        @group(0) @binding(1) var<storage> tint_symbol_ubo_1: u32;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+          _ = tint_symbol_ubo_0;
+          _ = tint_symbol_ubo_1;
+            return vec4f(tint_symbol_ubo_0) + vec4f(f32(tint_symbol_ubo_1));
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+          _ = tint_symbol_ubo_1;
+            return vec4f(f32(tint_symbol_ubo_1));
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// Having different block contents at the same binding point used in different stages is allowed.
+TEST_P(ShaderTests, StorageAcrossStagesSameBindingPointCollide) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
+
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        struct X { x : vec4f }
+        struct Y { y : vec4i }
+
+        @group(0) @binding(0) var<storage> v : X;
+        @group(0) @binding(0) var<storage> f : Y;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+            _ = v;
+            return vec4f();
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+            _ = f;
+            return vec4f();
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// Having different block contents at the same binding point used in different stages is allowed,
+// with or without struct wrapper.
+TEST_P(ShaderTests, StorageAcrossStagesSameBindingPointCollideMixedStructDef) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
+
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        struct X { x : vec4f }
+
+        @group(0) @binding(0) var<storage> v : X;
+        @group(0) @binding(0) var<storage> f : vec3u;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+            _ = v;
+            return vec4f();
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+            _ = f;
+            return vec4f();
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// UBOs declared with the same name in multiple shader stages must contain the same members in GLSL.
+// If not renamed properly, names of binding at (2, 2) in the vertex stage and (0, 3) in the
+// fragment stage can possibly collide.
+TEST_P(ShaderTests, UniformAcrossStages) {
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        @group(2) @binding(2) var<uniform> u0_2: f32;
+
+        @group(0) @binding(3) var<uniform> u1_3: f32;
+        @group(2) @binding(2) var<uniform> u1_2: f32;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+          _ = u0_2;
+          return vec4f(0);
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+          _ = u1_2;
+          _ = u1_3;
+          return vec4f(0);
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// UBOs declared with the same name in multiple shader stages must contain the same members in GLSL.
+// If not renamed properly, names of binding at (2, 2) in the vertex stage and (0, 3) in the
+// fragment stage can possibly collide.
+TEST_P(ShaderTests, UniformAcrossStagesStruct) {
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        struct block {
+            inner: f32
+        }
+        @group(2) @binding(2) var<uniform> u0_2: block;
+
+        @group(0) @binding(3) var<uniform> u1_3: f32;
+        @group(2) @binding(2) var<uniform> u1_2: f32;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+          _ = u0_2.inner;
+          return vec4f(0);
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+          _ = u1_2;
+          _ = u1_3;
+          return vec4f(0);
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// UBOs declared with the same name in multiple shader stages must contain the same members in GLSL.
+// If not renamed properly, names of binding at (2, 2) in the vertex stage and (0, 3) in the
+// fragment stage can possibly collide.
+TEST_P(ShaderTests, UniformAcrossStagesSeparateModule) {
+    wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
+        @group(2) @binding(2) var<uniform> u0_2: f32;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+          _ = u0_2;
+          return vec4f(0);
+        }
+    )");
+    wgpu::ShaderModule fsModule = utils::CreateShaderModule(device, R"(
+        @group(0) @binding(3) var<uniform> u1_3: f32;
+        @group(2) @binding(2) var<uniform> u1_2: f32;
+
+        @fragment fn fragment() -> @location(0) vec4f {
+          _ = u1_2;
+          _ = u1_3;
+          return vec4f(0);
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = vsModule;
+    desc.cFragment.module = fsModule;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// Deliberately mismatch a UBO block name at differrent stages.
+TEST_P(ShaderTests, UniformAcrossStagesSeparateModuleMismatch) {
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        @group(0) @binding(0) var<uniform> tint_symbol_ubo_0: f32;
+        @group(0) @binding(1) var<uniform> tint_symbol_ubo_1: u32;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+          _ = tint_symbol_ubo_0;
+          _ = tint_symbol_ubo_1;
+          return vec4f(tint_symbol_ubo_0) + vec4f(f32(tint_symbol_ubo_1));
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+          _ = tint_symbol_ubo_1;
+          return vec4f(f32(tint_symbol_ubo_1));
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// Test that padding is correctly applied to a UBO used in both vert and
+// frag stages. Insert an additional UBO in the frag stage before the reused UBO.
+TEST_P(ShaderTests, UniformAcrossStagesSeparateModuleMismatchWithCustomSize) {
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        struct A {
+          f : f32,
+        };
+        struct B {
+          u : u32,
+        }
+        @group(0) @binding(0) var<uniform> tint_symbol_ubo_0: A;
+        @group(0) @binding(1) var<uniform> tint_symbol_ubo_1: B;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+          _ = tint_symbol_ubo_0;
+          _ = tint_symbol_ubo_1;
+          return vec4f(tint_symbol_ubo_0.f) + vec4f(f32(tint_symbol_ubo_1.u));
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+          _ = tint_symbol_ubo_1;
+          return vec4f(f32(tint_symbol_ubo_1.u));
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// Test that accessing instance_index in the vert shader and assigning to frag_depth in the frag
+// shader works.
+TEST_P(ShaderTests, FragDepthAndInstanceIndex) {
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        @group(0) @binding(0) var<uniform> a : f32;
+
+        @fragment fn fragment() -> @builtin(frag_depth) f32 {
+          return a;
+        }
+
+        @vertex fn vertex(@builtin(instance_index) instance : u32) -> @builtin(position) vec4f {
+          return vec4f(f32(instance));
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+    desc.cFragment.targetCount = 0;
+    wgpu::DepthStencilState* dsState = desc.EnableDepthStencil();
+    dsState->depthWriteEnabled = true;
+    dsState->depthCompare = wgpu::CompareFunction::Always;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// Having different block contents at the same binding point used in different stages is allowed.
+TEST_P(ShaderTests, UniformAcrossStagesSameBindingPointCollide) {
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        struct X { x : vec4f }
+        struct Y { y : vec4i }
+
+        @group(0) @binding(0) var<uniform> v : X;
+        @group(0) @binding(0) var<uniform> f : Y;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+            _ = v;
+            return vec4f();
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+            _ = f;
+            return vec4f();
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// Having different block contents at the same binding point used in different stages is allowed,
+// with or without struct wrapper.
+TEST_P(ShaderTests, UniformAcrossStagesSameBindingPointCollideMixedStructDef) {
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        struct X { x : vec4f }
+
+        @group(0) @binding(0) var<uniform> v : X;
+        @group(0) @binding(0) var<uniform> f : vec3u;
+
+        @vertex fn vertex() -> @builtin(position) vec4f {
+            _ = v;
+            return vec4f();
+        }
+
+        @fragment fn fragment() -> @location(0) vec4f {
+            _ = f;
+            return vec4f();
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor desc;
+    desc.vertex.module = module;
+    desc.cFragment.module = module;
+
+    device.CreateRenderPipeline(&desc);
+}
+
+// Test that the `w` component of fragment builtin position behaves correctly.
+TEST_P(ShaderTests, FragmentPositionW) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
+
+    wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
+@vertex fn main(@builtin(vertex_index) vertex_index : u32) -> @builtin(position) vec4f {
+  let pos = array(
+    vec4f(-1.0, -1.0, 0.0, 2.0),
+    vec4f(-0.5,  0.0, 0.0, 2.0),
+    vec4f( 0.0, -1.0, 0.0, 2.0),
+
+    vec4f( 0.0, -1.0, 0.0, 4.0),
+    vec4f( 0.5,  0.0, 0.0, 4.0),
+    vec4f( 1.0, -1.0, 0.0, 4.0),
+
+    vec4f(-0.5,  0.0, 0.0, 8.0),
+    vec4f( 0.0,  1.0, 0.0, 8.0),
+    vec4f( 0.5,  0.0, 0.0, 8.0),
+  )[vertex_index];
+
+  return vec4(pos.xy * pos.w, 0.0, pos.w);
+})");
+
+    wgpu::ShaderModule fsModule = utils::CreateShaderModule(device, R"(
+@fragment fn main(@builtin(position) position : vec4f) -> @location(0) vec4f {
+    return vec4f(position.w, 0.0, 1.0, 1.0);
+})");
+
+    utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, 64, 64);
+
+    utils::ComboRenderPipelineDescriptor descriptor;
+    descriptor.vertex.module = vsModule;
+    descriptor.cFragment.module = fsModule;
+    descriptor.primitive.topology = wgpu::PrimitiveTopology::TriangleList;
+    descriptor.cTargets[0].format = renderPass.colorFormat;
+
+    wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&descriptor);
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass.renderPassInfo);
+    pass.SetPipeline(pipeline);
+    pass.Draw(9);
+    pass.End();
+    wgpu::CommandBuffer commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    EXPECT_PIXEL_RGBA8_BETWEEN(utils::RGBA8(126, 0, 255, 255), utils::RGBA8(129, 0, 255, 255),
+                               renderPass.color, 16, 48);
+    EXPECT_PIXEL_RGBA8_BETWEEN(utils::RGBA8(62, 0, 255, 255), utils::RGBA8(65, 0, 255, 255),
+                               renderPass.color, 48, 48);
+    EXPECT_PIXEL_RGBA8_BETWEEN(utils::RGBA8(30, 0, 255, 255), utils::RGBA8(33, 0, 255, 255),
+                               renderPass.color, 32, 16);
+}
+
+// Regression test for crbug.com/dawn/2340. GLSL requires the main enty point to be named "main".
+// We need to make sure when the entry point is "main" or other GLSL reserved keyword,
+// the renaming is always properly handled for the GL backend no matter what
+// "disable_symbol_renaming" is.
+TEST_P(ShaderTests, EntryPointShaderKeywordsComputePipeline) {
+    {
+        // Entry point is "main".
+        std::string shader = R"(
+@compute @workgroup_size(1) fn main() {
+    _ = 1;
+})";
+
+        wgpu::ComputePipeline pipeline = CreateComputePipeline(shader, "main");
+    }
+    {
+        // Entry point is a GLSL reserved keyword other than "main".
+        std::string shader = R"(
+@compute @workgroup_size(1) fn mat2() {
+    _ = 1;
+})";
+
+        wgpu::ComputePipeline pipeline = CreateComputePipeline(shader, "mat2");
+    }
+    {
+        // Entry point is not a GLSL reserved keyword.
+        std::string shader = R"(
+@compute @workgroup_size(1) fn foo1234() {
+    _ = 1;
+})";
+
+        wgpu::ComputePipeline pipeline = CreateComputePipeline(shader, "foo1234");
+    }
+}
+
+// Regression test for crbug.com/dawn/2340. GLSL requires the main enty point to be named "main".
+// We need to make sure when the entry point is "main" or other GLSL reserved keyword,
+// the renaming is always properly handled for the GL backend no matter what
+// "disable_symbol_renaming" is.
+TEST_P(ShaderTests, EntryPointShaderKeywordsRenderPipeline) {
+    std::string shader = R"(
+// Entry point is "main".
+@vertex
+fn main() -> @builtin(position) vec4f {
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+}
+// Entry point is a GLSL reserved keyword other than "main".
+@fragment
+fn mat2() -> @location(0) vec4f {
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+}
+// Entry point is not a GLSL reserved keyword.
+@fragment
+fn foo1234() -> @location(0) vec4f {
+    return vec4f(1.0, 1.0, 1.0, 1.0);
+}
+)";
+    wgpu::ShaderModule shaderModule = utils::CreateShaderModule(device, shader.c_str());
+    utils::ComboRenderPipelineDescriptor rpDesc;
+    rpDesc.vertex.module = shaderModule;
+    rpDesc.cFragment.module = shaderModule;
+    {
+        rpDesc.cFragment.entryPoint = "mat2";
+        wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
+    }
+    {
+        rpDesc.cFragment.entryPoint = "foo1234";
+        wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
+    }
+}
+
+TEST_P(ShaderTests, PrivateVarInitWithStruct) {
+    wgpu::ComputePipeline pipeline = CreateComputePipeline(R"(
+@binding(0) @group(0) var<storage, read_write> output : i32;
+
+struct S {
+  i : i32,
+}
+
+var<private> P = S(42);
+
+@compute @workgroup_size(1)
+fn main() {
+  output = P.i;
+}
+)");
+
+    wgpu::Buffer output = CreateBuffer(1);
+
+    wgpu::BindGroup bindGroup =
+        utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0), {{0, output}});
+
+    wgpu::CommandBuffer commands;
+    {
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
+        pass.SetPipeline(pipeline);
+        pass.SetBindGroup(0, bindGroup);
+        pass.DispatchWorkgroups(1);
+        pass.End();
+
+        commands = encoder.Finish();
+    }
+
+    queue.Submit(1, &commands);
+
+    EXPECT_BUFFER_U32_EQ(42, output, 0);
+}
+
+TEST_P(ShaderTests, UnrestrictedPointerParameters) {
+    // TODO(crbug.com/dawn/2350): Investigate, fix.
+    DAWN_TEST_UNSUPPORTED_IF(IsD3D11());
+
+    wgpu::ComputePipeline pipeline = CreateComputePipeline(R"(
+@binding(0) @group(0) var<uniform> input : array<vec4i, 4>;
+@binding(1) @group(0) var<storage, read_write> output : array<vec4i, 4>;
+
+fn sum(f : ptr<function, i32>,
+       w : ptr<workgroup, atomic<i32>>,
+       p : ptr<private, i32>,
+       u : ptr<uniform, vec4i>) -> vec4i {
+
+  return vec4(*f + atomicLoad(w) + *p) + *u;
+}
+
+struct S {
+  i : i32,
+}
+
+var<private> P0 = S(0);
+var<private> P1 = S(10);
+var<private> P2 = 20;
+var<private> P3 = 30;
+
+struct T {
+  i : atomic<i32>,
+}
+
+var<workgroup> W0 : T;
+var<workgroup> W1 : atomic<i32>;
+var<workgroup> W2 : T;
+var<workgroup> W3 : atomic<i32>;
+
+@compute @workgroup_size(1)
+fn main() {
+  atomicStore(&W0.i, 0);
+  atomicStore(&W1,   100);
+  atomicStore(&W2.i, 200);
+  atomicStore(&W3,   300);
+
+  var F = array(0, 1000, 2000, 3000);
+
+  output[0] = sum(&F[2], &W3,   &P1.i, &input[0]); // vec4(2310) + vec4(1, 2, 3, 4)
+  output[1] = sum(&F[1], &W2.i, &P0.i, &input[1]); // vec4(1200) + vec4(4, 3, 2, 1)
+  output[2] = sum(&F[3], &W0.i, &P3,   &input[2]); // vec4(3030) + vec4(2, 4, 1, 3)
+  output[3] = sum(&F[2], &W1,   &P2,   &input[3]); // vec4(2120) + vec4(4, 1, 2, 3)
+}
+)");
+
+    wgpu::Buffer input = CreateBuffer(
+        std::vector<uint32_t>{
+            1, 2, 3, 4,  // [0]
+            4, 3, 2, 1,  // [1]
+            2, 4, 1, 3,  // [2]
+            4, 1, 2, 3,  // [3]
+        },
+        wgpu::BufferUsage::Uniform);
+
+    std::vector<uint32_t> expected{
+        2311, 2312, 2313, 2314,  // [0]
+        1204, 1203, 1202, 1201,  // [1]
+        3032, 3034, 3031, 3033,  // [2]
+        2124, 2121, 2122, 2123,  // [3]
+    };
+
+    wgpu::Buffer output = CreateBuffer(expected.size());
+
+    wgpu::BindGroup bindGroup =
+        utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0), {{0, input}, {1, output}});
+
+    wgpu::CommandBuffer commands;
+    {
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
+        pass.SetPipeline(pipeline);
+        pass.SetBindGroup(0, bindGroup);
+        pass.DispatchWorkgroups(1);
+        pass.End();
+
+        commands = encoder.Finish();
+    }
+
+    queue.Submit(1, &commands);
+
+    EXPECT_BUFFER_U32_RANGE_EQ(expected.data(), output, 0, expected.size());
+}
+
+// A regression test for chromium:341282611. Test that Vulkan shader module cache should take the
+// primitive type into account because for `PointList` we should generate `PointSize` in the SPIRV
+// of the vertex shader.
+TEST_P(ShaderTests, SameShaderModuleToRenderPointAndNonPoint) {
+    std::string shader = R"(
+@vertex
+fn vs_main() -> @builtin(position) vec4f {
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+}
+@fragment
+fn fs_main() -> @location(0) vec4f {
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+}
+)";
+    wgpu::PipelineLayoutDescriptor layoutDesc = {};
+    layoutDesc.bindGroupLayoutCount = 0;
+    wgpu::PipelineLayout layout = device.CreatePipelineLayout(&layoutDesc);
+
+    wgpu::ShaderModule shaderModule = utils::CreateShaderModule(device, shader.c_str());
+    utils::ComboRenderPipelineDescriptor rpDesc;
+    rpDesc.vertex.module = shaderModule;
+    rpDesc.vertex.entryPoint = "vs_main";
+    rpDesc.layout = layout;
+    rpDesc.cFragment.module = shaderModule;
+    rpDesc.cFragment.entryPoint = "fs_main";
+
+    utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, 64, 64);
+    rpDesc.cTargets[0].format = renderPass.colorFormat;
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass.renderPassInfo);
+    {
+        rpDesc.primitive.topology = wgpu::PrimitiveTopology::TriangleList;
+        wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
+        pass.SetPipeline(pipeline);
+        pass.Draw(3);
+    }
+    {
+        rpDesc.primitive.topology = wgpu::PrimitiveTopology::PointList;
+        wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&rpDesc);
+        pass.SetPipeline(pipeline);
+        pass.Draw(1);
+    }
+    pass.End();
+    wgpu::CommandBuffer commandBuffer = encoder.Finish();
+    queue.Submit(1, &commandBuffer);
+}
+
 DAWN_INSTANTIATE_TEST(ShaderTests,
                       D3D11Backend(),
                       D3D12Backend(),
@@ -1511,6 +2564,8 @@ DAWN_INSTANTIATE_TEST(ShaderTests,
                       MetalBackend(),
                       OpenGLBackend(),
                       OpenGLESBackend(),
+                      OpenGLBackend({"disable_symbol_renaming"}),
+                      OpenGLESBackend({"disable_symbol_renaming"}),
                       VulkanBackend());
 
 }  // anonymous namespace

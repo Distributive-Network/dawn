@@ -1,19 +1,34 @@
-//* Copyright 2019 The Dawn Authors
+//* Copyright 2019 The Dawn & Tint Authors
 //*
-//* Licensed under the Apache License, Version 2.0 (the "License");
-//* you may not use this file except in compliance with the License.
-//* You may obtain a copy of the License at
+//* Redistribution and use in source and binary forms, with or without
+//* modification, are permitted provided that the following conditions are met:
 //*
-//*     http://www.apache.org/licenses/LICENSE-2.0
+//* 1. Redistributions of source code must retain the above copyright notice, this
+//*    list of conditions and the following disclaimer.
 //*
-//* Unless required by applicable law or agreed to in writing, software
-//* distributed under the License is distributed on an "AS IS" BASIS,
-//* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//* See the License for the specific language governing permissions and
-//* limitations under the License.
+//* 2. Redistributions in binary form must reproduce the above copyright notice,
+//*    this list of conditions and the following disclaimer in the documentation
+//*    and/or other materials provided with the distribution.
+//*
+//* 3. Neither the name of the copyright holder nor the names of its
+//*    contributors may be used to endorse or promote products derived from
+//*    this software without specific prior written permission.
+//*
+//* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+//* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+//* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+//* DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+//* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+//* DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+//* SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+//* CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+//* OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+//* OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef DAWNWIRE_SERVER_SERVERBASE_H_
-#define DAWNWIRE_SERVER_SERVERBASE_H_
+#ifndef DAWNWIRE_SERVER_SERVERBASE_AUTOGEN_H_
+#define DAWNWIRE_SERVER_SERVERBASE_AUTOGEN_H_
+
+#include <tuple>
 
 #include "dawn/dawn_proc_table.h"
 #include "dawn/wire/ChunkedCommandHandler.h"
@@ -21,6 +36,7 @@
 #include "dawn/wire/WireCmd_autogen.h"
 #include "dawn/wire/WireDeserializeAllocator.h"
 #include "dawn/wire/server/ObjectStorage.h"
+#include "dawn/wire/server/WGPUTraits_autogen.h"
 
 namespace dawn::wire::server {
 
@@ -30,70 +46,65 @@ namespace dawn::wire::server {
         ~ServerBase() override = default;
 
       protected:
+        template <typename T>
+        const KnownObjects<T>& Objects() const {
+            return std::get<KnownObjects<T>>(mKnown);
+        }
+        template <typename T>
+        KnownObjects<T>& Objects() {
+            return std::get<KnownObjects<T>>(mKnown);
+        }
+
+        template <typename T>
+        void Release(const DawnProcTable& procs, T handle) {
+            (procs.*WGPUTraits<T>::Release)(handle);
+        }
+
         void DestroyAllObjects(const DawnProcTable& procs) {
             //* Release devices first to force completion of any async work.
             {
-                std::vector<WGPUDevice> handles = mKnownDevice.AcquireAllHandles();
+                std::vector<WGPUDevice> handles = Objects<WGPUDevice>().AcquireAllHandles();
                 for (WGPUDevice handle : handles) {
-                    procs.deviceRelease(handle);
+                    Release(procs, handle);
                 }
             }
             //* Free all objects when the server is destroyed
             {% for type in by_category["object"] if type.name.get() != "device" %}
+                {% set cType = as_cType(type.name) %}
                 {
-                    std::vector<{{as_cType(type.name)}}> handles = mKnown{{type.name.CamelCase()}}.AcquireAllHandles();
-                    for ({{as_cType(type.name)}} handle : handles) {
-                        procs.{{as_varName(type.name, Name("release"))}}(handle);
+                    std::vector<{{cType}}> handles = Objects<{{cType}}>().AcquireAllHandles();
+                    for ({{cType}} handle : handles) {
+                        Release(procs, handle);
                     }
                 }
             {% endfor %}
         }
 
-        {% for type in by_category["object"] %}
-            const KnownObjects<{{as_cType(type.name)}}>& {{type.name.CamelCase()}}Objects() const {
-                return mKnown{{type.name.CamelCase()}};
-            }
-            KnownObjects<{{as_cType(type.name)}}>& {{type.name.CamelCase()}}Objects() {
-                return mKnown{{type.name.CamelCase()}};
-            }
-        {% endfor %}
-
-        {% for type in by_category["object"] if type.name.CamelCase() in server_reverse_lookup_objects %}
-            const ObjectIdLookupTable<{{as_cType(type.name)}}>& {{type.name.CamelCase()}}ObjectIdTable() const {
-                return m{{type.name.CamelCase()}}IdTable;
-            }
-            ObjectIdLookupTable<{{as_cType(type.name)}}>& {{type.name.CamelCase()}}ObjectIdTable() {
-                return m{{type.name.CamelCase()}}IdTable;
-            }
-        {% endfor %}
-
       private:
         // Implementation of the ObjectIdResolver interface
         {% for type in by_category["object"] %}
-            WireResult GetFromId(ObjectId id, {{as_cType(type.name)}}* out) const final {
-                return mKnown{{type.name.CamelCase()}}.GetNativeHandle(id, out);
+            {% set cType = as_cType(type.name) %}
+            WireResult GetFromId(ObjectId id, {{cType}}* out) const final {
+                return Objects<{{cType}}>().GetNativeHandle(id, out);
             }
 
-            WireResult GetOptionalFromId(ObjectId id, {{as_cType(type.name)}}* out) const final {
+            WireResult GetOptionalFromId(ObjectId id, {{cType}}* out) const final {
                 if (id == 0) {
                     *out = nullptr;
                     return WireResult::Success;
                 }
-
                 return GetFromId(id, out);
             }
         {% endfor %}
 
         //* The list of known IDs for each object type.
-        {% for type in by_category["object"] %}
-            KnownObjects<{{as_cType(type.name)}}> mKnown{{type.name.CamelCase()}};
-        {% endfor %}
-
-        {% for type in by_category["object"] if type.name.CamelCase() in server_reverse_lookup_objects %}
-            ObjectIdLookupTable<{{as_cType(type.name)}}> m{{type.name.CamelCase()}}IdTable;
-        {% endfor %}
+        std::tuple<
+            {% for type in by_category["object"] %}
+                KnownObjects<{{as_cType(type.name)}}>{{ ", " if not loop.last else "" }}
+            {% endfor %}
+        > mKnown;
     };
 
 }  // namespace dawn::wire::server
 
-#endif  // DAWNWIRE_SERVER_SERVERBASE_H_
+#endif  // DAWNWIRE_SERVER_SERVERBASE_AUTOGEN_H_

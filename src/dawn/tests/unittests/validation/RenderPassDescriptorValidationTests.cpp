@@ -1,16 +1,29 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <cmath>
 #include <string>
@@ -105,6 +118,26 @@ TEST_F(RenderPassDescriptorValidationTest, OneAttachment) {
 
         AssertBeginRenderPassSuccess(&renderPass);
     }
+}
+
+// Regression test for chromium:1487788 were cached attachment states used in a pass encoder created
+// from an error command encoder are not cleaned up if the device's last reference is dropped before
+// the pass.
+TEST_F(RenderPassDescriptorValidationTest, ErrorEncoderLingeringAttachmentState) {
+    utils::ComboRenderPassDescriptor descriptor(
+        {Create2DAttachment(device, 1, 1, wgpu::TextureFormat::RGBA8Unorm)});
+
+    // Purposely add a bad chain to the command encoder to force an error command encoder.
+    wgpu::CommandEncoderDescriptor commandEncoderDesc = {};
+    wgpu::ChainedStruct chain = {};
+    commandEncoderDesc.nextInChain = &chain;
+
+    wgpu::CommandEncoder commandEncoder;
+    ASSERT_DEVICE_ERROR(commandEncoder = device.CreateCommandEncoder(&commandEncoderDesc));
+    wgpu::RenderPassEncoder renderPassEncoder = commandEncoder.BeginRenderPass(&descriptor);
+
+    ExpectDeviceDestruction();
+    device = nullptr;
 }
 
 // Test OOB color attachment indices are handled
@@ -404,6 +437,144 @@ TEST_F(RenderPassDescriptorValidationTest, TextureViewLayerCountForColorAndDepth
         wgpu::TextureView depthStencilView = depthStencilTexture.CreateView(&descriptor);
         utils::ComboRenderPassDescriptor renderPass({}, depthStencilView);
         AssertBeginRenderPassSuccess(&renderPass);
+    }
+}
+
+// Check that depthSlice must be set correctly for 3D color attachments and must not be set for
+// non-3D color attachments.
+TEST_F(RenderPassDescriptorValidationTest, TextureViewDepthSliceForColor) {
+    constexpr uint32_t kSize = 8;
+    constexpr uint32_t kDepthOrArrayLayers = 4;
+    constexpr uint32_t kMipLevelCounts = 4;
+    constexpr wgpu::TextureFormat kColorFormat = wgpu::TextureFormat::RGBA8Unorm;
+
+    wgpu::Texture colorTexture3D =
+        CreateTexture(device, wgpu::TextureDimension::e3D, kColorFormat, kSize, kSize,
+                      kDepthOrArrayLayers, kMipLevelCounts);
+
+    wgpu::TextureView colorView2D = Create2DAttachment(device, kSize, kSize, kColorFormat);
+
+    wgpu::TextureViewDescriptor baseDescriptor;
+    baseDescriptor.dimension = wgpu::TextureViewDimension::e3D;
+    baseDescriptor.baseArrayLayer = 0;
+    baseDescriptor.arrayLayerCount = 1;
+    baseDescriptor.baseMipLevel = 0;
+    baseDescriptor.mipLevelCount = 1;
+
+    // Control case: It's valid if depthSlice is set within the depth range of a 3D color
+    // attachment.
+    {
+        wgpu::TextureView view = colorTexture3D.CreateView(&baseDescriptor);
+        utils::ComboRenderPassDescriptor renderPass({view});
+        renderPass.cColorAttachments[0].depthSlice = kDepthOrArrayLayers - 1;
+        AssertBeginRenderPassSuccess(&renderPass);
+    }
+
+    // It's invalid if depthSlice is not set for a 3D color attachment.
+    {
+        wgpu::TextureView view = colorTexture3D.CreateView(&baseDescriptor);
+        utils::ComboRenderPassDescriptor renderPass({view});
+        AssertBeginRenderPassError(&renderPass);
+    }
+
+    // It's invalid if depthSlice is out of the depth range of a 3D color attachment.
+    {
+        wgpu::TextureView view = colorTexture3D.CreateView(&baseDescriptor);
+        utils::ComboRenderPassDescriptor renderPass({view});
+        renderPass.cColorAttachments[0].depthSlice = kDepthOrArrayLayers;
+        AssertBeginRenderPassError(&renderPass);
+    }
+
+    // It's invalid if depthSlice is out of the depth range of a 3D color attachment with non-zero
+    // mip level.
+    {
+        wgpu::TextureViewDescriptor descriptor = baseDescriptor;
+        descriptor.baseMipLevel = 2;
+        wgpu::TextureView view = colorTexture3D.CreateView(&descriptor);
+        utils::ComboRenderPassDescriptor renderPass({view});
+        renderPass.cColorAttachments[0].depthSlice = kDepthOrArrayLayers >> 2;
+        AssertBeginRenderPassError(&renderPass);
+    }
+
+    // Control case: It's valid if depthSlice is unset for a non-3D color attachment.
+    {
+        utils::ComboRenderPassDescriptor renderPass({colorView2D});
+        AssertBeginRenderPassSuccess(&renderPass);
+    }
+
+    // It's invalid if depthSlice is set for a non-3D color attachment.
+    {
+        utils::ComboRenderPassDescriptor renderPass({colorView2D});
+        renderPass.cColorAttachments[0].depthSlice = 0;
+        AssertBeginRenderPassError(&renderPass);
+    }
+}
+
+// Check that the depth slices of a 3D color attachment cannot overlap in same render pass.
+TEST_F(RenderPassDescriptorValidationTest, TextureViewDepthSliceOverlaps) {
+    constexpr uint32_t kSize = 8;
+    constexpr uint32_t kDepthOrArrayLayers = 2;
+    constexpr uint32_t kMipLevelCounts = 2;
+    constexpr wgpu::TextureFormat kColorFormat = wgpu::TextureFormat::RGBA8Unorm;
+
+    wgpu::Texture colorTexture3D =
+        CreateTexture(device, wgpu::TextureDimension::e3D, kColorFormat, kSize, kSize,
+                      kDepthOrArrayLayers, kMipLevelCounts);
+
+    wgpu::TextureViewDescriptor baseDescriptor;
+    baseDescriptor.dimension = wgpu::TextureViewDimension::e3D;
+    baseDescriptor.baseArrayLayer = 0;
+    baseDescriptor.arrayLayerCount = 1;
+    baseDescriptor.baseMipLevel = 0;
+    baseDescriptor.mipLevelCount = 1;
+
+    // Control case: It's valid if different depth slices of a texture are set in a render pass.
+    {
+        wgpu::TextureView view = colorTexture3D.CreateView(&baseDescriptor);
+        utils::ComboRenderPassDescriptor renderPass({view, view});
+        renderPass.cColorAttachments[0].depthSlice = 0;
+        renderPass.cColorAttachments[1].depthSlice = 1;
+        AssertBeginRenderPassSuccess(&renderPass);
+    }
+
+    // It's valid if same depth slice of different mip levels from a texture with size [1, 1, n] is
+    // set in a render pass.
+    {
+        wgpu::Texture texture = CreateTexture(device, wgpu::TextureDimension::e3D, kColorFormat, 1,
+                                              1, kDepthOrArrayLayers, kMipLevelCounts);
+        wgpu::TextureView view = texture.CreateView(&baseDescriptor);
+        wgpu::TextureViewDescriptor descriptor = baseDescriptor;
+        descriptor.baseMipLevel = 1;
+        wgpu::TextureView view2 = texture.CreateView(&descriptor);
+
+        utils::ComboRenderPassDescriptor renderPass({view, view2});
+        renderPass.cColorAttachments[0].depthSlice = 0;
+        renderPass.cColorAttachments[1].depthSlice = 0;
+        AssertBeginRenderPassSuccess(&renderPass);
+    }
+
+    // It's valid if same depth slice of different textures is set in a render pass.
+    {
+        wgpu::Texture otherColorTexture3D =
+            CreateTexture(device, wgpu::TextureDimension::e3D, kColorFormat, kSize, kSize,
+                          kDepthOrArrayLayers, kMipLevelCounts);
+
+        wgpu::TextureView view = colorTexture3D.CreateView(&baseDescriptor);
+        wgpu::TextureView view2 = otherColorTexture3D.CreateView(&baseDescriptor);
+
+        utils::ComboRenderPassDescriptor renderPass({view, view2});
+        renderPass.cColorAttachments[0].depthSlice = 0;
+        renderPass.cColorAttachments[1].depthSlice = 0;
+        AssertBeginRenderPassSuccess(&renderPass);
+    }
+
+    // It's invalid if same depth slice of a texture is set twice in a render pass.
+    {
+        wgpu::TextureView view = colorTexture3D.CreateView(&baseDescriptor);
+        utils::ComboRenderPassDescriptor renderPass({view, view});
+        renderPass.cColorAttachments[0].depthSlice = 0;
+        renderPass.cColorAttachments[1].depthSlice = 0;
+        AssertBeginRenderPassError(&renderPass);
     }
 }
 
@@ -814,6 +985,39 @@ TEST_F(MultisampledRenderPassDescriptorValidationTest, MultisampledResolveTarget
     AssertBeginRenderPassError(&renderPass);
 }
 
+// Test the view dimension of resolve target.
+TEST_F(MultisampledRenderPassDescriptorValidationTest, ResolveTargetDimension) {
+    wgpu::Texture resolveTexture2D = CreateTexture(
+        device, wgpu::TextureDimension::e2D, kColorFormat, kSize, kSize, kArrayLayers, kLevelCount);
+
+    // It is allowed to use a 2d texture view as resolve target.
+    {
+        utils::ComboRenderPassDescriptor renderPass = CreateMultisampledRenderPass();
+        renderPass.cColorAttachments[0].resolveTarget = resolveTexture2D.CreateView();
+        AssertBeginRenderPassSuccess(&renderPass);
+    }
+
+    // It is allowed to use a 2d-array texture view as resolve target.
+    {
+        wgpu::TextureViewDescriptor viewDesc;
+        viewDesc.dimension = wgpu::TextureViewDimension::e2DArray;
+
+        utils::ComboRenderPassDescriptor renderPass = CreateMultisampledRenderPass();
+        renderPass.cColorAttachments[0].resolveTarget = resolveTexture2D.CreateView(&viewDesc);
+        AssertBeginRenderPassSuccess(&renderPass);
+    }
+
+    // It is not allowed to use a 3d texture view as resolve target.
+    {
+        wgpu::Texture resolveTexture3D =
+            CreateTexture(device, wgpu::TextureDimension::e3D, kColorFormat, kSize, kSize,
+                          kArrayLayers, kLevelCount);
+        utils::ComboRenderPassDescriptor renderPass = CreateMultisampledRenderPass();
+        renderPass.cColorAttachments[0].resolveTarget = resolveTexture3D.CreateView();
+        AssertBeginRenderPassError(&renderPass);
+    }
+}
+
 // It is not allowed to use a resolve target with array layer count > 1.
 TEST_F(MultisampledRenderPassDescriptorValidationTest, ResolveTargetArrayLayerMoreThanOne) {
     constexpr uint32_t kArrayLayers2 = 2;
@@ -929,10 +1133,38 @@ TEST_F(MultisampledRenderPassDescriptorValidationTest,
     }
 }
 
+// Test the overlaps of multiple resolve target.
+TEST_F(MultisampledRenderPassDescriptorValidationTest, ResolveTargetUsedTwice) {
+    wgpu::TextureView resolveTextureView = CreateNonMultisampledColorTextureView();
+    wgpu::TextureView colorTextureView1 = CreateMultisampledColorTextureView();
+    wgpu::TextureView colorTextureView2 = CreateMultisampledColorTextureView();
+
+    // It is allowed to use different resolve targets in a render pass.
+    {
+        wgpu::TextureView anotherResolveTextureView = CreateNonMultisampledColorTextureView();
+        utils::ComboRenderPassDescriptor renderPass =
+            utils::ComboRenderPassDescriptor({colorTextureView1, colorTextureView2});
+        renderPass.cColorAttachments[0].resolveTarget = resolveTextureView;
+        renderPass.cColorAttachments[1].resolveTarget = anotherResolveTextureView;
+
+        AssertBeginRenderPassSuccess(&renderPass);
+    }
+
+    // It is not allowed to use a resolve target twice in a render pass.
+    {
+        utils::ComboRenderPassDescriptor renderPass =
+            utils::ComboRenderPassDescriptor({colorTextureView1, colorTextureView2});
+        renderPass.cColorAttachments[0].resolveTarget = resolveTextureView;
+        renderPass.cColorAttachments[1].resolveTarget = resolveTextureView;
+
+        AssertBeginRenderPassError(&renderPass);
+    }
+}
+
 // Tests the texture format of the resolve target must support being used as resolve target.
 TEST_F(MultisampledRenderPassDescriptorValidationTest, ResolveTargetFormat) {
     for (wgpu::TextureFormat format : utils::kAllTextureFormats) {
-        if (!utils::TextureFormatSupportsMultisampling(format) ||
+        if (!utils::TextureFormatSupportsMultisampling(device, format) ||
             utils::IsDepthOrStencilFormat(format)) {
             continue;
         }
@@ -945,7 +1177,7 @@ TEST_F(MultisampledRenderPassDescriptorValidationTest, ResolveTargetFormat) {
 
         utils::ComboRenderPassDescriptor renderPass({colorTexture.CreateView()});
         renderPass.cColorAttachments[0].resolveTarget = resolveTarget.CreateView();
-        if (utils::TextureFormatSupportsResolveTarget(format)) {
+        if (utils::TextureFormatSupportsResolveTarget(device, format)) {
             AssertBeginRenderPassSuccess(&renderPass);
         } else {
             AssertBeginRenderPassError(&renderPass);
@@ -1009,6 +1241,20 @@ TEST_F(MultisampledRenderPassDescriptorValidationTest,
     renderPass.cColorAttachments[0].nextInChain = &renderToSingleSampledDesc;
 
     AssertBeginRenderPassError(&renderPass, testing::HasSubstr("feature is not enabled"));
+}
+
+// Creating a render pass with LoadOp::ExpandResolveTexture without DawnLoadResolveTexture feature
+// enabled should result in error.
+TEST_F(MultisampledRenderPassDescriptorValidationTest, LoadResolveTextureWithoutFeatureEnabled) {
+    auto multisampledColorTextureView = CreateMultisampledColorTextureView();
+    auto resolveTarget = CreateNonMultisampledColorTextureView();
+
+    auto renderPass = CreateMultisampledRenderPass();
+    renderPass.cColorAttachments[0].view = multisampledColorTextureView;
+    renderPass.cColorAttachments[0].resolveTarget = resolveTarget;
+    renderPass.cColorAttachments[0].loadOp = wgpu::LoadOp::ExpandResolveTexture;
+
+    AssertBeginRenderPassError(&renderPass, testing::HasSubstr("is not enabled"));
 }
 
 // Tests that NaN cannot be accepted as a valid color or depth clear value and INFINITY is valid
@@ -1186,187 +1432,103 @@ TEST_F(RenderPassDescriptorValidationTest, DefaultDepthClearValue) {
     AssertBeginRenderPassSuccess(&renderPassDescriptor);
 }
 
+// Check the validation rules around depth/stencilReadOnly
 TEST_F(RenderPassDescriptorValidationTest, ValidateDepthStencilReadOnly) {
     wgpu::TextureView colorView = Create2DAttachment(device, 1, 1, wgpu::TextureFormat::RGBA8Unorm);
     wgpu::TextureView depthStencilView =
         Create2DAttachment(device, 1, 1, wgpu::TextureFormat::Depth24PlusStencil8);
     wgpu::TextureView depthStencilViewNoStencil =
         Create2DAttachment(device, 1, 1, wgpu::TextureFormat::Depth24Plus);
+    wgpu::TextureView stencilView = Create2DAttachment(device, 1, 1, wgpu::TextureFormat::Stencil8);
 
-    // Tests that a read-only pass with depthReadOnly set to true succeeds.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilView);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
+    using Aspect = wgpu::TextureAspect;
+    struct TestSpec {
+        wgpu::TextureFormat format;
+        Aspect formatAspects;
+        Aspect testAspect;
+    };
+
+    TestSpec specs[] = {
+        {wgpu::TextureFormat::Depth24PlusStencil8, Aspect::All, Aspect::StencilOnly},
+        {wgpu::TextureFormat::Depth24PlusStencil8, Aspect::All, Aspect::DepthOnly},
+        {wgpu::TextureFormat::Depth24Plus, Aspect::DepthOnly, Aspect::DepthOnly},
+        {wgpu::TextureFormat::Stencil8, Aspect::All, Aspect::StencilOnly},
+    };
+    for (const auto& spec : specs) {
+        wgpu::TextureView depthStencil = Create2DAttachment(device, 1, 1, spec.format);
+        utils::ComboRenderPassDescriptor renderPass({}, depthStencilView);
+
+        Aspect testAspect = spec.testAspect;
+        Aspect otherAspect =
+            testAspect == Aspect::DepthOnly ? Aspect::StencilOnly : Aspect::DepthOnly;
+
+        auto Set = [&](Aspect aspect, wgpu::LoadOp loadOp, wgpu::StoreOp storeOp, bool readonly) {
+            if (aspect == Aspect::DepthOnly) {
+                renderPass.cDepthStencilAttachmentInfo.depthLoadOp = loadOp;
+                renderPass.cDepthStencilAttachmentInfo.depthStoreOp = storeOp;
+                renderPass.cDepthStencilAttachmentInfo.depthReadOnly = readonly;
+            } else {
+                DAWN_ASSERT(aspect == Aspect::StencilOnly);
+                renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = loadOp;
+                renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = storeOp;
+                renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = readonly;
+            }
+        };
+
+        // Tests that a read-only pass with depth/stencilReadOnly both set to true succeeds.
+        Set(testAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
+        Set(otherAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
         AssertBeginRenderPassSuccess(&renderPass);
-    }
 
-    // Tests that a pass with mismatched depthReadOnly and stencilReadOnly values passes when
-    // there is no stencil component in the format (deprecated).
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilViewNoStencil);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Load;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = false;
-        AssertBeginRenderPassError(&renderPass);
-    }
-
-    // Tests that a pass with mismatched depthReadOnly and stencilReadOnly values fails when
-    // there there is no stencil component in the format and stencil loadOp/storeOp are passed.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilViewNoStencil);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Clear;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = false;
+        // Tests that readOnly with LoadOp not undefined is invalid.
+        Set(testAspect, wgpu::LoadOp::Clear, wgpu::StoreOp::Undefined, true);
+        Set(otherAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
         AssertBeginRenderPassError(&renderPass);
 
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Store;
+        Set(testAspect, wgpu::LoadOp::Load, wgpu::StoreOp::Undefined, true);
+        Set(otherAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
         AssertBeginRenderPassError(&renderPass);
 
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Clear;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = false;
+        // Tests that readOnly with StoreOp not undefined is invalid.
+        Set(testAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Store, true);
+        Set(otherAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
         AssertBeginRenderPassError(&renderPass);
-    }
 
-    // Tests that a pass with depthReadOnly=true and stencilReadOnly=true can pass
-    // when there is only depth component in the format. We actually enable readonly
-    // depth/stencil attachment in this case.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilViewNoStencil);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
+        Set(testAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Discard, true);
+        Set(otherAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
+        AssertBeginRenderPassError(&renderPass);
+
+        // Test for the aspect's not present in the format, if applicable.
+        if (testAspect != spec.formatAspects) {
+            // Tests that readOnly with LoadOp not undefined is invalid even if the aspect is not in
+            // the format.
+            Set(testAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
+            Set(otherAspect, wgpu::LoadOp::Clear, wgpu::StoreOp::Undefined, true);
+            AssertBeginRenderPassError(&renderPass);
+
+            Set(testAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
+            Set(otherAspect, wgpu::LoadOp::Load, wgpu::StoreOp::Undefined, true);
+            AssertBeginRenderPassError(&renderPass);
+
+            // Tests that readOnly with StoreOp not undefined is invalid even if the aspect is not
+            // in the format.
+            Set(testAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
+            Set(otherAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Store, true);
+            AssertBeginRenderPassError(&renderPass);
+
+            Set(testAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
+            Set(otherAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Discard, true);
+            AssertBeginRenderPassError(&renderPass);
+        }
+
+        // Test that it is allowed to set only one of the aspects readonly.
+        Set(testAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
+        Set(otherAspect, wgpu::LoadOp::Load, wgpu::StoreOp::Store, false);
         AssertBeginRenderPassSuccess(&renderPass);
-    }
 
-    // Tests that a pass with depthReadOnly=false and stencilReadOnly=true can pass
-    // when there is only depth component in the format. We actually don't enable readonly
-    // depth/stencil attachment in this case.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilViewNoStencil);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Load;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = false;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
+        Set(testAspect, wgpu::LoadOp::Load, wgpu::StoreOp::Store, false);
+        Set(otherAspect, wgpu::LoadOp::Undefined, wgpu::StoreOp::Undefined, true);
         AssertBeginRenderPassSuccess(&renderPass);
-    }
-
-    // TODO(https://crbug.com/dawn/666): Add a test case for stencil-only once stencil8 is
-    // supported (depthReadOnly and stencilReadOnly mismatch but no depth component).
-
-    // Tests that a pass with mismatched depthReadOnly and stencilReadOnly values fails when
-    // both depth and stencil components exist.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilView);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Load;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = false;
-        AssertBeginRenderPassError(&renderPass);
-    }
-
-    // Tests that a pass with loadOp set to clear and readOnly set to true fails.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilView);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Clear;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Clear;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
-        AssertBeginRenderPassError(&renderPass);
-    }
-
-    // Tests that a pass with storeOp set to discard and readOnly set to true fails.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilView);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Load;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Discard;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Load;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Discard;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
-        AssertBeginRenderPassError(&renderPass);
-    }
-
-    // Tests that a pass with loadOp set to load, storeOp set to store, and readOnly set to true
-    // fails.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilView);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Load;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Load;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
-        AssertBeginRenderPassError(&renderPass);
-    }
-
-    // Tests that a pass with only depthLoadOp set to load and readOnly set to true fails.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilView);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Load;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
-        AssertBeginRenderPassError(&renderPass);
-    }
-
-    // Tests that a pass with only depthStoreOp set to store and readOnly set to true fails.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilView);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
-        AssertBeginRenderPassError(&renderPass);
-    }
-
-    // Tests that a pass with only stencilLoadOp set to load and readOnly set to true fails.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilView);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Load;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
-        AssertBeginRenderPassError(&renderPass);
-    }
-
-    // Tests that a pass with only stencilStoreOp set to store and readOnly set to true fails.
-    {
-        utils::ComboRenderPassDescriptor renderPass({colorView}, depthStencilView);
-        renderPass.cDepthStencilAttachmentInfo.depthLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthStoreOp = wgpu::StoreOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.depthReadOnly = true;
-        renderPass.cDepthStencilAttachmentInfo.stencilLoadOp = wgpu::LoadOp::Undefined;
-        renderPass.cDepthStencilAttachmentInfo.stencilStoreOp = wgpu::StoreOp::Store;
-        renderPass.cDepthStencilAttachmentInfo.stencilReadOnly = true;
-        AssertBeginRenderPassError(&renderPass);
     }
 }
 
@@ -1559,12 +1721,8 @@ class MSAARenderToSingleSampledRenderPassDescriptorValidationTest
         mRenderToSingleSampledDesc.implicitSampleCount = kSampleCount;
     }
 
-    WGPUDevice CreateTestDevice(dawn::native::Adapter dawnAdapter,
-                                wgpu::DeviceDescriptor descriptor) override {
-        wgpu::FeatureName requiredFeatures[1] = {wgpu::FeatureName::MSAARenderToSingleSampled};
-        descriptor.requiredFeatures = requiredFeatures;
-        descriptor.requiredFeatureCount = 1;
-        return dawnAdapter.CreateDevice(&descriptor);
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        return {wgpu::FeatureName::MSAARenderToSingleSampled};
     }
 
     utils::ComboRenderPassDescriptor CreateMultisampledRenderToSingleSampledRenderPass(
@@ -1695,6 +1853,149 @@ TEST_F(MSAARenderToSingleSampledRenderPassDescriptorValidationTest,
         colorTextureView, depthStencilTexture.CreateView());
 
     AssertBeginRenderPassError(&renderPass, testing::HasSubstr("does not match the sample count"));
+}
+
+class DawnLoadResolveTextureValidationTest : public MultisampledRenderPassDescriptorValidationTest {
+  protected:
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        return {wgpu::FeatureName::DawnLoadResolveTexture, wgpu::FeatureName::TransientAttachments};
+    }
+
+    // Create a view for a resolve texture that can be used with LoadOp::ExpandResolveTexture.
+    wgpu::TextureView CreateCompatibleResolveTextureView() {
+        wgpu::Texture colorTexture = CreateTexture(
+            device, wgpu::TextureDimension::e2D, kColorFormat, kSize, kSize, kArrayLayers,
+            kLevelCount, /*sampleCount=*/1,
+            wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding);
+
+        return colorTexture.CreateView();
+    }
+};
+
+// Test that using a valid resolve texture with LoadOp::ExpandResolveTexture doesn't raise
+// any error.
+TEST_F(DawnLoadResolveTextureValidationTest, ResolveTargetValid) {
+    auto multisampledColorTextureView = CreateMultisampledColorTextureView();
+
+    // Create a resolve texture with sample count = 1.
+    auto resolveTarget = CreateCompatibleResolveTextureView();
+
+    auto renderPass = CreateMultisampledRenderPass();
+    renderPass.cColorAttachments[0].view = multisampledColorTextureView;
+    renderPass.cColorAttachments[0].resolveTarget = resolveTarget;
+    renderPass.cColorAttachments[0].loadOp = wgpu::LoadOp::ExpandResolveTexture;
+    AssertBeginRenderPassSuccess(&renderPass);
+}
+
+// Test that LoadOp::ExpandResolveTexture can be used even if the MSAA attachment is transient.
+TEST_F(DawnLoadResolveTextureValidationTest, CompatibleWithTransientMSAATexture) {
+    auto multisampledColorTexture = CreateTexture(
+        device, wgpu::TextureDimension::e2D, kColorFormat, kSize, kSize, kArrayLayers, kLevelCount,
+        /*sampleCount=*/kSampleCount,
+        wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TransientAttachment);
+    auto multisampledColorTextureView = multisampledColorTexture.CreateView();
+
+    // Create a resolve texture with sample count = 1.
+    auto resolveTarget = CreateCompatibleResolveTextureView();
+
+    auto renderPass = CreateMultisampledRenderPass();
+    renderPass.cColorAttachments[0].view = multisampledColorTextureView;
+    renderPass.cColorAttachments[0].resolveTarget = resolveTarget;
+    renderPass.cColorAttachments[0].loadOp = wgpu::LoadOp::ExpandResolveTexture;
+    renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
+    AssertBeginRenderPassSuccess(&renderPass);
+}
+
+// When LoadOp::ExpandResolveTexture is used, a resolve texture view must be set.
+TEST_F(DawnLoadResolveTextureValidationTest, ResolveTargetMustBeSet) {
+    auto multisampledColorTextureView = CreateMultisampledColorTextureView();
+
+    // Error case: texture view is set but resolveTarget is not set.
+    auto renderPass = CreateMultisampledRenderPass();
+    renderPass.cColorAttachments[0].view = multisampledColorTextureView;
+    renderPass.cColorAttachments[0].loadOp = wgpu::LoadOp::ExpandResolveTexture;
+    AssertBeginRenderPassError(&renderPass, testing::HasSubstr("resolve target"));
+}
+
+// When LoadOp::ExpandResolveTexture is used, the attached texture view must be multisampled.
+TEST_F(DawnLoadResolveTextureValidationTest, ResolveTargetInvalidSampleCount) {
+    // Create a texture with sample count = 1.
+    auto colorTexture =
+        CreateTexture(device, wgpu::TextureDimension::e2D, kColorFormat, kSize, kSize, kArrayLayers,
+                      kLevelCount, /*sampleCount=*/1, wgpu::TextureUsage::RenderAttachment);
+
+    // Create a resolve texture with sample count = 1.
+    auto resolveTarget = CreateCompatibleResolveTextureView();
+
+    auto renderPass = CreateMultisampledRenderPass();
+    renderPass.cColorAttachments[0].view = colorTexture.CreateView();
+    renderPass.cColorAttachments[0].resolveTarget = resolveTarget;
+    renderPass.cColorAttachments[0].loadOp = wgpu::LoadOp::ExpandResolveTexture;
+    AssertBeginRenderPassError(&renderPass, testing::HasSubstr("sample count"));
+}
+
+// When LoadOp::ExpandResolveTexture is used, the resolve texture must be created with
+// TextureBinding usage.
+TEST_F(DawnLoadResolveTextureValidationTest, ResolveTargetInvalidUsage) {
+    auto multisampledColorTextureView = CreateMultisampledColorTextureView();
+
+    // Create a texture with sample count = 1.
+    auto resolveTexture =
+        CreateTexture(device, wgpu::TextureDimension::e2D, kColorFormat, kSize, kSize, kArrayLayers,
+                      kLevelCount, /*sampleCount=*/1, wgpu::TextureUsage::RenderAttachment);
+
+    auto renderPass = CreateMultisampledRenderPass();
+    renderPass.cColorAttachments[0].view = multisampledColorTextureView;
+    renderPass.cColorAttachments[0].resolveTarget = resolveTexture.CreateView();
+    renderPass.cColorAttachments[0].loadOp = wgpu::LoadOp::ExpandResolveTexture;
+    AssertBeginRenderPassError(&renderPass, testing::HasSubstr("usage"));
+}
+
+// When LoadOp::ExpandResolveTexture is enabled in a color attachment, there should be an error if a
+// color attachment's format doesn't support resolve. Example, RGBA8Sint format.
+TEST_F(DawnLoadResolveTextureValidationTest, UnresolvableColorFormatError) {
+    auto multisampledTexture = CreateTexture(
+        device, wgpu::TextureDimension::e2D, wgpu::TextureFormat::RGBA8Sint, kSize, kSize,
+        kArrayLayers, kLevelCount, /*sampleCount=*/4, wgpu::TextureUsage::RenderAttachment);
+
+    // Create a texture with sample count = 1.
+    auto resolveTexture =
+        CreateTexture(device, wgpu::TextureDimension::e2D, wgpu::TextureFormat::RGBA8Sint, kSize,
+                      kSize, kArrayLayers, kLevelCount, /*sampleCount=*/1,
+                      wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding);
+
+    auto renderPass = CreateMultisampledRenderPass();
+    renderPass.cColorAttachments[0].view = multisampledTexture.CreateView();
+    renderPass.cColorAttachments[0].resolveTarget = resolveTexture.CreateView();
+    renderPass.cColorAttachments[0].loadOp = wgpu::LoadOp::ExpandResolveTexture;
+    AssertBeginRenderPassError(&renderPass,
+                               testing::HasSubstr("does not support being used as resolve target"));
+}
+
+// The LoadOp is NOT currently supported on depth/stencil attachment.
+TEST_F(DawnLoadResolveTextureValidationTest, OnlyLoadingColorAttachmentIsSupported) {
+    auto multisampledColorTextureView = CreateMultisampledColorTextureView();
+    auto resolveTarget = CreateCompatibleResolveTextureView();
+
+    // Error case: Use ExpandResolveTexture on depth/stencil attachment.
+    {
+        // Create depth stencil texture with sample count = 4.
+        auto depthStencilTexture = CreateTexture(
+            device, wgpu::TextureDimension::e2D, wgpu::TextureFormat::Depth24PlusStencil8, kSize,
+            kSize, 1, 1, /*sampleCount=*/kSampleCount, wgpu::TextureUsage::RenderAttachment);
+
+        auto renderPass = utils::ComboRenderPassDescriptor({multisampledColorTextureView},
+                                                           depthStencilTexture.CreateView());
+        renderPass.cColorAttachments[0].resolveTarget = resolveTarget;
+        renderPass.cColorAttachments[0].loadOp = wgpu::LoadOp::ExpandResolveTexture;
+
+        renderPass.cDepthStencilAttachmentInfo.depthLoadOp =
+            renderPass.cDepthStencilAttachmentInfo.stencilLoadOp =
+                wgpu::LoadOp::ExpandResolveTexture;
+
+        AssertBeginRenderPassError(&renderPass,
+                                   testing::HasSubstr("not supported on depth/stencil attachment"));
+    }
 }
 
 }  // anonymous namespace

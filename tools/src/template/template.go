@@ -1,18 +1,31 @@
-// Copyright 2022 The Tint Authors.
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// package template wraps the golang "text/template" package to provide an
+// Package template wraps the golang "text/template" package to provide an
 // enhanced template generator.
 package template
 
@@ -25,9 +38,11 @@ import (
 	"reflect"
 	"strings"
 	"text/template"
-	"unicode"
 
+	"dawn.googlesource.com/dawn/tools/src/container"
 	"dawn.googlesource.com/dawn/tools/src/fileutils"
+	"dawn.googlesource.com/dawn/tools/src/text"
+	"dawn.googlesource.com/dawn/tools/src/transform"
 )
 
 // The template function binding table
@@ -66,27 +81,34 @@ func (t *Template) Run(w io.Writer, data any, funcs Functions) error {
 
 	// Add a bunch of generic useful functions
 	g.funcs = Functions{
+		"Append":     listAppend,
+		"Concat":     listConcat,
 		"Contains":   strings.Contains,
 		"Eval":       g.eval,
 		"Globals":    func() Map { return globals },
 		"HasPrefix":  strings.HasPrefix,
 		"HasSuffix":  strings.HasSuffix,
 		"Import":     g.importTmpl,
+		"Index":      index,
+		"Is":         is,
 		"Iterate":    iterate,
+		"Join":       strings.Join,
+		"List":       list,
 		"Map":        newMap,
-		"PascalCase": pascalCase,
-		"ToUpper":    strings.ToUpper,
-		"ToLower":    strings.ToLower,
+		"PascalCase": text.PascalCase,
 		"Repeat":     strings.Repeat,
+		"Replace":    replace,
+		"SortUnique": listSortUnique,
 		"Split":      strings.Split,
+		"Sum":        sum,
 		"Title":      strings.Title,
+		"ToLower":    strings.ToLower,
+		"ToUpper":    strings.ToUpper,
 		"TrimLeft":   strings.TrimLeft,
 		"TrimPrefix": strings.TrimPrefix,
 		"TrimRight":  strings.TrimRight,
 		"TrimSuffix": strings.TrimSuffix,
-		"Replace":    strings.ReplaceAll,
-		"Index":      index,
-		"Error":      func(err any) string { panic(err) },
+		"Error":      func(err string, args ...any) string { panic(fmt.Errorf(err, args...)) },
 	}
 
 	// Append custom functions
@@ -108,7 +130,7 @@ type generator struct {
 
 func (g *generator) bindAndParse(t *template.Template, tmpl string) error {
 	_, err := t.
-		Funcs(map[string]interface{}(g.funcs)).
+		Funcs(map[string]any(g.funcs)).
 		Option("missingkey=error").
 		Parse(tmpl)
 	return err
@@ -116,7 +138,7 @@ func (g *generator) bindAndParse(t *template.Template, tmpl string) error {
 
 // eval executes the sub-template with the given name and argument, returning
 // the generated output
-func (g *generator) eval(template string, args ...interface{}) (string, error) {
+func (g *generator) eval(template string, args ...any) (string, error) {
 	target := g.template.Lookup(template)
 	if target == nil {
 		return "", fmt.Errorf("template '%v' not found", template)
@@ -142,7 +164,7 @@ func (g *generator) eval(template string, args ...interface{}) (string, error) {
 	}
 
 	if err != nil {
-		return "", fmt.Errorf("while evaluating '%v': %v", template, err)
+		return "", fmt.Errorf("while evaluating '%v' with args '%v'\n%v", template, args, err)
 	}
 	return sb.String(), nil
 }
@@ -170,21 +192,42 @@ func (g *generator) importTmpl(path string) (string, error) {
 }
 
 // Map is a simple generic key-value map, which can be used in the template
-type Map map[interface{}]interface{}
+type Map map[any]any
 
 func newMap() Map { return Map{} }
 
 // Put adds the key-value pair into the map.
 // Put always returns an empty string so nothing is printed in the template.
-func (m Map) Put(key, value interface{}) string {
+func (m Map) Put(key, value any) string {
 	m[key] = value
 	return ""
 }
 
 // Get looks up and returns the value with the given key. If the map does not
 // contain the given key, then nil is returned.
-func (m Map) Get(key interface{}) interface{} {
+func (m Map) Get(key any) any {
 	return m[key]
+}
+
+// is returns true if the type of object is ty
+func is(object any, ty string) bool {
+	if object == nil {
+		return false
+	}
+	val := reflect.ValueOf(object)
+	for val.Kind() == reflect.Pointer {
+		val = val.Elem()
+	}
+	return ty == val.Type().Name()
+}
+
+// sum returns the sum of provided values
+func sum(numbers ...int) int {
+	n := 0
+	for _, i := range numbers {
+		n += i
+	}
+	return n
 }
 
 // iterate returns a slice of length 'n', with each element equal to its index.
@@ -197,32 +240,35 @@ func iterate(n int) []int {
 	return out
 }
 
-// pascalCase returns the snake-case string s transformed into 'PascalCase',
-// Rules:
-// * The first letter of the string is capitalized
-// * Characters following an underscore or number are capitalized
-// * Underscores are removed from the returned string
-// See: https://en.wikipedia.org/wiki/Camel_case
-func pascalCase(s string) string {
-	b := strings.Builder{}
-	upper := true
-	for _, r := range s {
-		if r == '_' || r == ' ' {
-			upper = true
-			continue
-		}
-		if upper {
-			b.WriteRune(unicode.ToUpper(r))
-			upper = false
-		} else {
-			b.WriteRune(r)
-		}
-		if unicode.IsNumber(r) {
-			upper = true
-		}
-	}
-	return b.String()
+// listAppend returns the slice list with items appended
+func listAppend(list any, items ...any) any {
+	itemValues := transform.SliceNoErr(items, reflect.ValueOf)
+	return reflect.Append(reflect.ValueOf(list), itemValues...).Interface()
 }
+
+// listConcat returns a slice formed from concatenating all the elements of all
+// the slice arguments
+func listConcat(firstList any, otherLists ...any) any {
+	out := reflect.ValueOf(firstList)
+	for _, list := range otherLists {
+		out = reflect.AppendSlice(out, reflect.ValueOf(list))
+	}
+	return out.Interface()
+}
+
+// listSortUnique returns items sorted by the string-formatted value of each element, with
+// items with the same strings deduplicated.
+func listSortUnique(items []any) []any {
+	m := make(container.Map[string, any], len(items))
+	for _, item := range items {
+		m.Add(fmt.Sprint(item), item)
+	}
+	return m.Values()
+}
+
+// list returns a new slice of elements from the argument list
+// Useful for: {{- range List "a" "b" "c" -}}{{.}}{{end}}
+func list(elements ...any) []any { return elements }
 
 func index(obj any, indices ...any) (any, error) {
 	v := reflect.ValueOf(obj)
@@ -246,4 +292,8 @@ func index(obj any, indices ...any) (any, error) {
 		return nil, nil
 	}
 	return v.Interface(), nil
+}
+
+func replace(s string, oldNew ...string) string {
+	return strings.NewReplacer(oldNew...).Replace(s)
 }

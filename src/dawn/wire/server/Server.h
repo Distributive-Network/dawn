@@ -1,16 +1,29 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_DAWN_WIRE_SERVER_SERVER_H_
 #define SRC_DAWN_WIRE_SERVER_SERVER_H_
@@ -18,8 +31,10 @@
 #include <memory>
 #include <utility>
 
+#include "dawn/common/MutexProtected.h"
 #include "dawn/wire/ChunkedCommandSerializer.h"
 #include "dawn/wire/server/ServerBase_autogen.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::wire::server {
 
@@ -51,11 +66,10 @@ class MemoryTransferService;
 //
 // void Server::MyCallbackHandler(MyUserdata* userdata, Other args) { }
 struct CallbackUserdata {
-    Server* const server;
-    std::weak_ptr<bool> const serverIsAlive;
+    const std::weak_ptr<Server> server;
 
     CallbackUserdata() = delete;
-    CallbackUserdata(Server* server, const std::shared_ptr<bool>& serverIsAlive);
+    explicit CallbackUserdata(const std::weak_ptr<Server>& server);
 };
 
 template <auto F>
@@ -67,107 +81,129 @@ struct ForwardToServerHelper {
     template <typename Return, typename Class, typename Userdata, typename... Args>
     struct ExtractedTypes<Return (Class::*)(Userdata*, Args...)> {
         using UntypedCallback = Return (*)(Args..., void*);
+        using UntypedCallback2 = Return (*)(Args..., void*, void*);
         static Return Callback(Args... args, void* userdata) {
             // Acquire the userdata, and cast it to UserdataT.
             std::unique_ptr<Userdata> data(static_cast<Userdata*>(userdata));
-            if (data->serverIsAlive.expired()) {
+            auto server = data->server.lock();
+            if (!server) {
                 // Do nothing if the server has already been destroyed.
                 return;
             }
             // Forward the arguments and the typed userdata to the Server:: member function.
-            (data->server->*F)(data.get(), std::forward<decltype(args)>(args)...);
+            (server.get()->*F)(data.get(), std::forward<decltype(args)>(args)...);
+        }
+        static Return Callback2(Args... args, void* userdata, void*) {
+            // Acquire the userdata, and cast it to UserdataT.
+            std::unique_ptr<Userdata> data(static_cast<Userdata*>(userdata));
+            auto server = data->server.lock();
+            if (!server) {
+                // Do nothing if the server has already been destroyed.
+                return;
+            }
+            // Forward the arguments and the typed userdata to the Server:: member function.
+            (server.get()->*F)(data.get(), std::forward<decltype(args)>(args)...);
         }
     };
 
     static constexpr typename ExtractedTypes<decltype(F)>::UntypedCallback Create() {
         return ExtractedTypes<decltype(F)>::Callback;
     }
+    static constexpr typename ExtractedTypes<decltype(F)>::UntypedCallback2 Create2() {
+        return ExtractedTypes<decltype(F)>::Callback2;
+    }
 };
 
 template <auto F>
 constexpr auto ForwardToServer = ForwardToServerHelper<F>::Create();
+template <auto F>
+constexpr auto ForwardToServer2 = ForwardToServerHelper<F>::Create2();
 
 struct MapUserdata : CallbackUserdata {
     using CallbackUserdata::CallbackUserdata;
 
     ObjectHandle buffer;
     WGPUBuffer bufferObj;
-    uint64_t requestSerial;
+    ObjectHandle eventManager;
+    WGPUFuture future;
     uint64_t offset;
     uint64_t size;
     WGPUMapModeFlags mode;
+    uint8_t userdataCount;
 };
 
 struct ErrorScopeUserdata : CallbackUserdata {
     using CallbackUserdata::CallbackUserdata;
 
     ObjectHandle device;
-    uint64_t requestSerial;
+    ObjectHandle eventManager;
+    WGPUFuture future;
 };
 
 struct ShaderModuleGetCompilationInfoUserdata : CallbackUserdata {
     using CallbackUserdata::CallbackUserdata;
 
-    ObjectHandle shaderModule;
-    uint64_t requestSerial;
+    ObjectHandle eventManager;
+    WGPUFuture future;
 };
 
 struct QueueWorkDoneUserdata : CallbackUserdata {
     using CallbackUserdata::CallbackUserdata;
 
     ObjectHandle queue;
-    uint64_t requestSerial;
+    ObjectHandle eventManager;
+    WGPUFuture future;
 };
 
 struct CreatePipelineAsyncUserData : CallbackUserdata {
     using CallbackUserdata::CallbackUserdata;
 
     ObjectHandle device;
-    uint64_t requestSerial;
+    ObjectHandle eventManager;
+    WGPUFuture future;
     ObjectId pipelineObjectID;
 };
 
 struct RequestAdapterUserdata : CallbackUserdata {
     using CallbackUserdata::CallbackUserdata;
 
-    ObjectHandle instance;
-    uint64_t requestSerial;
+    ObjectHandle eventManager;
+    WGPUFuture future;
     ObjectId adapterObjectId;
 };
 
 struct RequestDeviceUserdata : CallbackUserdata {
     using CallbackUserdata::CallbackUserdata;
 
-    ObjectHandle adapter;
-    uint64_t requestSerial;
+    ObjectHandle eventManager;
+    WGPUFuture future;
     ObjectId deviceObjectId;
+    WGPUFuture deviceLostFuture;
+};
+
+struct DeviceLostUserdata : CallbackUserdata {
+    using CallbackUserdata::CallbackUserdata;
+
+    ObjectHandle eventManager;
+    WGPUFuture future;
 };
 
 class Server : public ServerBase {
   public:
-    Server(const DawnProcTable& procs,
-           CommandSerializer* serializer,
-           MemoryTransferService* memoryTransferService);
+    static std::shared_ptr<Server> Create(const DawnProcTable& procs,
+                                          CommandSerializer* serializer,
+                                          MemoryTransferService* memoryTransferService);
     ~Server() override;
 
     // ChunkedCommandHandler implementation
     const volatile char* HandleCommandsImpl(const volatile char* commands, size_t size) override;
 
-    WireResult InjectTexture(WGPUTexture texture,
-                             uint32_t id,
-                             uint32_t generation,
-                             uint32_t deviceId,
-                             uint32_t deviceGeneration);
-
+    WireResult InjectBuffer(WGPUBuffer buffer, const Handle& handle, const Handle& deviceHandle);
+    WireResult InjectTexture(WGPUTexture texture, const Handle& handle, const Handle& deviceHandle);
     WireResult InjectSwapChain(WGPUSwapChain swapchain,
-                               uint32_t id,
-                               uint32_t generation,
-                               uint32_t deviceId,
-                               uint32_t deviceGeneration);
-
-    WireResult InjectDevice(WGPUDevice device, uint32_t id, uint32_t generation);
-
-    WireResult InjectInstance(WGPUInstance instance, uint32_t id, uint32_t generation);
+                               const Handle& handle,
+                               const Handle& deviceHandle);
+    WireResult InjectInstance(WGPUInstance instance, const Handle& handle);
 
     WGPUDevice GetDevice(uint32_t id, uint32_t generation);
     bool IsDeviceKnown(WGPUDevice device) const;
@@ -175,18 +211,31 @@ class Server : public ServerBase {
     template <typename T,
               typename Enable = std::enable_if<std::is_base_of<CallbackUserdata, T>::value>>
     std::unique_ptr<T> MakeUserdata() {
-        return std::unique_ptr<T>(new T(this, mIsAlive));
+        return std::unique_ptr<T>(new T(mSelf));
     }
 
   private:
+    Server(const DawnProcTable& procs,
+           CommandSerializer* serializer,
+           MemoryTransferService* memoryTransferService);
+
     template <typename Cmd>
     void SerializeCommand(const Cmd& cmd) {
-        mSerializer.SerializeCommand(cmd);
+        mSerializer->SerializeCommand(cmd);
     }
 
     template <typename Cmd, typename... Extensions>
     void SerializeCommand(const Cmd& cmd, Extensions&&... es) {
-        mSerializer.SerializeCommand(cmd, std::forward<Extensions>(es)...);
+        mSerializer->SerializeCommand(cmd, std::forward<Extensions>(es)...);
+    }
+
+    template <typename T>
+    WireResult FillReservation(ObjectId id, T handle, Known<T>* known = nullptr) {
+        auto result = Objects<T>().FillReservation(id, handle, known);
+        if (result == WireResult::FatalError) {
+            Release(mProcs, handle);
+        }
+        return result;
     }
 
     void SetForwardingDeviceCallbacks(Known<WGPUDevice> device);
@@ -194,12 +243,21 @@ class Server : public ServerBase {
 
     // Error callbacks
     void OnUncapturedError(ObjectHandle device, WGPUErrorType type, const char* message);
-    void OnDeviceLost(ObjectHandle device, WGPUDeviceLostReason reason, const char* message);
     void OnLogging(ObjectHandle device, WGPULoggingType type, const char* message);
+
+    // Async event callbacks
+    void OnDeviceLost(DeviceLostUserdata* userdata,
+                      WGPUDevice const* device,
+                      WGPUDeviceLostReason reason,
+                      const char* message);
     void OnDevicePopErrorScope(ErrorScopeUserdata* userdata,
+                               WGPUPopErrorScopeStatus status,
                                WGPUErrorType type,
                                const char* message);
     void OnBufferMapAsyncCallback(MapUserdata* userdata, WGPUBufferMapAsyncStatus status);
+    void OnBufferMapAsyncCallback2(MapUserdata* userdata,
+                                   WGPUMapAsyncStatus status,
+                                   const char* message);
     void OnQueueWorkDone(QueueWorkDoneUserdata* userdata, WGPUQueueWorkDoneStatus status);
     void OnCreateComputePipelineAsyncCallback(CreatePipelineAsyncUserData* userdata,
                                               WGPUCreatePipelineAsyncStatus status,
@@ -224,12 +282,13 @@ class Server : public ServerBase {
 #include "dawn/wire/server/ServerPrototypes_autogen.inc"
 
     WireDeserializeAllocator mAllocator;
-    ChunkedCommandSerializer mSerializer;
+    MutexProtected<ChunkedCommandSerializer> mSerializer;
     DawnProcTable mProcs;
     std::unique_ptr<MemoryTransferService> mOwnedMemoryTransferService = nullptr;
-    MemoryTransferService* mMemoryTransferService = nullptr;
+    raw_ptr<MemoryTransferService> mMemoryTransferService = nullptr;
 
-    std::shared_ptr<bool> mIsAlive;
+    // Weak pointer to self to facilitate creation of userdata.
+    std::weak_ptr<Server> mSelf;
 };
 
 std::unique_ptr<MemoryTransferService> CreateInlineMemoryTransferService();

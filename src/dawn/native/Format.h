@@ -1,16 +1,29 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef SRC_DAWN_NATIVE_FORMAT_H_
 #define SRC_DAWN_NATIVE_FORMAT_H_
@@ -51,6 +64,10 @@ enum class Aspect : uint8_t;
 class DeviceBase;
 
 // This mirrors wgpu::TextureSampleType as a bitmask instead.
+// NOTE: SampleTypeBit::External does not have an equivalent TextureSampleType. All future
+// additions to SampleTypeBit that have an equivalent TextureSampleType should use
+// SampleTypeBit::External's value and update SampleTypeBit::External to a higher value.
+// TODO(crbug.com/dawn/2476): Validate SampleTypeBit::External is compatible with Sampler.
 enum class SampleTypeBit : uint8_t {
     None = 0x0,
     Float = 0x1,
@@ -58,6 +75,7 @@ enum class SampleTypeBit : uint8_t {
     Depth = 0x4,
     Sint = 0x8,
     Uint = 0x10,
+    External = 0x20,
 };
 
 // Converts a wgpu::TextureSampleType to its bitmask representation.
@@ -73,6 +91,13 @@ enum class TextureComponentType {
     Float,
     Sint,
     Uint,
+};
+
+enum class TextureSubsampling {
+    Undefined,
+    e420,
+    e422,
+    e444,
 };
 
 struct RequiresFeature {
@@ -93,7 +118,7 @@ struct AspectInfo {
 
 // The number of formats Dawn knows about. Asserts in BuildFormatTable ensure that this is the
 // exact number of known format.
-static constexpr uint32_t kKnownFormatCount = 95;
+static constexpr uint32_t kKnownFormatCount = 109;
 
 using FormatIndex = TypedInteger<struct FormatIndexT, uint32_t>;
 
@@ -115,6 +140,7 @@ struct Format {
     bool supportsReadWriteStorageUsage = false;
     bool supportsMultisample = false;
     bool supportsResolveTarget = false;
+    bool supportsStorageAttachment = false;
     Aspect aspects{};
     // Only used for renderable color formats:
     uint8_t componentCount = 0;                  // number of color channels
@@ -144,6 +170,13 @@ struct Format {
     // If two formats has the same baseFormat, they could copy to and be viewed as the other
     // format. Currently two formats have the same baseFormat if they differ only in sRGB-ness.
     wgpu::TextureFormat baseFormat = wgpu::TextureFormat::Undefined;
+    // Additional view format a base format is compatible with. Only populated for true base
+    // formats. Only stores a single view format because Dawn currently only supports sRGB format
+    // reinterpretation.
+    wgpu::TextureFormat baseViewFormat = wgpu::TextureFormat::Undefined;
+    // Chroma subsampling used by multi-planar formats (e.g. 4:2:0 is 1/2 horizontal and 1/2
+    // vertical resolution for UV plane, 4:2:2 is 1/2 horizontal and 1/1 vertical resolution).
+    TextureSubsampling subSampling = TextureSubsampling::Undefined;
 
     // Returns true if the formats are copy compatible.
     // Currently means they differ only in sRGB-ness.
@@ -188,13 +221,9 @@ absl::FormatConvertResult<absl::FormatConversionCharSet::kString> AbslFormatConv
 
 }  // namespace dawn::native
 
-namespace dawn {
-
 template <>
-struct IsDawnBitmask<dawn::native::SampleTypeBit> {
+struct wgpu::IsWGPUBitmask<dawn::native::SampleTypeBit> {
     static constexpr bool enable = true;
 };
-
-}  // namespace dawn
 
 #endif  // SRC_DAWN_NATIVE_FORMAT_H_

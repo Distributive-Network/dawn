@@ -1,19 +1,33 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/metal/SwapChainMTL.h"
 
+#include "dawn/native/ChainUtils.h"
 #include "dawn/native/Surface.h"
 #include "dawn/native/metal/DeviceMTL.h"
 #include "dawn/native/metal/TextureMTL.h"
@@ -26,14 +40,14 @@ namespace dawn::native::metal {
 ResultOrError<Ref<SwapChain>> SwapChain::Create(Device* device,
                                                 Surface* surface,
                                                 SwapChainBase* previousSwapChain,
-                                                const SwapChainDescriptor* descriptor) {
-    Ref<SwapChain> swapchain = AcquireRef(new SwapChain(device, surface, descriptor));
+                                                const SurfaceConfiguration* config) {
+    Ref<SwapChain> swapchain = AcquireRef(new SwapChain(device, surface, config));
     DAWN_TRY(swapchain->Initialize(previousSwapChain));
     return swapchain;
 }
 
-SwapChain::SwapChain(DeviceBase* dev, Surface* sur, const SwapChainDescriptor* desc)
-    : SwapChainBase(dev, sur, desc) {}
+SwapChain::SwapChain(DeviceBase* dev, Surface* sur, const SurfaceConfiguration* config)
+    : SwapChainBase(dev, sur, config) {}
 
 SwapChain::~SwapChain() = default;
 
@@ -43,7 +57,7 @@ void SwapChain::DestroyImpl() {
 }
 
 MaybeError SwapChain::Initialize(SwapChainBase* previousSwapChain) {
-    ASSERT(GetSurface()->GetType() == Surface::Type::MetalLayer);
+    DAWN_ASSERT(GetSurface()->GetType() == Surface::Type::MetalLayer);
 
     if (previousSwapChain != nullptr) {
         // TODO(crbug.com/dawn/269): figure out what should happen when surfaces are used by
@@ -57,7 +71,7 @@ MaybeError SwapChain::Initialize(SwapChainBase* previousSwapChain) {
     }
 
     mLayer = static_cast<CAMetalLayer*>(GetSurface()->GetMetalLayer());
-    ASSERT(mLayer != nullptr);
+    DAWN_ASSERT(mLayer != nullptr);
 
     CGSize size = {};
     size.width = GetWidth();
@@ -67,6 +81,9 @@ MaybeError SwapChain::Initialize(SwapChainBase* previousSwapChain) {
     [*mLayer setFramebufferOnly:(GetUsage() == wgpu::TextureUsage::RenderAttachment)];
     [*mLayer setDevice:ToBackend(GetDevice())->GetMTLDevice()];
     [*mLayer setPixelFormat:MetalPixelFormat(GetDevice(), GetFormat())];
+
+    // TODO(dawn:2320): Check that this behaves as expected by the spec
+    [*mLayer setOpaque:(GetAlphaMode() != wgpu::CompositeAlphaMode::Premultiplied)];
 
 #if DAWN_PLATFORM_IS(MACOS)
     [*mLayer setDisplaySyncEnabled:(GetPresentMode() != wgpu::PresentMode::Immediate)];
@@ -78,7 +95,7 @@ MaybeError SwapChain::Initialize(SwapChainBase* previousSwapChain) {
 }
 
 MaybeError SwapChain::PresentImpl() {
-    ASSERT(mCurrentDrawable != nullptr);
+    DAWN_ASSERT(mCurrentDrawable != nullptr);
     [*mCurrentDrawable present];
 
     mTexture->APIDestroy();
@@ -89,21 +106,27 @@ MaybeError SwapChain::PresentImpl() {
     return {};
 }
 
-ResultOrError<Ref<TextureBase>> SwapChain::GetCurrentTextureImpl() {
+ResultOrError<SwapChainTextureInfo> SwapChain::GetCurrentTextureImpl() {
     @autoreleasepool {
-        ASSERT(mCurrentDrawable == nullptr);
+        DAWN_ASSERT(mCurrentDrawable == nullptr);
         mCurrentDrawable = [*mLayer nextDrawable];
 
         TextureDescriptor textureDesc = GetSwapChainBaseTextureDescriptor(this);
 
-        mTexture = Texture::CreateWrapping(ToBackend(GetDevice()), &textureDesc,
+        mTexture = Texture::CreateWrapping(ToBackend(GetDevice()), Unpack(&textureDesc),
                                            NSPRef<id<MTLTexture>>([*mCurrentDrawable texture]));
-        return mTexture;
+
+        SwapChainTextureInfo info;
+        info.texture = mTexture;
+        info.status = wgpu::SurfaceGetCurrentTextureStatus::Success;
+        // TODO(dawn:2320): Check for optimality
+        info.suboptimal = false;
+        return info;
     }
 }
 
 void SwapChain::DetachFromSurfaceImpl() {
-    ASSERT((mTexture == nullptr) == (mCurrentDrawable == nullptr));
+    DAWN_ASSERT((mTexture == nullptr) == (mCurrentDrawable == nullptr));
 
     if (mTexture != nullptr) {
         mTexture->APIDestroy();

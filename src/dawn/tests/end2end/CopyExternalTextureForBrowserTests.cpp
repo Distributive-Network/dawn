@@ -1,16 +1,29 @@
-// Copyright 2022 The Dawn Authors
+// Copyright 2022 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <vector>
 
@@ -123,6 +136,8 @@ class CopyExternalTextureForBrowserTests : public Parent {
             this->device.CreateTexture(&externalTexturePlane1Desc);
 
         wgpu::ImageCopyTexture plane1 = {};
+        // (Off-topic) spot-test for defaulting of .aspect.
+        plane1.aspect = wgpu::TextureAspect::Undefined;
         plane1.texture = externalTexturePlane1;
         std::array<uint8_t, 8> uvPlaneData = {
             128, 128, 106, 255, 36, 4, 255, 126,
@@ -213,7 +228,7 @@ std::ostream& operator<<(std::ostream& o, ScaleType scaleType) {
             o << "DefaultSize";
             break;
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
             break;
     }
     return o;
@@ -237,7 +252,7 @@ std::ostream& operator<<(std::ostream& o, CopyRect copyRect) {
             o << "FullSizeCopy";
             break;
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
             break;
     }
     return o;
@@ -245,40 +260,46 @@ std::ostream& operator<<(std::ostream& o, CopyRect copyRect) {
 
 DAWN_TEST_PARAM_STRUCT(CopyTestParams, CopySrcRect, CopyDstRect, ScaleType, FlipY);
 
-class CopyExternalTextureForBrowserTests_Basic
-    : public CopyExternalTextureForBrowserTests<DawnTestWithParams<CopyTestParams>> {
+template <typename... Params>
+class CopyExternalTextureForBrowserTestsBase
+    : public CopyExternalTextureForBrowserTests<DawnTestWithParams<Params...>> {
   protected:
+    using DawnTestWithParams<Params...>::AddTextureExpectation;
     void DoBasicCopyTest(const wgpu::Origin3D& srcOrigin,
                          const wgpu::Origin3D& dstOrigin,
                          const wgpu::Extent3D& copySize,
                          const wgpu::Extent2D& naturalSize,
                          const wgpu::Extent3D& dstTextureSize,
-                         const wgpu::CopyTextureForBrowserOptions options = {}) {
-        wgpu::ExternalTexture externalTexture = CreateDefaultExternalTexture();
+                         const wgpu::CopyTextureForBrowserOptions options = {},
+                         const wgpu::TextureAspect dstAspect = wgpu::TextureAspect::All) {
+        wgpu::ExternalTexture externalTexture = this->CreateDefaultExternalTexture();
         wgpu::ImageCopyExternalTexture srcImageCopyExternalTexture;
         srcImageCopyExternalTexture.externalTexture = externalTexture;
         srcImageCopyExternalTexture.origin = srcOrigin;
         srcImageCopyExternalTexture.naturalSize = naturalSize;
 
-        wgpu::Texture dstTexture = Create2DTexture(
-            device, dstTextureSize.width, dstTextureSize.height, wgpu::TextureFormat::RGBA8Unorm,
-            wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc |
-                wgpu::TextureUsage::CopyDst);
+        wgpu::Texture dstTexture =
+            Create2DTexture(this->device, dstTextureSize.width, dstTextureSize.height,
+                            wgpu::TextureFormat::RGBA8Unorm,
+                            wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc |
+                                wgpu::TextureUsage::CopyDst);
         wgpu::ImageCopyTexture dstImageCopyTexture =
-            utils::CreateImageCopyTexture(dstTexture, 0, dstOrigin);
+            utils::CreateImageCopyTexture(dstTexture, 0, dstOrigin, dstAspect);
 
-        queue.CopyExternalTextureForBrowser(&srcImageCopyExternalTexture, &dstImageCopyTexture,
-                                            &copySize, &options);
+        this->queue.CopyExternalTextureForBrowser(&srcImageCopyExternalTexture,
+                                                  &dstImageCopyTexture, &copySize, &options);
 
-        std::vector<utils::RGBA8> expected = GetExpectedData(
+        std::vector<utils::RGBA8> expected = this->GetExpectedData(
             options.flipY, srcImageCopyExternalTexture.origin, copySize, naturalSize);
 
         EXPECT_TEXTURE_EQ(expected.data(), dstTexture, dstOrigin, copySize);
     }
 };
 
+class CopyExternalTextureForBrowserTests_Basic
+    : public CopyExternalTextureForBrowserTestsBase<CopyTestParams> {};
+
 TEST_P(CopyExternalTextureForBrowserTests_Basic, Copy) {
-    DAWN_SUPPRESS_TEST_IF(IsOpenGLES());
     DAWN_SUPPRESS_TEST_IF(IsOpenGL() && IsLinux());
 
     wgpu::CopyTextureForBrowserOptions options = {};
@@ -287,6 +308,10 @@ TEST_P(CopyExternalTextureForBrowserTests_Basic, Copy) {
     CopyRect srcCopyRect = GetParam().mCopySrcRect;
     CopyRect dstCopyRect = GetParam().mCopyDstRect;
     ScaleType scaleType = GetParam().mScaleType;
+
+    // TODO(crbug.com/346951918): only passes with SrcRect=TopLeft on Pixel 4 (Qualcomm)
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm() &&
+                          srcCopyRect != CopyRect::TopLeft);
 
     // Test skip due to crbug.com/dawn/1719
     DAWN_SUPPRESS_TEST_IF(IsWARP() && srcCopyRect != CopyRect::TopLeft &&
@@ -305,7 +330,7 @@ TEST_P(CopyExternalTextureForBrowserTests_Basic, Copy) {
         case ScaleType::NoScale:
             break;
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
             break;
     }
 
@@ -342,7 +367,7 @@ TEST_P(CopyExternalTextureForBrowserTests_Basic, Copy) {
             copySize.height = naturalSize.height;
             break;
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
             break;
     }
 
@@ -369,7 +394,7 @@ TEST_P(CopyExternalTextureForBrowserTests_Basic, Copy) {
             }
             break;
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
             break;
     }
 
@@ -386,6 +411,32 @@ DAWN_INSTANTIATE_TEST_P(
                            CopyRect::BottomRight, CopyRect::FullSize}),
     std::vector<ScaleType>({ScaleType::UpScale, ScaleType::DownScale, ScaleType::NoScale}),
     std::vector<FlipY>({false, true}));
+
+// Spot-test for defaulting of .aspect
+class CopyExternalTextureForBrowserTests_Aspect : public CopyExternalTextureForBrowserTestsBase<> {
+};
+
+TEST_P(CopyExternalTextureForBrowserTests_Aspect, Copy) {
+    DAWN_SUPPRESS_TEST_IF(IsOpenGL() && IsLinux());
+
+    wgpu::Origin3D srcOrigin = {};
+    wgpu::Origin3D dstOrigin = {};
+    wgpu::Extent2D naturalSize = {static_cast<uint32_t>(kWidth), static_cast<uint32_t>(kHeight)};
+    wgpu::Extent3D copySize = {naturalSize.width / 2, naturalSize.height / 2};
+    wgpu::Extent3D dstTextureSize = {copySize.width * 2, copySize.height * 2};
+    wgpu::CopyTextureForBrowserOptions options = {};
+
+    DoBasicCopyTest(srcOrigin, dstOrigin, copySize, naturalSize, dstTextureSize, options,
+                    wgpu::TextureAspect::Undefined);
+}
+
+DAWN_INSTANTIATE_TEST(CopyExternalTextureForBrowserTests_Aspect,
+                      D3D11Backend(),
+                      D3D12Backend(),
+                      MetalBackend(),
+                      OpenGLBackend(),
+                      OpenGLESBackend(),
+                      VulkanBackend());
 
 }  // anonymous namespace
 }  // namespace dawn

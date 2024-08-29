@@ -1,11 +1,19 @@
 {
-  "Test": {
-    "Prefixes": [
-      "ninja://chrome/test:telemetry_gpu_integration_test/gpu_tests.webgpu_cts_integration_test.WebGpuCtsIntegrationTest.",
-      "ninja://chrome/test:telemetry_gpu_integration_test_android_chrome/gpu_tests.webgpu_cts_integration_test.WebGpuCtsIntegrationTest."
-    ],
-    "SlowThreshold": 45000000000 // 45 seconds
-  },
+  "Tests": [
+    {
+      "ExecutionMode": "core",
+      "Prefixes": [
+        "ninja://chrome/test:telemetry_gpu_integration_test/gpu_tests.webgpu_cts_integration_test.WebGpuCtsIntegrationTest.",
+        "ninja://chrome/test:telemetry_gpu_integration_test_android_chrome/gpu_tests.webgpu_cts_integration_test.WebGpuCtsIntegrationTest."
+      ]
+    },
+    {
+      "ExecutionMode": "compat",
+      "Prefixes": [
+        "ninja://chrome/test:telemetry_gpu_integration_test/gpu_tests.webgpu_compat_cts_integration_test.WebGpuCompatCtsIntegrationTest."
+      ]
+    }
+  ],
   "Gerrit": {
     "Host": "https://dawn-review.googlesource.com",
     "Project": "dawn"
@@ -46,10 +54,25 @@
       "Bucket": "try",
       "Builder": "mac-dawn-rel"
     },
+    "Mac-Arm64-M2-Experimental": {
+      "Project": "chromium",
+      "Bucket": "try",
+      "Builder": "dawn-try-mac-arm64-m2-exp"
+    },
+    "Mac-x64-Intel-Experimental": {
+      "Project": "chromium",
+      "Bucket": "try",
+      "Builder": "dawn-try-mac-intel-exp"
+    },
+    "Mac-x64-AMD-Experimental": {
+      "Project": "chromium",
+      "Bucket": "try",
+      "Builder": "dawn-try-mac-amd-exp"
+    },
     "Mac-Arm64": {
       "Project": "chromium",
       "Bucket": "try",
-      "Builder": "dawn-try-mac-arm64-rel"
+      "Builder": "mac-arm64-dawn-rel"
     },
     "Linux": {
       "Project": "chromium",
@@ -59,8 +82,8 @@
   },
   "Tag": {
     "Remove": [
-      // crbug.com/dawn/1401
-      "release-x64",
+      "ventura",
+      "sonoma"
     ],
   },
   "Sheets": {

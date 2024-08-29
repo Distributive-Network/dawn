@@ -1,16 +1,29 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/tests/unittests/wire/WireTest.h"
 
@@ -41,57 +54,53 @@ class WireInjectSwapChainTests : public WireTest {
 // Test that reserving and injecting a swapchain makes calls on the client object forward to the
 // server object correctly.
 TEST_F(WireInjectSwapChainTests, CallAfterReserveInject) {
-    ReservedSwapChain reservation = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
+    auto reserved = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
 
     WGPUSwapChain apiSwapchain = api.GetNewSwapChain();
-    EXPECT_CALL(api, SwapChainReference(apiSwapchain));
-    ASSERT_TRUE(GetWireServer()->InjectSwapChain(apiSwapchain, reservation.id,
-                                                 reservation.generation, reservation.deviceId,
-                                                 reservation.deviceGeneration));
+    EXPECT_CALL(api, SwapChainAddRef(apiSwapchain));
+    ASSERT_TRUE(
+        GetWireServer()->InjectSwapChain(apiSwapchain, reserved.handle, reserved.deviceHandle));
 
-    wgpuSwapChainPresent(reservation.swapchain);
+    wgpuSwapChainPresent(reserved.swapchain);
     EXPECT_CALL(api, SwapChainPresent(apiSwapchain));
     FlushClient();
 }
 
 // Test that reserve correctly returns different IDs each time.
 TEST_F(WireInjectSwapChainTests, ReserveDifferentIDs) {
-    ReservedSwapChain reservation1 = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
-    ReservedSwapChain reservation2 = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
+    auto reserved1 = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
+    auto reserved2 = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
 
-    ASSERT_NE(reservation1.id, reservation2.id);
-    ASSERT_NE(reservation1.swapchain, reservation2.swapchain);
+    ASSERT_NE(reserved1.handle.id, reserved2.handle.id);
+    ASSERT_NE(reserved1.swapchain, reserved2.swapchain);
 }
 
 // Test that injecting the same id without a destroy first fails.
 TEST_F(WireInjectSwapChainTests, InjectExistingID) {
-    ReservedSwapChain reservation = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
+    auto reserved = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
 
     WGPUSwapChain apiSwapchain = api.GetNewSwapChain();
-    EXPECT_CALL(api, SwapChainReference(apiSwapchain));
-    ASSERT_TRUE(GetWireServer()->InjectSwapChain(apiSwapchain, reservation.id,
-                                                 reservation.generation, reservation.deviceId,
-                                                 reservation.deviceGeneration));
+    EXPECT_CALL(api, SwapChainAddRef(apiSwapchain));
+    ASSERT_TRUE(
+        GetWireServer()->InjectSwapChain(apiSwapchain, reserved.handle, reserved.deviceHandle));
 
     // ID already in use, call fails.
-    ASSERT_FALSE(GetWireServer()->InjectSwapChain(apiSwapchain, reservation.id,
-                                                  reservation.generation, reservation.deviceId,
-                                                  reservation.deviceGeneration));
+    ASSERT_FALSE(
+        GetWireServer()->InjectSwapChain(apiSwapchain, reserved.handle, reserved.deviceHandle));
 }
 
-// Test that the server only borrows the swapchain and does a single reference-release
+// Test that the server only borrows the swapchain and does a single addref-release
 TEST_F(WireInjectSwapChainTests, InjectedSwapChainLifetime) {
-    ReservedSwapChain reservation = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
+    auto reserved = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
 
     // Injecting the swapchain adds a reference
     WGPUSwapChain apiSwapchain = api.GetNewSwapChain();
-    EXPECT_CALL(api, SwapChainReference(apiSwapchain));
-    ASSERT_TRUE(GetWireServer()->InjectSwapChain(apiSwapchain, reservation.id,
-                                                 reservation.generation, reservation.deviceId,
-                                                 reservation.deviceGeneration));
+    EXPECT_CALL(api, SwapChainAddRef(apiSwapchain));
+    ASSERT_TRUE(
+        GetWireServer()->InjectSwapChain(apiSwapchain, reserved.handle, reserved.deviceHandle));
 
     // Releasing the swapchain removes a single reference.
-    wgpuSwapChainRelease(reservation.swapchain);
+    wgpuSwapChainRelease(reserved.swapchain);
     EXPECT_CALL(api, SwapChainRelease(apiSwapchain));
     FlushClient();
 
@@ -105,21 +114,21 @@ TEST_F(WireInjectSwapChainTests, InjectedSwapChainLifetime) {
 TEST_F(WireInjectSwapChainTests, ReclaimSwapChainReservation) {
     // Test that doing a reservation and full release is an error.
     {
-        ReservedSwapChain reservation = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
-        wgpuSwapChainRelease(reservation.swapchain);
+        auto reserved = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
+        wgpuSwapChainRelease(reserved.swapchain);
         FlushClient(false);
     }
 
     // Test that doing a reservation and then reclaiming it recycles the ID.
     {
-        ReservedSwapChain reservation1 = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
-        GetWireClient()->ReclaimSwapChainReservation(reservation1);
+        auto reserved1 = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
+        GetWireClient()->ReclaimSwapChainReservation(reserved1);
 
-        ReservedSwapChain reservation2 = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
+        auto reserved2 = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
 
         // The ID is the same, but the generation is still different.
-        ASSERT_EQ(reservation1.id, reservation2.id);
-        ASSERT_NE(reservation1.generation, reservation2.generation);
+        ASSERT_EQ(reserved1.handle.id, reserved2.handle.id);
+        ASSERT_NE(reserved1.handle.generation, reserved2.handle.generation);
 
         // No errors should occur.
         FlushClient();
@@ -128,15 +137,14 @@ TEST_F(WireInjectSwapChainTests, ReclaimSwapChainReservation) {
 
 // Test that the texture's reflection is correct for injected swapchains in the wire.
 TEST_F(WireInjectSwapChainTests, SwapChainTextureReflection) {
-    ReservedSwapChain reservation = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
+    auto reserved = GetWireClient()->ReserveSwapChain(device, &swapChainDesc);
 
     WGPUSwapChain apiSwapchain = api.GetNewSwapChain();
-    EXPECT_CALL(api, SwapChainReference(apiSwapchain));
-    ASSERT_TRUE(GetWireServer()->InjectSwapChain(apiSwapchain, reservation.id,
-                                                 reservation.generation, reservation.deviceId,
-                                                 reservation.deviceGeneration));
+    EXPECT_CALL(api, SwapChainAddRef(apiSwapchain));
+    ASSERT_TRUE(
+        GetWireServer()->InjectSwapChain(apiSwapchain, reserved.handle, reserved.deviceHandle));
 
-    WGPUTexture tex = wgpuSwapChainGetCurrentTexture(reservation.swapchain);
+    WGPUTexture tex = wgpuSwapChainGetCurrentTexture(reserved.swapchain);
     WGPUTexture apiTex = api.GetNewTexture();
     EXPECT_CALL(api, SwapChainGetCurrentTexture(apiSwapchain)).WillOnce(Return(apiTex));
     FlushClient();

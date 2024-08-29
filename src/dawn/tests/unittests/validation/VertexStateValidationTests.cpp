@@ -1,16 +1,29 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <limits>
 #include <string>
@@ -190,18 +203,22 @@ TEST_F(VertexStateTest, SetVertexBuffersNumLimit) {
 
 // Check out of bounds condition on total number of vertex attributes
 TEST_F(VertexStateTest, SetVertexAttributesNumLimit) {
+    wgpu::SupportedLimits limits;
+    device.GetLimits(&limits);
+    uint32_t maxVertexAttributes = limits.limits.maxVertexAttributes;
+
     // Control case, setting max vertex attribute number
     utils::ComboVertexState state;
     state.vertexBufferCount = 2;
-    state.cVertexBuffers[0].attributeCount = kMaxVertexAttributes;
-    for (uint32_t i = 0; i < kMaxVertexAttributes; ++i) {
+    state.cVertexBuffers[0].attributeCount = maxVertexAttributes;
+    for (uint32_t i = 0; i < maxVertexAttributes; ++i) {
         state.cAttributes[i].shaderLocation = i;
     }
     CreatePipeline(true, state, kPlaceholderVertexShader);
 
     // Test vertex attribute number exceed the limit
     state.cVertexBuffers[1].attributeCount = 1;
-    state.cVertexBuffers[1].attributes = &state.cAttributes[kMaxVertexAttributes - 1];
+    state.cVertexBuffers[1].attributes = &state.cAttributes[maxVertexAttributes - 1];
     CreatePipeline(false, state, kPlaceholderVertexShader);
 }
 
@@ -276,15 +293,19 @@ TEST_F(VertexStateTest, SetSameShaderLocation) {
 
 // Check out of bounds condition on attribute shader location
 TEST_F(VertexStateTest, SetAttributeLocationOutOfBounds) {
+    wgpu::SupportedLimits limits;
+    device.GetLimits(&limits);
+    uint32_t maxVertexAttributes = limits.limits.maxVertexAttributes;
+
     // Control case, setting last attribute shader location
     utils::ComboVertexState state;
     state.vertexBufferCount = 1;
     state.cVertexBuffers[0].attributeCount = 1;
-    state.cAttributes[0].shaderLocation = kMaxVertexAttributes - 1;
+    state.cAttributes[0].shaderLocation = maxVertexAttributes - 1;
     CreatePipeline(true, state, kPlaceholderVertexShader);
 
     // Test attribute location OOB
-    state.cAttributes[0].shaderLocation = kMaxVertexAttributes;
+    state.cAttributes[0].shaderLocation = maxVertexAttributes;
     CreatePipeline(false, state, kPlaceholderVertexShader);
 }
 
@@ -387,6 +408,11 @@ TEST_F(VertexStateTest, BaseTypeMatching) {
     DoTest(wgpu::VertexFormat::Unorm16x2, "f32", true);
     DoTest(wgpu::VertexFormat::Unorm16x2, "i32", false);
     DoTest(wgpu::VertexFormat::Unorm16x2, "u32", false);
+
+    // Test that unorm10-10-10-2 format is compatible only with f32.
+    DoTest(wgpu::VertexFormat::Unorm10_10_10_2, "f32", true);
+    DoTest(wgpu::VertexFormat::Unorm10_10_10_2, "i32", false);
+    DoTest(wgpu::VertexFormat::Unorm10_10_10_2, "u32", false);
 
     // Test that an snorm format is compatible only with f32.
     DoTest(wgpu::VertexFormat::Snorm16x4, "f32", true);

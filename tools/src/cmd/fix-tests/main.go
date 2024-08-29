@@ -1,16 +1,29 @@
-// Copyright 2021 The Tint Authors.
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // fix-tests is a tool to update tests with new expected output.
 package main
@@ -24,6 +37,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"dawn.googlesource.com/dawn/tools/src/substr"
@@ -149,13 +163,24 @@ var (
 	reExpectHasSubstr = regexp.MustCompile(`([./\\\w_\-:]*):(\d+).*\nValue of: .*\nExpected: has substring "((?:.|\n)*?[^\\])"\n  Actual: "((?:.|\n)*?[^\\])"`)
 )
 
+var reHexCode = regexp.MustCompile(`\\x([0-9A-Z]{2})`)
+
 func processFailure(test, wd, failure string) error {
 	// Start by un-escaping newlines in the failure message
 	failure = strings.ReplaceAll(failure, "\\n", "\n")
 	// Matched regex strings will also need to be un-escaped, but do this after
 	// the match, as unescaped quotes may upset the regex patterns
 	unescape := func(s string) string {
-		return strings.ReplaceAll(s, `\"`, `"`)
+		s = strings.ReplaceAll(s, `\"`, `"`)
+		s = strings.ReplaceAll(s, `\\`, `\`)
+		s = reHexCode.ReplaceAllStringFunc(s, func(match string) string {
+			i, err := strconv.ParseInt(match[2:], 16, 32)
+			if err != nil {
+				panic(err)
+			}
+			return string([]byte{byte(i)})
+		})
+		return s
 	}
 	escape := func(s string) string {
 		s = strings.ReplaceAll(s, "\n", `\n`)
@@ -191,7 +216,7 @@ func processFailure(test, wd, failure string) error {
 				case strings.Contains(testSource, b):
 					testSource = strings.ReplaceAll(testSource, b, a)
 				default:
-					return "", fmt.Errorf("Could not fix 'EXPECT_EQ' pattern in '%v'", file)
+					return "", fmt.Errorf("could not fix 'EXPECT_EQ' pattern in '%v'\n\nA: '%v'\n\nB: '%v'", file, a, b)
 				}
 			}
 			return testSource, nil
@@ -210,13 +235,13 @@ func processFailure(test, wd, failure string) error {
 					testSource = strings.Replace(testSource, b, fix, -1)
 					return testSource, nil
 				}
-				return "", fmt.Errorf("Could apply fix for 'HasSubstr' pattern in '%v'", file)
+				return "", fmt.Errorf("could apply fix for 'HasSubstr' pattern in '%v'", file)
 			}
 
-			return "", fmt.Errorf("Could find fix for 'HasSubstr' pattern in '%v'", file)
+			return "", fmt.Errorf("could find fix for 'HasSubstr' pattern in '%v'", file)
 		}
 	} else {
-		return fmt.Errorf("Cannot fix this type of failure")
+		return fmt.Errorf("cannot fix this type of failure")
 	}
 
 	// Get the absolute source path

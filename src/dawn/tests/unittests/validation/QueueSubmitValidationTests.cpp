@@ -1,16 +1,29 @@
-// Copyright 2018 The Dawn Authors
+// Copyright 2018 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/tests/unittests/validation/ValidationTest.h"
 
@@ -55,12 +68,13 @@ TEST_F(QueueSubmitValidationTest, SubmitWithMappedBuffer) {
     }
 
     // Map the buffer, submitting when the buffer is mapped should fail
-    buffer.MapAsync(wgpu::MapMode::Write, 0, kBufferSize, nullptr, nullptr);
+    buffer.MapAsync(wgpu::MapMode::Write, 0, kBufferSize, wgpu::CallbackMode::AllowProcessEvents,
+                    [](wgpu::MapAsyncStatus, const char*) {});
 
     // Try submitting before the callback is fired.
     ASSERT_DEVICE_ERROR(queue.Submit(1, &commands));
 
-    WaitForAllOperations(device);
+    WaitForAllOperations();
 
     {
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
@@ -119,7 +133,8 @@ TEST_F(QueueSubmitValidationTest, CommandBufferSubmittedFailed) {
     wgpu::Queue queue = device.GetQueue();
 
     // Map the source buffer to force a failure
-    buffer.MapAsync(wgpu::MapMode::Write, 0, kBufferSize, nullptr, nullptr);
+    buffer.MapAsync(wgpu::MapMode::Write, 0, kBufferSize, wgpu::CallbackMode::AllowProcessEvents,
+                    [](wgpu::MapAsyncStatus, const char*) {});
 
     // Submitting a command buffer with a mapped buffer should fail
     ASSERT_DEVICE_ERROR(queue.Submit(1, &commands));
@@ -139,42 +154,19 @@ TEST_F(QueueSubmitValidationTest, SubmitInBufferMapCallback) {
     descriptor.usage = wgpu::BufferUsage::MapWrite;
     wgpu::Buffer buffer = device.CreateBuffer(&descriptor);
 
-    struct CallbackData {
-        wgpu::Device device;
-        wgpu::Buffer buffer;
-    } callbackData = {device, buffer};
+    buffer.MapAsync(wgpu::MapMode::Write, 0, descriptor.size,
+                    wgpu::CallbackMode::AllowProcessEvents,
+                    [buffer, queue = device.GetQueue()](wgpu::MapAsyncStatus, const char*) {
+                        buffer.Unmap();
+                        queue.Submit(0, nullptr);
+                    });
 
-    const auto callback = [](WGPUBufferMapAsyncStatus status, void* userdata) {
-        CallbackData* data = reinterpret_cast<CallbackData*>(userdata);
-
-        data->buffer.Unmap();
-
-        wgpu::Queue queue = data->device.GetQueue();
-        queue.Submit(0, nullptr);
-    };
-
-    buffer.MapAsync(wgpu::MapMode::Write, 0, descriptor.size, callback, &callbackData);
-
-    WaitForAllOperations(device);
+    WaitForAllOperations();
 }
 
 // Test that submitting in a render pipeline creation callback doesn't cause re-entrance
 // problems.
 TEST_F(QueueSubmitValidationTest, SubmitInCreateRenderPipelineAsyncCallback) {
-    struct CallbackData {
-        wgpu::Device device;
-    } callbackData = {device};
-
-    const auto callback = [](WGPUCreatePipelineAsyncStatus status, WGPURenderPipeline pipeline,
-                             char const* message, void* userdata) {
-        CallbackData* data = reinterpret_cast<CallbackData*>(userdata);
-
-        wgpuRenderPipelineRelease(pipeline);
-
-        wgpu::Queue queue = data->device.GetQueue();
-        queue.Submit(0, nullptr);
-    };
-
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
             @vertex fn main() -> @builtin(position) vec4f {
                 return vec4f(0.0, 0.0, 0.0, 1.0);
@@ -188,36 +180,33 @@ TEST_F(QueueSubmitValidationTest, SubmitInCreateRenderPipelineAsyncCallback) {
     utils::ComboRenderPipelineDescriptor descriptor;
     descriptor.vertex.module = vsModule;
     descriptor.cFragment.module = fsModule;
-    device.CreateRenderPipelineAsync(&descriptor, callback, &callbackData);
+    device.CreateRenderPipelineAsync(
+        &descriptor, wgpu::CallbackMode::AllowProcessEvents,
+        [device = this->device](wgpu::CreatePipelineAsyncStatus, wgpu::RenderPipeline pipeline,
+                                char const*) {
+            pipeline = nullptr;
+            device.GetQueue().Submit(0, nullptr);
+        });
 
-    WaitForAllOperations(device);
+    WaitForAllOperations();
 }
 
 // Test that submitting in a compute pipeline creation callback doesn't cause re-entrance
 // problems.
 TEST_F(QueueSubmitValidationTest, SubmitInCreateComputePipelineAsyncCallback) {
-    struct CallbackData {
-        wgpu::Device device;
-    } callbackData = {device};
-
-    const auto callback = [](WGPUCreatePipelineAsyncStatus status, WGPUComputePipeline pipeline,
-                             char const* message, void* userdata) {
-        CallbackData* data = reinterpret_cast<CallbackData*>(userdata);
-
-        wgpuComputePipelineRelease(pipeline);
-
-        wgpu::Queue queue = data->device.GetQueue();
-        queue.Submit(0, nullptr);
-    };
-
     wgpu::ComputePipelineDescriptor descriptor;
     descriptor.compute.module = utils::CreateShaderModule(device, R"(
             @compute @workgroup_size(1) fn main() {
             })");
-    descriptor.compute.entryPoint = "main";
-    device.CreateComputePipelineAsync(&descriptor, callback, &callbackData);
+    device.CreateComputePipelineAsync(
+        &descriptor, wgpu::CallbackMode::AllowProcessEvents,
+        [device = this->device](wgpu::CreatePipelineAsyncStatus, wgpu::ComputePipeline pipeline,
+                                char const*) {
+            pipeline = nullptr;
+            device.GetQueue().Submit(0, nullptr);
+        });
 
-    WaitForAllOperations(device);
+    WaitForAllOperations();
 }
 
 // Test that buffers in unused compute pass bindgroups are still checked for in
@@ -235,7 +224,6 @@ TEST_F(QueueSubmitValidationTest, SubmitWithUnusedComputeBuffer) {
     // BindGroup 2. This is to provide coverage of for loops in validation code.
     wgpu::ComputePipelineDescriptor cpDesc;
     cpDesc.layout = utils::MakePipelineLayout(device, {emptyBGL, testBGL});
-    cpDesc.compute.entryPoint = "main";
     cpDesc.compute.module =
         utils::CreateShaderModule(device, "@compute @workgroup_size(1) fn main() {}");
     wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&cpDesc);
@@ -303,7 +291,6 @@ TEST_F(QueueSubmitValidationTest, SubmitWithUnusedComputeTextures) {
 
     wgpu::ComputePipelineDescriptor cpDesc;
     cpDesc.layout = utils::MakePipelineLayout(device, {emptyBGL, emptyBGL, testBGL});
-    cpDesc.compute.entryPoint = "main";
     cpDesc.compute.module =
         utils::CreateShaderModule(device, "@compute @workgroup_size(1) fn main() {}");
     wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&cpDesc);
@@ -356,6 +343,45 @@ TEST_F(QueueSubmitValidationTest, SubmitWithUnusedComputeTextures) {
 
         if (destroy) {
             unusedTexture.Destroy();
+            ASSERT_DEVICE_ERROR(queue.Submit(1, &commands));
+        } else {
+            queue.Submit(1, &commands);
+        }
+    }
+}
+
+// Test that storage textures in compute pass bindgroups are checked in
+// Queue::Submit validation. Regression test for crbug.com/1516756.
+TEST_F(QueueSubmitValidationTest, SubmitWithDestroyedComputeStorageTexture) {
+    wgpu::Queue queue = device.GetQueue();
+
+    wgpu::BindGroupLayout testBGL = utils::MakeBindGroupLayout(
+        device, {{0, wgpu::ShaderStage::Compute, wgpu::StorageTextureAccess::WriteOnly,
+                  wgpu::TextureFormat::RGBA8Unorm}});
+
+    wgpu::ComputePipelineDescriptor cpDesc;
+    cpDesc.layout = utils::MakePipelineLayout(device, {testBGL});
+    cpDesc.compute.module =
+        utils::CreateShaderModule(device, "@compute @workgroup_size(1) fn main() {}");
+    wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&cpDesc);
+
+    wgpu::TextureDescriptor texDesc;
+    texDesc.size = {1, 1, 1};
+    texDesc.usage = wgpu::TextureUsage::StorageBinding;
+    texDesc.format = wgpu::TextureFormat::RGBA8Unorm;
+
+    for (bool destroy : {true, false}) {
+        wgpu::Texture texture = device.CreateTexture(&texDesc);
+        wgpu::BindGroup bg = utils::MakeBindGroup(device, testBGL, {{0, texture.CreateView()}});
+
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
+        pass.SetBindGroup(0, bg);
+        pass.End();
+        wgpu::CommandBuffer commands = encoder.Finish();
+
+        if (destroy) {
+            texture.Destroy();
             ASSERT_DEVICE_ERROR(queue.Submit(1, &commands));
         } else {
             queue.Submit(1, &commands);

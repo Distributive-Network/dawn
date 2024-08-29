@@ -1,5 +1,6 @@
 #version 310 es
 precision highp float;
+precision highp int;
 
 struct atomic_compare_exchange_result_u32 {
   uint old_value;
@@ -11,7 +12,7 @@ struct SB_RW {
   uint arg_0;
 };
 
-layout(binding = 0, std430) buffer sb_rw_block_ssbo {
+layout(binding = 1, std430) buffer sb_rw_block_ssbo {
   SB_RW inner;
 } sb_rw;
 
@@ -42,7 +43,7 @@ struct SB_RW {
   uint arg_0;
 };
 
-layout(binding = 0, std430) buffer sb_rw_block_ssbo {
+layout(binding = 1, std430) buffer sb_rw_block_ssbo {
   SB_RW inner;
 } sb_rw;
 

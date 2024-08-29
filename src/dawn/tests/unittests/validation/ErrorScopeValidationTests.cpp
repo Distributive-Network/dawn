@@ -1,79 +1,61 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <memory>
+#include <vector>
 
 #include "dawn/tests/MockCallback.h"
 #include "dawn/tests/unittests/validation/ValidationTest.h"
 #include "gmock/gmock.h"
 
 using testing::_;
-using testing::MockCallback;
-using testing::Sequence;
-
-class MockDevicePopErrorScopeCallback {
-  public:
-    MOCK_METHOD(void, Call, (WGPUErrorType type, const char* message, void* userdata));
-};
-
-static std::unique_ptr<MockDevicePopErrorScopeCallback> mockDevicePopErrorScopeCallback;
-static void ToMockDevicePopErrorScopeCallback(WGPUErrorType type,
-                                              const char* message,
-                                              void* userdata) {
-    mockDevicePopErrorScopeCallback->Call(type, message, userdata);
-}
-
-class MockQueueWorkDoneCallback {
-  public:
-    MOCK_METHOD(void, Call, (WGPUQueueWorkDoneStatus status, void* userdata));
-};
-
-static std::unique_ptr<MockQueueWorkDoneCallback> mockQueueWorkDoneCallback;
-static void ToMockQueueWorkDone(WGPUQueueWorkDoneStatus status, void* userdata) {
-    mockQueueWorkDoneCallback->Call(status, userdata);
-}
+using testing::MockCppCallback;
+using testing::NotNull;
 
 class ErrorScopeValidationTest : public ValidationTest {
   protected:
-    void FlushWireAndTick() {
+    void FlushWireAndProcessEvents() {
         FlushWire();
-        device.Tick();
+        instance.ProcessEvents();
     }
 
-  private:
-    void SetUp() override {
-        ValidationTest::SetUp();
-        mockDevicePopErrorScopeCallback = std::make_unique<MockDevicePopErrorScopeCallback>();
-        mockQueueWorkDoneCallback = std::make_unique<MockQueueWorkDoneCallback>();
-    }
-
-    void TearDown() override {
-        ValidationTest::TearDown();
-
-        // Delete mocks so that expectations are checked
-        mockDevicePopErrorScopeCallback = nullptr;
-        mockQueueWorkDoneCallback = nullptr;
-    }
+    MockCppCallback<void (*)(wgpu::PopErrorScopeStatus, wgpu::ErrorType, const char*)>
+        mPopErrorScopeCb;
 };
 
 // Test the simple success case.
 TEST_F(ErrorScopeValidationTest, Success) {
     device.PushErrorScope(wgpu::ErrorFilter::Validation);
 
-    EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_NoError, _, this)).Times(1);
-    device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this);
-    FlushWireAndTick();
+    EXPECT_CALL(mPopErrorScopeCb,
+                Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::NoError, _))
+        .Times(1);
+    device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+    FlushWireAndProcessEvents();
 }
 
 // Test the simple case where the error scope catches an error.
@@ -84,9 +66,11 @@ TEST_F(ErrorScopeValidationTest, CatchesError) {
     desc.usage = static_cast<wgpu::BufferUsage>(WGPUBufferUsage_Force32);
     device.CreateBuffer(&desc);
 
-    EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_Validation, _, this)).Times(1);
-    device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this);
-    FlushWireAndTick();
+    EXPECT_CALL(mPopErrorScopeCb,
+                Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::Validation, _))
+        .Times(1);
+    device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+    FlushWireAndProcessEvents();
 }
 
 // Test that errors bubble to the parent scope if not handled by the current scope.
@@ -99,15 +83,18 @@ TEST_F(ErrorScopeValidationTest, ErrorBubbles) {
     device.CreateBuffer(&desc);
 
     // OutOfMemory does not match Validation error.
-    EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_NoError, _, this)).Times(1);
-    device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this);
-    FlushWireAndTick();
+    EXPECT_CALL(mPopErrorScopeCb,
+                Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::NoError, _))
+        .Times(1);
+    device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+    FlushWireAndProcessEvents();
 
     // Parent validation error scope captures the error.
-    EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_Validation, _, this + 1))
+    EXPECT_CALL(mPopErrorScopeCb,
+                Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::Validation, _))
         .Times(1);
-    device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this + 1);
-    FlushWireAndTick();
+    device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+    FlushWireAndProcessEvents();
 }
 
 // Test that if an error scope matches an error, it does not bubble to the parent scope.
@@ -120,15 +107,18 @@ TEST_F(ErrorScopeValidationTest, HandledErrorsStopBubbling) {
     device.CreateBuffer(&desc);
 
     // Inner scope catches the error.
-    EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_Validation, _, this)).Times(1);
-    device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this);
-    FlushWireAndTick();
+    EXPECT_CALL(mPopErrorScopeCb,
+                Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::Validation, _))
+        .Times(1);
+    device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+    FlushWireAndProcessEvents();
 
     // Parent scope does not see the error.
-    EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_NoError, _, this + 1))
+    EXPECT_CALL(mPopErrorScopeCb,
+                Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::NoError, _))
         .Times(1);
-    device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this + 1);
-    FlushWireAndTick();
+    device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+    FlushWireAndProcessEvents();
 }
 
 // Test that if no error scope handles an error, it goes to the device UncapturedError callback
@@ -139,67 +129,42 @@ TEST_F(ErrorScopeValidationTest, UnhandledErrorsMatchUncapturedErrorCallback) {
     desc.usage = static_cast<wgpu::BufferUsage>(WGPUBufferUsage_Force32);
     ASSERT_DEVICE_ERROR(device.CreateBuffer(&desc));
 
-    EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_NoError, _, this)).Times(1);
-    device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this);
-    FlushWireAndTick();
+    EXPECT_CALL(mPopErrorScopeCb,
+                Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::NoError, _))
+        .Times(1);
+    device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+    FlushWireAndProcessEvents();
 }
 
 // Check that push/popping error scopes must be balanced.
 TEST_F(ErrorScopeValidationTest, PushPopBalanced) {
     // No error scopes to pop.
     {
-        EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_Unknown, _, this))
+        EXPECT_CALL(mPopErrorScopeCb,
+                    Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::Unknown, NotNull()))
             .Times(1);
-        device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this);
-        FlushWireAndTick();
+        device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+        FlushWireAndProcessEvents();
     }
     // Too many pops
     {
         device.PushErrorScope(wgpu::ErrorFilter::Validation);
 
-        EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_NoError, _, this + 1))
+        EXPECT_CALL(mPopErrorScopeCb,
+                    Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::NoError, _))
             .Times(1);
-        device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this + 1);
-        FlushWireAndTick();
+        device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+        FlushWireAndProcessEvents();
 
-        EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_Unknown, _, this + 2))
+        EXPECT_CALL(mPopErrorScopeCb,
+                    Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::Unknown, NotNull()))
             .Times(1);
-        device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this + 2);
-        FlushWireAndTick();
+        device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+        FlushWireAndProcessEvents();
     }
 }
 
-// Test that parent error scopes also call their callbacks before an enclosed Queue::Submit
-// completes
-TEST_F(ErrorScopeValidationTest, EnclosedQueueSubmitNested) {
-    wgpu::Queue queue = device.GetQueue();
-
-    device.PushErrorScope(wgpu::ErrorFilter::OutOfMemory);
-    device.PushErrorScope(wgpu::ErrorFilter::OutOfMemory);
-
-    queue.Submit(0, nullptr);
-    queue.OnSubmittedWorkDone(0u, ToMockQueueWorkDone, this);
-
-    Sequence seq;
-
-    MockCallback<WGPUErrorCallback> errorScopeCallback2;
-    EXPECT_CALL(errorScopeCallback2, Call(WGPUErrorType_NoError, _, this + 1)).InSequence(seq);
-    device.PopErrorScope(errorScopeCallback2.Callback(),
-                         errorScopeCallback2.MakeUserdata(this + 1));
-
-    MockCallback<WGPUErrorCallback> errorScopeCallback1;
-    EXPECT_CALL(errorScopeCallback1, Call(WGPUErrorType_NoError, _, this + 2)).InSequence(seq);
-    device.PopErrorScope(errorScopeCallback1.Callback(),
-                         errorScopeCallback1.MakeUserdata(this + 2));
-
-    EXPECT_CALL(*mockQueueWorkDoneCallback, Call(WGPUQueueWorkDoneStatus_Success, this))
-        .InSequence(seq);
-    WaitForAllOperations(device);
-}
-
-// Test that if the device is destroyed before the callback occurs, it is called with NoError
-// in dawn_native, but Unknown in dawn_wire because the device is destroyed before the callback
-// message happens.
+// Test that if the device is destroyed before the callback occurs, it is called with NoError.
 TEST_F(ErrorScopeValidationTest, DeviceDestroyedBeforeCallback) {
     device.PushErrorScope(wgpu::ErrorFilter::OutOfMemory);
     {
@@ -208,20 +173,14 @@ TEST_F(ErrorScopeValidationTest, DeviceDestroyedBeforeCallback) {
         queue.Submit(0, nullptr);
     }
 
-    if (UsesWire()) {
-        device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this);
+    EXPECT_CALL(mPopErrorScopeCb,
+                Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::NoError, _))
+        .Times(1);
+    device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+    ExpectDeviceDestruction();
+    device = nullptr;
 
-        EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_Unknown, _, this))
-            .Times(1);
-        ExpectDeviceDestruction();
-        device = nullptr;
-    } else {
-        EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_NoError, _, this))
-            .Times(1);
-        device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this);
-        ExpectDeviceDestruction();
-        device = nullptr;
-    }
+    FlushWireAndProcessEvents();
 }
 
 // If the device is destroyed, pop error scope should callback with device lost.
@@ -229,11 +188,13 @@ TEST_F(ErrorScopeValidationTest, DeviceDestroyedBeforePop) {
     device.PushErrorScope(wgpu::ErrorFilter::Validation);
     ExpectDeviceDestruction();
     device.Destroy();
-    FlushWireAndTick();
+    FlushWireAndProcessEvents();
 
-    EXPECT_CALL(*mockDevicePopErrorScopeCallback, Call(WGPUErrorType_DeviceLost, _, this)).Times(1);
-    device.PopErrorScope(ToMockDevicePopErrorScopeCallback, this);
-    FlushWireAndTick();
+    EXPECT_CALL(mPopErrorScopeCb,
+                Call(wgpu::PopErrorScopeStatus::Success, wgpu::ErrorType::DeviceLost, NotNull()))
+        .Times(1);
+    device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents, mPopErrorScopeCb.Callback());
+    FlushWireAndProcessEvents();
 }
 
 // Regression test that on device shutdown, we don't get a recursion in O(pushed error scope) that

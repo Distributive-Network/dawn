@@ -1,12 +1,19 @@
 #version 310 es
 
-uint local_invocation_index_1 = 0u;
 shared uint arg_0;
+void tint_zero_workgroup_memory(uint local_idx) {
+  if ((local_idx < 1u)) {
+    atomicExchange(arg_0, 0u);
+  }
+  barrier();
+}
+
+uint local_invocation_index_1 = 0u;
 void atomicAdd_d5db1d() {
   uint arg_1 = 0u;
   uint res = 0u;
   arg_1 = 1u;
-  uint x_14 = atomicAdd(arg_0, 1u);
+  uint x_14 = atomicAdd(arg_0, -(1u));
   res = x_14;
   return;
 }
@@ -25,10 +32,7 @@ void compute_main_1() {
 }
 
 void compute_main(uint local_invocation_index_1_param) {
-  {
-    atomicExchange(arg_0, 0u);
-  }
-  barrier();
+  tint_zero_workgroup_memory(local_invocation_index_1_param);
   local_invocation_index_1 = local_invocation_index_1_param;
   compute_main_1();
 }

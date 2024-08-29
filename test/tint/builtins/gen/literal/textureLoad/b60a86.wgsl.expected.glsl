@@ -8,7 +8,7 @@ layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
 } prevent_dce;
 
 void textureLoad_b60a86() {
-  uvec4 res = texelFetch(arg_0, ivec2(1, 0));
+  uvec4 res = imageLoad(arg_0, ivec2(1, 0));
   prevent_dce.inner = res;
 }
 
@@ -25,16 +25,16 @@ void main() {
   gl_Position.z = ((2.0f * gl_Position.z) - gl_Position.w);
   return;
 }
-Error parsing GLSL shader:
-ERROR: 0:9: 'texelFetch' : no matching overloaded function found 
-ERROR: 0:9: '=' :  cannot convert from ' const float' to ' temp highp 4-component vector of uint'
+error: Error parsing GLSL shader:
+ERROR: 0:9: 'writeonly' : argument cannot drop memory qualifier when passed to formal parameter 
 ERROR: 0:9: '' : compilation terminated 
-ERROR: 3 compilation errors.  No code generated.
+ERROR: 2 compilation errors.  No code generated.
 
 
 
 #version 310 es
 precision highp float;
+precision highp int;
 
 layout(rgba32ui) uniform highp writeonly uimage2D arg_0;
 layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
@@ -42,7 +42,7 @@ layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
 } prevent_dce;
 
 void textureLoad_b60a86() {
-  uvec4 res = texelFetch(arg_0, ivec2(1, 0));
+  uvec4 res = imageLoad(arg_0, ivec2(1, 0));
   prevent_dce.inner = res;
 }
 
@@ -54,11 +54,10 @@ void main() {
   fragment_main();
   return;
 }
-Error parsing GLSL shader:
-ERROR: 0:10: 'texelFetch' : no matching overloaded function found 
-ERROR: 0:10: '=' :  cannot convert from ' const float' to ' temp mediump 4-component vector of uint'
-ERROR: 0:10: '' : compilation terminated 
-ERROR: 3 compilation errors.  No code generated.
+error: Error parsing GLSL shader:
+ERROR: 0:11: 'writeonly' : argument cannot drop memory qualifier when passed to formal parameter 
+ERROR: 0:11: '' : compilation terminated 
+ERROR: 2 compilation errors.  No code generated.
 
 
 
@@ -70,7 +69,7 @@ layout(binding = 0, std430) buffer prevent_dce_block_ssbo {
 } prevent_dce;
 
 void textureLoad_b60a86() {
-  uvec4 res = texelFetch(arg_0, ivec2(1, 0));
+  uvec4 res = imageLoad(arg_0, ivec2(1, 0));
   prevent_dce.inner = res;
 }
 
@@ -83,11 +82,10 @@ void main() {
   compute_main();
   return;
 }
-Error parsing GLSL shader:
-ERROR: 0:9: 'texelFetch' : no matching overloaded function found 
-ERROR: 0:9: '=' :  cannot convert from ' const float' to ' temp highp 4-component vector of uint'
+error: Error parsing GLSL shader:
+ERROR: 0:9: 'writeonly' : argument cannot drop memory qualifier when passed to formal parameter 
 ERROR: 0:9: '' : compilation terminated 
-ERROR: 3 compilation errors.  No code generated.
+ERROR: 2 compilation errors.  No code generated.
 
 
 

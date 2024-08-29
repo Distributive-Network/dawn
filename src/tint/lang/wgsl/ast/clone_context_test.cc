@@ -1,21 +1,35 @@
-// Copyright 2020 The Tint Authors.
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <string>
-#include <unordered_set>
 
-#include "gtest/gtest-spi.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+
 #include "src/tint/lang/wgsl/ast/clone_context.h"
 #include "src/tint/lang/wgsl/program/program_builder.h"
 #include "src/tint/lang/wgsl/resolver/resolve.h"
@@ -89,6 +103,7 @@ struct IDTestNode : public Castable<IDTestNode, ast::Node> {
 };
 
 using ASTCloneContextTestNodeTest = ::testing::Test;
+using ASTCloneContextTestNodeDeathTest = ASTCloneContextTestNodeTest;
 
 TEST_F(ASTCloneContextTestNodeTest, Clone) {
     Allocator alloc;
@@ -1036,10 +1051,10 @@ TEST_F(ASTCloneContextTestNodeTest, CloneWithInsertBeforeAndAfterRemoved_Functio
     EXPECT_EQ(cloned_root->vec[3]->name, cloned.Symbols().Get("c"));
 }
 
-TEST_F(ASTCloneContextTestNodeTest, CloneWithReplaceAll_SameTypeTwice) {
+TEST_F(ASTCloneContextTestNodeDeathTest, CloneWithReplaceAll_SameTypeTwice) {
     std::string Testnode_name = TypeInfo::Of<TestNode>().name;
 
-    EXPECT_FATAL_FAILURE(
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             ProgramBuilder cloned;
             Program original;
@@ -1047,15 +1062,16 @@ TEST_F(ASTCloneContextTestNodeTest, CloneWithReplaceAll_SameTypeTwice) {
             ctx.ReplaceAll([](const TestNode*) { return nullptr; });
             ctx.ReplaceAll([](const TestNode*) { return nullptr; });
         },
-        "internal compiler error: ReplaceAll() called with a handler for type " + Testnode_name +
-            " that is already handled by a handler for type " + Testnode_name);
+        testing::HasSubstr("internal compiler error: ReplaceAll() called with a handler for type " +
+                           Testnode_name + " that is already handled by a handler for type " +
+                           Testnode_name));
 }
 
-TEST_F(ASTCloneContextTestNodeTest, CloneWithReplaceAll_BaseThenDerived) {
+TEST_F(ASTCloneContextTestNodeDeathTest, CloneWithReplaceAll_BaseThenDerived) {
     std::string Testnode_name = TypeInfo::Of<TestNode>().name;
     std::string replaceable_name = TypeInfo::Of<Replaceable>().name;
 
-    EXPECT_FATAL_FAILURE(
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             ProgramBuilder cloned;
             Program original;
@@ -1063,15 +1079,16 @@ TEST_F(ASTCloneContextTestNodeTest, CloneWithReplaceAll_BaseThenDerived) {
             ctx.ReplaceAll([](const TestNode*) { return nullptr; });
             ctx.ReplaceAll([](const Replaceable*) { return nullptr; });
         },
-        "internal compiler error: ReplaceAll() called with a handler for type " + replaceable_name +
-            " that is already handled by a handler for type " + Testnode_name);
+        testing::HasSubstr("internal compiler error: ReplaceAll() called with a handler for type " +
+                           replaceable_name + " that is already handled by a handler for type " +
+                           Testnode_name));
 }
 
-TEST_F(ASTCloneContextTestNodeTest, CloneWithReplaceAll_DerivedThenBase) {
+TEST_F(ASTCloneContextTestNodeDeathTest, CloneWithReplaceAll_DerivedThenBase) {
     std::string Testnode_name = TypeInfo::Of<TestNode>().name;
     std::string replaceable_name = TypeInfo::Of<Replaceable>().name;
 
-    EXPECT_FATAL_FAILURE(
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             ProgramBuilder cloned;
             Program original;
@@ -1079,14 +1096,16 @@ TEST_F(ASTCloneContextTestNodeTest, CloneWithReplaceAll_DerivedThenBase) {
             ctx.ReplaceAll([](const Replaceable*) { return nullptr; });
             ctx.ReplaceAll([](const TestNode*) { return nullptr; });
         },
-        "internal compiler error: ReplaceAll() called with a handler for type " + Testnode_name +
-            " that is already handled by a handler for type " + replaceable_name);
+        testing::HasSubstr("internal compiler error: ReplaceAll() called with a handler for type " +
+                           Testnode_name + " that is already handled by a handler for type " +
+                           replaceable_name));
 }
 
 using ASTCloneContextTest = ::testing::Test;
+using ASTCloneContextDeathTest = ASTCloneContextTest;
 
-TEST_F(ASTCloneContextTest, CloneWithReplaceAll_SymbolsTwice) {
-    EXPECT_FATAL_FAILURE(
+TEST_F(ASTCloneContextDeathTest, CloneWithReplaceAll_SymbolsTwice) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             ProgramBuilder cloned;
             Program original;
@@ -1094,8 +1113,8 @@ TEST_F(ASTCloneContextTest, CloneWithReplaceAll_SymbolsTwice) {
             ctx.ReplaceAll([](const Symbol s) { return s; });
             ctx.ReplaceAll([](const Symbol s) { return s; });
         },
-        "internal compiler error: ReplaceAll(const SymbolTransform&) called "
-        "multiple times on the same CloneContext");
+        testing::HasSubstr("internal compiler error: ReplaceAll(const SymbolTransform&) called "
+                           "multiple times on the same CloneContext"));
 }
 
 TEST_F(ASTCloneContextTest, CloneNewUnnamedSymbols) {
@@ -1163,8 +1182,8 @@ TEST_F(ASTCloneContextTest, GenerationIDs) {
     EXPECT_EQ(cloned->generation_id, dst.ID());
 }
 
-TEST_F(ASTCloneContextTest, GenerationIDs_Clone_ObjectNotOwnedBySrc) {
-    EXPECT_FATAL_FAILURE(
+TEST_F(ASTCloneContextDeathTest, GenerationIDs_Clone_ObjectNotOwnedBySrc) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             ProgramBuilder dst;
             Program src(ProgramBuilder{});
@@ -1172,11 +1191,12 @@ TEST_F(ASTCloneContextTest, GenerationIDs_Clone_ObjectNotOwnedBySrc) {
             Allocator allocator;
             ctx.Clone(allocator.Create<IDTestNode>(GenerationID::New(), dst.ID()));
         },
-        R"(internal compiler error: TINT_ASSERT_GENERATION_IDS_EQUAL_IF_VALID(src_id, object))");
+        testing::HasSubstr(
+            R"(internal compiler error: TINT_ASSERT_GENERATION_IDS_EQUAL_IF_VALID(src_id, object))"));
 }
 
-TEST_F(ASTCloneContextTest, GenerationIDs_Clone_ObjectNotOwnedByDst) {
-    EXPECT_FATAL_FAILURE(
+TEST_F(ASTCloneContextDeathTest, GenerationIDs_Clone_ObjectNotOwnedByDst) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             ProgramBuilder dst;
             Program src(ProgramBuilder{});
@@ -1184,7 +1204,8 @@ TEST_F(ASTCloneContextTest, GenerationIDs_Clone_ObjectNotOwnedByDst) {
             Allocator allocator;
             ctx.Clone(allocator.Create<IDTestNode>(src.ID(), GenerationID::New()));
         },
-        R"(internal compiler error: TINT_ASSERT_GENERATION_IDS_EQUAL_IF_VALID(dst, out))");
+        testing::HasSubstr(
+            R"(internal compiler error: TINT_ASSERT_GENERATION_IDS_EQUAL_IF_VALID(dst, out))"));
 }
 
 }  // namespace

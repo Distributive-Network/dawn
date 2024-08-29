@@ -1,16 +1,29 @@
-// Copyright 2021 The Dawn Authors
+// Copyright 2021 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/ExternalTexture.h"
 
@@ -50,12 +63,10 @@ MaybeError ValidateExternalTexturePlane(const TextureViewBase* textureView) {
 
 MaybeError ValidateExternalTextureDescriptor(const DeviceBase* device,
                                              const ExternalTextureDescriptor* descriptor) {
-    ASSERT(descriptor);
-    ASSERT(descriptor->plane0);
+    DAWN_ASSERT(descriptor);
+    DAWN_ASSERT(descriptor->plane0);
 
     DAWN_TRY(device->ValidateObject(descriptor->plane0));
-
-    wgpu::TextureFormat plane0Format = descriptor->plane0->GetFormat().format;
 
     DAWN_INVALID_IF(!descriptor->gamutConversionMatrix,
                     "The gamut conversion matrix must be non-null.");
@@ -66,43 +77,44 @@ MaybeError ValidateExternalTextureDescriptor(const DeviceBase* device,
     DAWN_INVALID_IF(!descriptor->dstTransferFunctionParameters,
                     "The destination transfer function parameters must be non-null.");
 
+    DAWN_TRY(ValidateExternalTexturePlane(descriptor->plane0));
+
+    auto CheckPlaneFormat = [](const DeviceBase* device, const Format& format,
+                               uint32_t requiredComponentCount) -> MaybeError {
+        DAWN_INVALID_IF(format.aspects != Aspect::Color, "The format (%s) is not a color format.",
+                        format.format);
+        DAWN_INVALID_IF(!IsSubset(SampleTypeBit::Float,
+                                  format.GetAspectInfo(Aspect::Color).supportedSampleTypes),
+                        "The format (%s) is not filterable float.", format.format);
+        DAWN_INVALID_IF(format.componentCount != requiredComponentCount,
+                        "The format (%s) component count (%u) is not %u.", format.format,
+                        requiredComponentCount, format.componentCount);
+        return {};
+    };
+
     if (descriptor->plane1) {
         DAWN_INVALID_IF(
             !descriptor->yuvToRgbConversionMatrix,
             "When more than one plane is set, the YUV-to-RGB conversion matrix must be non-null.");
 
         DAWN_TRY(device->ValidateObject(descriptor->plane1));
-        wgpu::TextureFormat plane1Format = descriptor->plane1->GetFormat().format;
-
-        DAWN_INVALID_IF(plane0Format != wgpu::TextureFormat::R8Unorm,
-                        "The bi-planar external texture plane (%s) format (%s) is not %s.",
-                        descriptor->plane0, plane0Format, wgpu::TextureFormat::R8Unorm);
-        DAWN_INVALID_IF(plane1Format != wgpu::TextureFormat::RG8Unorm,
-                        "The bi-planar external texture plane (%s) format (%s) is not %s.",
-                        descriptor->plane1, plane1Format, wgpu::TextureFormat::RG8Unorm);
-
-        DAWN_TRY(ValidateExternalTexturePlane(descriptor->plane0));
         DAWN_TRY(ValidateExternalTexturePlane(descriptor->plane1));
+
+        // Y + UV case.
+        DAWN_TRY_CONTEXT(CheckPlaneFormat(device, descriptor->plane0->GetFormat(), 1),
+                         "validating the format of plane 0 (%s)", descriptor->plane0);
+        DAWN_TRY_CONTEXT(CheckPlaneFormat(device, descriptor->plane1->GetFormat(), 2),
+                         "validating the format of plane 1 (%s)", descriptor->plane1);
     } else {
-        switch (plane0Format) {
-            case wgpu::TextureFormat::RGBA8Unorm:
-            case wgpu::TextureFormat::BGRA8Unorm:
-            case wgpu::TextureFormat::RGBA16Float:
-                DAWN_TRY(ValidateExternalTexturePlane(descriptor->plane0));
-                break;
-            default:
-                return DAWN_VALIDATION_ERROR(
-                    "The external texture plane (%s) format (%s) is not a supported format "
-                    "(%s, %s, %s).",
-                    descriptor->plane0, plane0Format, wgpu::TextureFormat::RGBA8Unorm,
-                    wgpu::TextureFormat::BGRA8Unorm, wgpu::TextureFormat::RGBA16Float);
-        }
+        // RGBA case.
+        DAWN_TRY_CONTEXT(CheckPlaneFormat(device, descriptor->plane0->GetFormat(), 4),
+                         "validating the format of plane 0 (%s)", descriptor->plane0);
     }
 
     DAWN_INVALID_IF(descriptor->visibleSize.width == 0 || descriptor->visibleSize.height == 0,
                     "VisibleSize %s have 0 on width or height.", &descriptor->visibleSize);
 
-    const Extent3D textureSize = descriptor->plane0->GetTexture()->GetSize();
+    const Extent3D textureSize = descriptor->plane0->GetSingleSubresourceVirtualSize();
     DAWN_INVALID_IF(descriptor->visibleSize.width > textureSize.width ||
                         descriptor->visibleSize.height > textureSize.height,
                     "VisibleSize %s is exceed the texture size, defined by Plane0 size (%u, %u).",
@@ -175,7 +187,7 @@ MaybeError ExternalTextureBase::Initialize(DeviceBase* device,
     // passed from Chromium. The matrix was originally sourced from /skia/src/core/SkYUVMath.cpp.
     // This matrix is only used in multiplanar scenarios.
     if (params.numPlanes == 2) {
-        ASSERT(descriptor->yuvToRgbConversionMatrix);
+        DAWN_ASSERT(descriptor->yuvToRgbConversionMatrix);
         const float* yMat = descriptor->yuvToRgbConversionMatrix;
         std::copy(yMat, yMat + 12, params.yuvToRgbConversionMatrix.begin());
     }
@@ -203,16 +215,23 @@ MaybeError ExternalTextureBase::Initialize(DeviceBase* device,
 
     // Unlike WGSL, which stores matrices in column vectors, the following arithmetic uses row
     // vectors, so elements are stored in the following order:
+    //
     // ┌         ┐
     // │ 0, 1, 2 │
     // │ 3, 4, 5 │
     // └         ┘
+    //
     // The matrix is transposed at the end.
+    //
+    // Note that we are working in homogeneous coordinates so there is an implied third row
+    // containing [0, 0, 1].
     using mat2x3 = std::array<float, 6>;
+    // Likewise the vectors have an implicit last element that's 1.
+    using vec2 = std::array<float, 2>;
 
     // Multiplies the two mat2x3 matrices, by treating the RHS matrix as a mat3x3 where the last row
     // is [0, 0, 1].
-    auto Mul = [&](const mat2x3& lhs, const mat2x3& rhs) {
+    auto Mul = [](const mat2x3& lhs, const mat2x3& rhs) -> mat2x3 {
         auto& a = lhs[0];
         auto& b = lhs[1];
         auto& c = lhs[2];
@@ -239,79 +258,105 @@ MaybeError ExternalTextureBase::Initialize(DeviceBase* device,
             d * i + e * l + f,  //
         };
     };
-
-    auto Scale = [&](const mat2x3& m, float x, float y) {
-        return Mul(mat2x3{x, 0, 0, 0, y, 0}, m);
+    auto Scale = [](float x, float y) -> mat2x3 { return {x, 0, 0, 0, y, 0}; };
+    auto ScaleVec = [&](vec2 v) -> mat2x3 { return Scale(v[0], v[1]); };
+    auto Translate = [](float x, float y) -> mat2x3 { return mat2x3{1, 0, x, 0, 1, y}; };
+    auto TranslateVec = [&](vec2 v) -> mat2x3 { return Translate(v[0], v[1]); };
+    auto TransposeForWGSL = [](const mat2x3& m) -> std::array<float, 6> {
+        return {m[0], m[3], m[1], m[4], m[2], m[5]};
     };
 
-    auto Translate = [&](const mat2x3& m, float x, float y) {
-        return Mul(mat2x3{1, 0, x, 0, 1, y}, m);
-    };
+    // Vector operations
+    auto Add = [](const vec2& a, const vec2& b) -> vec2 { return {a[0] + b[0], a[1] + b[1]}; };
+    auto Sub = [](const vec2& a, const vec2& b) -> vec2 { return {a[0] - b[0], a[1] - b[1]}; };
+    auto Div = [](const vec2& a, const vec2& b) -> vec2 { return {a[0] / b[0], a[1] / b[1]}; };
 
-    mat2x3 coordTransformMatrix = {
-        1, 0, 0,  //
-        0, 1, 0,  //
-    };
+    // Extract all the relevant sizes as float to avoid extra casts in later computations.
+    Extent3D plane0Extent = descriptor->plane0->GetSingleSubresourceVirtualSize();
+    Extent3D plane1Extent = {1, 1, 1};
+    if (params.numPlanes == 2) {
+        plane1Extent = descriptor->plane1->GetSingleSubresourceVirtualSize();
+    }
+    vec2 plane0Size = {static_cast<float>(plane0Extent.width),
+                       static_cast<float>(plane0Extent.height)};
+    vec2 plane1Size = {static_cast<float>(plane1Extent.width),
+                       static_cast<float>(plane1Extent.height)};
+    vec2 visibleOrigin = {static_cast<float>(mVisibleOrigin.x),
+                          static_cast<float>(mVisibleOrigin.y)};
+    vec2 visibleSize = {static_cast<float>(mVisibleSize.width),
+                        static_cast<float>(mVisibleSize.height)};
 
     // Offset the coordinates so the center texel is at the origin, so we can apply rotations and
     // y-flips. After translation, coordinates range from [-0.5 .. +0.5] in both U and V.
-    coordTransformMatrix = Translate(coordTransformMatrix, -0.5, -0.5);
+    mat2x3 sampleTransform = Translate(-0.5, -0.5);
 
-    // If the texture needs flipping, mirror in Y.
-    if (descriptor->flipY) {
-        coordTransformMatrix = Scale(coordTransformMatrix, 1, -1);
+    // The video frame metadata both rotation and mirroring information. The rotation happens before
+    // the mirroring when processing the video frame, so do the inverse order when converting UV
+    // coordinates.
+    if (descriptor->mirrored) {
+        sampleTransform = Mul(Scale(-1, 1), sampleTransform);
     }
 
-    // Apply rotations as needed.
+    // Apply rotations as needed this may rotate the shader-visible size of the texture for
+    // textureLoad operations.
+    std::array<uint32_t, 2> loadBounds = {mVisibleSize.width - 1, mVisibleSize.height - 1};
     switch (descriptor->rotation) {
         case wgpu::ExternalTextureRotation::Rotate0Degrees:
             break;
         case wgpu::ExternalTextureRotation::Rotate90Degrees:
-            coordTransformMatrix = Mul(mat2x3{0, -1, 0,   // x' = -y
-                                              +1, 0, 0},  // y' = x
-                                       coordTransformMatrix);
+            std::swap(loadBounds[0], loadBounds[1]);
+            sampleTransform = Mul(mat2x3{0, +1, 0,   // x' = y
+                                         -1, 0, 0},  // y' = -x
+                                  sampleTransform);
             break;
         case wgpu::ExternalTextureRotation::Rotate180Degrees:
-            coordTransformMatrix = Mul(mat2x3{-1, 0, 0,   // x' = -x
-                                              0, -1, 0},  // y' = -y
-                                       coordTransformMatrix);
+            sampleTransform = Mul(mat2x3{-1, 0, 0,   // x' = -x
+                                         0, -1, 0},  // y' = -y
+                                  sampleTransform);
             break;
         case wgpu::ExternalTextureRotation::Rotate270Degrees:
-            coordTransformMatrix = Mul(mat2x3{0, +1, 0,   // x' = y
-                                              -1, 0, 0},  // y' = -x
-                                       coordTransformMatrix);
+            std::swap(loadBounds[0], loadBounds[1]);
+            sampleTransform = Mul(mat2x3{0, -1, 0,   // x' = -y
+                                         +1, 0, 0},  // y' = x
+                                  sampleTransform);
             break;
     }
 
     // Offset the coordinates so the bottom-left texel is at origin.
     // After translation, coordinates range from [0 .. 1] in both U and V.
-    coordTransformMatrix = Translate(coordTransformMatrix, 0.5, 0.5);
-
-    // Calculate scale factors and offsets from the specified visibleSize.
-    ASSERT(descriptor->visibleSize.width > 0);
-    ASSERT(descriptor->visibleSize.height > 0);
-    uint32_t frameWidth = descriptor->plane0->GetTexture()->GetWidth();
-    uint32_t frameHeight = descriptor->plane0->GetTexture()->GetHeight();
-    float xScale =
-        static_cast<float>(descriptor->visibleSize.width) / static_cast<float>(frameWidth);
-    float yScale =
-        static_cast<float>(descriptor->visibleSize.height) / static_cast<float>(frameHeight);
-    float xOffset =
-        static_cast<float>(descriptor->visibleOrigin.x) / static_cast<float>(frameWidth);
-    float yOffset =
-        static_cast<float>(descriptor->visibleOrigin.y) / static_cast<float>(frameHeight);
+    sampleTransform = Mul(Translate(0.5, 0.5), sampleTransform);
 
     // Finally, scale and translate based on the visible rect. This applies cropping.
-    coordTransformMatrix = Scale(coordTransformMatrix, xScale, yScale);
-    coordTransformMatrix = Translate(coordTransformMatrix, xOffset, yOffset);
+    vec2 rectScale = Div(visibleSize, plane0Size);
+    vec2 rectOffset = Div(visibleOrigin, plane0Size);
+    sampleTransform = Mul(TranslateVec(rectOffset), Mul(ScaleVec(rectScale), sampleTransform));
 
-    // Transpose the mat2x3 into column vectors for use by WGSL.
-    params.coordTransformMatrix[0] = coordTransformMatrix[0];
-    params.coordTransformMatrix[1] = coordTransformMatrix[3];
-    params.coordTransformMatrix[2] = coordTransformMatrix[1];
-    params.coordTransformMatrix[3] = coordTransformMatrix[4];
-    params.coordTransformMatrix[4] = coordTransformMatrix[2];
-    params.coordTransformMatrix[5] = coordTransformMatrix[5];
+    params.sampleTransform = TransposeForWGSL(sampleTransform);
+
+    // Compute the load transformation matrix by using toTexels * sampleTransform * toNormalized
+    // Note that coords starts from 0 so the max value is size - 1.
+    {
+        mat2x3 toTexels = ScaleVec(Sub(plane0Size, {1.0f, 1.0f}));
+        mat2x3 toNormalized = Scale(1.0f / loadBounds[0], 1.0f / loadBounds[1]);
+        mat2x3 loadTransform = Mul(toTexels, Mul(sampleTransform, toNormalized));
+
+        params.loadTransform = TransposeForWGSL(loadTransform);
+    }
+
+    // Compute the clamping for each plane individually: to avoid bleeding of OOB texels due to
+    // interpolation we need to offset by a half texel in, which depends on the size of the plane.
+    {
+        vec2 plane0HalfTexel = Div({0.5f, 0.5f}, plane0Size);
+        vec2 plane1HalfTexel = Div({0.5f, 0.5f}, plane1Size);
+
+        params.samplePlane0RectMin = Add(rectOffset, plane0HalfTexel);
+        params.samplePlane1RectMin = Add(rectOffset, plane1HalfTexel);
+        params.samplePlane0RectMax = Sub(Add(rectOffset, rectScale), plane0HalfTexel);
+        params.samplePlane1RectMax = Sub(Add(rectOffset, rectScale), plane1HalfTexel);
+    }
+
+    params.plane1CoordFactor = Div(plane1Size, plane0Size);
+    params.visibleSize = loadBounds;
 
     DAWN_TRY(device->GetQueue()->WriteBuffer(mParamsBuffer.Get(), 0, &params,
                                              sizeof(ExternalTextureParams)));
@@ -325,7 +370,7 @@ const std::array<Ref<TextureViewBase>, kMaxPlanesPerFormat>& ExternalTextureBase
 }
 
 MaybeError ExternalTextureBase::ValidateCanUseInSubmitNow() const {
-    ASSERT(!IsError());
+    DAWN_ASSERT(!IsError());
     DAWN_INVALID_IF(mState != ExternalTextureState::Active,
                     "External texture %s used in a submit is not active.", this);
 
@@ -369,12 +414,19 @@ void ExternalTextureBase::APIDestroy() {
 }
 
 void ExternalTextureBase::DestroyImpl() {
+    // TODO(crbug.com/dawn/831): DestroyImpl is called from two places.
+    // - It may be called if the texture is explicitly destroyed with APIDestroy.
+    //   This case is NOT thread-safe and needs proper synchronization with other
+    //   simultaneous uses of the texture.
+    // - It may be called when the last ref to the texture is dropped and the texture
+    //   is implicitly destroyed. This case is thread-safe because there are no
+    //   other threads using the texture since there are no other live refs.
     mState = ExternalTextureState::Destroyed;
 }
 
 // static
-ExternalTextureBase* ExternalTextureBase::MakeError(DeviceBase* device, const char* label) {
-    return new ExternalTextureBase(device, ObjectBase::kError, label);
+Ref<ExternalTextureBase> ExternalTextureBase::MakeError(DeviceBase* device, const char* label) {
+    return AcquireRef(new ExternalTextureBase(device, ObjectBase::kError, label));
 }
 
 BufferBase* ExternalTextureBase::GetParamsBuffer() const {
@@ -386,12 +438,12 @@ ObjectType ExternalTextureBase::GetType() const {
 }
 
 const Extent2D& ExternalTextureBase::GetVisibleSize() const {
-    ASSERT(!IsError());
+    DAWN_ASSERT(!IsError());
     return mVisibleSize;
 }
 
 const Origin2D& ExternalTextureBase::GetVisibleOrigin() const {
-    ASSERT(!IsError());
+    DAWN_ASSERT(!IsError());
     return mVisibleOrigin;
 }
 

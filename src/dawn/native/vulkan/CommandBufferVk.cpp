@@ -1,16 +1,29 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/vulkan/CommandBufferVk.h"
 
@@ -33,8 +46,10 @@
 #include "dawn/native/vulkan/PhysicalDeviceVk.h"
 #include "dawn/native/vulkan/PipelineLayoutVk.h"
 #include "dawn/native/vulkan/QuerySetVk.h"
+#include "dawn/native/vulkan/QueueVk.h"
 #include "dawn/native/vulkan/RenderPassCache.h"
 #include "dawn/native/vulkan/RenderPipelineVk.h"
+#include "dawn/native/vulkan/ResolveTextureLoadingUtilsVk.h"
 #include "dawn/native/vulkan/TextureVk.h"
 #include "dawn/native/vulkan/UtilsVulkan.h"
 #include "dawn/native/vulkan/VulkanError.h"
@@ -52,7 +67,7 @@ VkIndexType VulkanIndexType(wgpu::IndexFormat format) {
         case wgpu::IndexFormat::Undefined:
             break;
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 bool HasSameTextureCopyExtent(const TextureCopy& srcCopy,
@@ -83,6 +98,8 @@ VkImageCopy ComputeImageCopyRegion(const TextureCopy& srcCopy,
     region.srcOffset.x = srcCopy.origin.x;
     region.srcOffset.y = srcCopy.origin.y;
     switch (srcTexture->GetDimension()) {
+        case wgpu::TextureDimension::Undefined:
+            DAWN_UNREACHABLE();
         case wgpu::TextureDimension::e1D:
             region.srcSubresource.baseArrayLayer = 0;
             region.srcSubresource.layerCount = 1;
@@ -104,6 +121,8 @@ VkImageCopy ComputeImageCopyRegion(const TextureCopy& srcCopy,
     region.dstOffset.x = dstCopy.origin.x;
     region.dstOffset.y = dstCopy.origin.y;
     switch (dstTexture->GetDimension()) {
+        case wgpu::TextureDimension::Undefined:
+            DAWN_UNREACHABLE();
         case wgpu::TextureDimension::e1D:
             region.dstSubresource.baseArrayLayer = 0;
             region.dstSubresource.layerCount = 1;
@@ -122,7 +141,7 @@ VkImageCopy ComputeImageCopyRegion(const TextureCopy& srcCopy,
             break;
     }
 
-    ASSERT(HasSameTextureCopyExtent(srcCopy, dstCopy, copySize));
+    DAWN_ASSERT(HasSameTextureCopyExtent(srcCopy, dstCopy, copySize));
     Extent3D imageExtent = ComputeTextureCopyExtent(dstCopy, copySize);
     region.extent.width = imageExtent.width;
     region.extent.height = imageExtent.height;
@@ -157,185 +176,93 @@ class DescriptorSetTracker : public BindGroupTrackerBase<true, uint32_t> {
 MaybeError TransitionAndClearForSyncScope(Device* device,
                                           CommandRecordingContext* recordingContext,
                                           const SyncScopeResourceUsage& scope) {
-    std::vector<VkBufferMemoryBarrier> bufferBarriers;
-    std::vector<VkImageMemoryBarrier> imageBarriers;
-    VkPipelineStageFlags srcStages = 0;
-    VkPipelineStageFlags dstStages = 0;
+    // Separate barriers with vertex stages in destination stages from all other barriers.
+    // This avoids creating unnecessary fragment->vertex dependencies when merging barriers.
+    // Eg. merging a compute->vertex barrier and a fragment->fragment barrier would create
+    // a compute|fragment->vertex|fragment barrier.
+    const VkPipelineStageFlags vertexStages = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
+                                              VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+                                              VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
+
+    struct Barriers {
+        std::vector<VkBufferMemoryBarrier> bufferBarriers;
+        std::vector<VkImageMemoryBarrier> imageBarriers;
+        VkPipelineStageFlags srcStages = 0;
+        VkPipelineStageFlags dstStages = 0;
+    };
+
+    Barriers vertexBarriers;
+    Barriers nonVertexBarriers;
+
+    auto MergeBufferBarrier = [](Barriers* barriers, VkPipelineStageFlags srcStages,
+                                 VkPipelineStageFlags dstStages,
+                                 const VkBufferMemoryBarrier& bufferBarrier) {
+        barriers->srcStages |= srcStages;
+        barriers->dstStages |= dstStages;
+        barriers->bufferBarriers.push_back(bufferBarrier);
+    };
 
     for (size_t i = 0; i < scope.buffers.size(); ++i) {
         Buffer* buffer = ToBackend(scope.buffers[i]);
         buffer->EnsureDataInitialized(recordingContext);
 
+        VkPipelineStageFlags srcStages = 0;
+        VkPipelineStageFlags dstStages = 0;
+
         VkBufferMemoryBarrier bufferBarrier;
-        if (buffer->TrackUsageAndGetResourceBarrier(recordingContext, scope.bufferUsages[i],
-                                                    &bufferBarrier, &srcStages, &dstStages)) {
-            bufferBarriers.push_back(bufferBarrier);
+        if (buffer->TrackUsageAndGetResourceBarrier(
+                recordingContext, scope.bufferSyncInfos[i].usage,
+                scope.bufferSyncInfos[i].shaderStages, &bufferBarrier, &srcStages, &dstStages)) {
+            MergeBufferBarrier((dstStages & vertexStages) ? &vertexBarriers : &nonVertexBarriers,
+                               srcStages, dstStages, bufferBarrier);
         }
     }
 
+    auto MergeImageBarriers = [](Barriers* barriers, VkPipelineStageFlags srcStages,
+                                 VkPipelineStageFlags dstStages,
+                                 const std::vector<VkImageMemoryBarrier>& imageBarriers) {
+        barriers->srcStages |= srcStages;
+        barriers->dstStages |= dstStages;
+        barriers->imageBarriers.insert(barriers->imageBarriers.end(), imageBarriers.begin(),
+                                       imageBarriers.end());
+    };
+
+    // TODO(crbug.com/dawn/851): Add image barriers directly to the correct vector.
+    std::vector<VkImageMemoryBarrier> imageBarriers;
     for (size_t i = 0; i < scope.textures.size(); ++i) {
         Texture* texture = ToBackend(scope.textures[i]);
+
+        VkPipelineStageFlags srcStages = 0;
+        VkPipelineStageFlags dstStages = 0;
 
         // Clear subresources that are not render attachments. Render attachments will be
         // cleared in RecordBeginRenderPass by setting the loadop to clear when the texture
         // subresource has not been initialized before the render pass.
-        DAWN_TRY(scope.textureUsages[i].Iterate(
-            [&](const SubresourceRange& range, wgpu::TextureUsage usage) -> MaybeError {
-                if (usage & ~wgpu::TextureUsage::RenderAttachment) {
+        DAWN_TRY(scope.textureSyncInfos[i].Iterate(
+            [&](const SubresourceRange& range, const TextureSyncInfo& syncInfo) -> MaybeError {
+                if (syncInfo.usage & ~wgpu::TextureUsage::RenderAttachment) {
                     DAWN_TRY(texture->EnsureSubresourceContentInitialized(recordingContext, range));
                 }
                 return {};
             }));
-        texture->TransitionUsageForPass(recordingContext, scope.textureUsages[i], &imageBarriers,
+        texture->TransitionUsageForPass(recordingContext, scope.textureSyncInfos[i], &imageBarriers,
                                         &srcStages, &dstStages);
+
+        if (!imageBarriers.empty()) {
+            MergeImageBarriers((dstStages & vertexStages) ? &vertexBarriers : &nonVertexBarriers,
+                               srcStages, dstStages, imageBarriers);
+            imageBarriers.clear();
+        }
     }
 
-    if (bufferBarriers.size() || imageBarriers.size()) {
-        device->fn.CmdPipelineBarrier(recordingContext->commandBuffer, srcStages, dstStages, 0, 0,
-                                      nullptr, bufferBarriers.size(), bufferBarriers.data(),
-                                      imageBarriers.size(), imageBarriers.data());
+    for (const Barriers& barriers : {vertexBarriers, nonVertexBarriers}) {
+        if (!barriers.bufferBarriers.empty() || !barriers.imageBarriers.empty()) {
+            device->fn.CmdPipelineBarrier(
+                recordingContext->commandBuffer, barriers.srcStages, barriers.dstStages, 0, 0,
+                nullptr, barriers.bufferBarriers.size(), barriers.bufferBarriers.data(),
+                barriers.imageBarriers.size(), barriers.imageBarriers.data());
+        }
     }
-    return {};
-}
-
-MaybeError RecordBeginRenderPass(CommandRecordingContext* recordingContext,
-                                 Device* device,
-                                 BeginRenderPassCmd* renderPass) {
-    VkCommandBuffer commands = recordingContext->commandBuffer;
-
-    // Query a VkRenderPass from the cache
-    VkRenderPass renderPassVK = VK_NULL_HANDLE;
-    {
-        RenderPassCacheQuery query;
-
-        for (ColorAttachmentIndex i :
-             IterateBitSet(renderPass->attachmentState->GetColorAttachmentsMask())) {
-            const auto& attachmentInfo = renderPass->colorAttachments[i];
-            bool hasResolveTarget = attachmentInfo.resolveTarget != nullptr;
-
-            query.SetColor(i, attachmentInfo.view->GetFormat().format, attachmentInfo.loadOp,
-                           attachmentInfo.storeOp, hasResolveTarget);
-        }
-
-        if (renderPass->attachmentState->HasDepthStencilAttachment()) {
-            const auto& attachmentInfo = renderPass->depthStencilAttachment;
-
-            query.SetDepthStencil(attachmentInfo.view->GetTexture()->GetFormat().format,
-                                  attachmentInfo.depthLoadOp, attachmentInfo.depthStoreOp,
-                                  attachmentInfo.stencilLoadOp, attachmentInfo.stencilStoreOp,
-                                  attachmentInfo.depthReadOnly || attachmentInfo.stencilReadOnly);
-        }
-
-        query.SetSampleCount(renderPass->attachmentState->GetSampleCount());
-
-        DAWN_TRY_ASSIGN(renderPassVK, device->GetRenderPassCache()->GetRenderPass(query));
-    }
-
-    // Create a framebuffer that will be used once for the render pass and gather the clear
-    // values for the attachments at the same time.
-    std::array<VkClearValue, kMaxColorAttachments + 1> clearValues;
-    VkFramebuffer framebuffer = VK_NULL_HANDLE;
-    uint32_t attachmentCount = 0;
-    {
-        // Fill in the attachment info that will be chained in the framebuffer create info.
-        std::array<VkImageView, kMaxColorAttachments * 2 + 1> attachments;
-
-        for (ColorAttachmentIndex i :
-             IterateBitSet(renderPass->attachmentState->GetColorAttachmentsMask())) {
-            auto& attachmentInfo = renderPass->colorAttachments[i];
-            TextureView* view = ToBackend(attachmentInfo.view.Get());
-            if (view == nullptr) {
-                continue;
-            }
-
-            attachments[attachmentCount] = view->GetHandle();
-
-            switch (view->GetFormat().GetAspectInfo(Aspect::Color).baseType) {
-                case TextureComponentType::Float: {
-                    const std::array<float, 4> appliedClearColor =
-                        ConvertToFloatColor(attachmentInfo.clearColor);
-                    for (uint32_t j = 0; j < 4; ++j) {
-                        clearValues[attachmentCount].color.float32[j] = appliedClearColor[j];
-                    }
-                    break;
-                }
-                case TextureComponentType::Uint: {
-                    const std::array<uint32_t, 4> appliedClearColor =
-                        ConvertToUnsignedIntegerColor(attachmentInfo.clearColor);
-                    for (uint32_t j = 0; j < 4; ++j) {
-                        clearValues[attachmentCount].color.uint32[j] = appliedClearColor[j];
-                    }
-                    break;
-                }
-                case TextureComponentType::Sint: {
-                    const std::array<int32_t, 4> appliedClearColor =
-                        ConvertToSignedIntegerColor(attachmentInfo.clearColor);
-                    for (uint32_t j = 0; j < 4; ++j) {
-                        clearValues[attachmentCount].color.int32[j] = appliedClearColor[j];
-                    }
-                    break;
-                }
-            }
-            attachmentCount++;
-        }
-
-        if (renderPass->attachmentState->HasDepthStencilAttachment()) {
-            auto& attachmentInfo = renderPass->depthStencilAttachment;
-            TextureView* view = ToBackend(attachmentInfo.view.Get());
-
-            attachments[attachmentCount] = view->GetHandle();
-
-            clearValues[attachmentCount].depthStencil.depth = attachmentInfo.clearDepth;
-            clearValues[attachmentCount].depthStencil.stencil = attachmentInfo.clearStencil;
-
-            attachmentCount++;
-        }
-
-        for (ColorAttachmentIndex i :
-             IterateBitSet(renderPass->attachmentState->GetColorAttachmentsMask())) {
-            if (renderPass->colorAttachments[i].resolveTarget != nullptr) {
-                TextureView* view = ToBackend(renderPass->colorAttachments[i].resolveTarget.Get());
-
-                attachments[attachmentCount] = view->GetHandle();
-
-                attachmentCount++;
-            }
-        }
-
-        // Chain attachments and create the framebuffer
-        VkFramebufferCreateInfo createInfo;
-        createInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        createInfo.pNext = nullptr;
-        createInfo.flags = 0;
-        createInfo.renderPass = renderPassVK;
-        createInfo.attachmentCount = attachmentCount;
-        createInfo.pAttachments = AsVkArray(attachments.data());
-        createInfo.width = renderPass->width;
-        createInfo.height = renderPass->height;
-        createInfo.layers = 1;
-
-        DAWN_TRY(CheckVkSuccess(device->fn.CreateFramebuffer(device->GetVkDevice(), &createInfo,
-                                                             nullptr, &*framebuffer),
-                                "CreateFramebuffer"));
-
-        // We don't reuse VkFramebuffers so mark the framebuffer for deletion as soon as the
-        // commands currently being recorded are finished.
-        device->GetFencedDeleter()->DeleteWhenUnused(framebuffer);
-    }
-
-    VkRenderPassBeginInfo beginInfo;
-    beginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    beginInfo.pNext = nullptr;
-    beginInfo.renderPass = renderPassVK;
-    beginInfo.framebuffer = framebuffer;
-    beginInfo.renderArea.offset.x = 0;
-    beginInfo.renderArea.offset.y = 0;
-    beginInfo.renderArea.extent.width = renderPass->width;
-    beginInfo.renderArea.extent.height = renderPass->height;
-    beginInfo.clearValueCount = attachmentCount;
-    beginInfo.pClearValues = clearValues.data();
-
-    device->fn.CmdBeginRenderPass(commands, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     return {};
 }
@@ -346,7 +273,7 @@ void ResetUsedQuerySetsOnRenderPass(Device* device,
                                     VkCommandBuffer commands,
                                     QuerySetBase* querySet,
                                     const std::vector<bool>& availability) {
-    ASSERT(availability.size() == querySet->GetQueryAvailability().size());
+    DAWN_ASSERT(availability.size() == querySet->GetQueryAvailability().size());
 
     auto currentIt = availability.begin();
     auto lastIt = availability.end();
@@ -377,7 +304,8 @@ void RecordWriteTimestampCmd(CommandRecordingContext* recordingContext,
                              Device* device,
                              QuerySetBase* querySet,
                              uint32_t queryIndex,
-                             bool isRenderPass) {
+                             bool isRenderPass,
+                             VkPipelineStageFlagBits pipelineStage) {
     VkCommandBuffer commands = recordingContext->commandBuffer;
 
     // The queries must be reset between uses, and the reset command cannot be called in render
@@ -386,8 +314,8 @@ void RecordWriteTimestampCmd(CommandRecordingContext* recordingContext,
         device->fn.CmdResetQueryPool(commands, ToBackend(querySet)->GetHandle(), queryIndex, 1);
     }
 
-    device->fn.CmdWriteTimestamp(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                                 ToBackend(querySet)->GetHandle(), queryIndex);
+    device->fn.CmdWriteTimestamp(commands, pipelineStage, ToBackend(querySet)->GetHandle(),
+                                 queryIndex);
 }
 
 void RecordResolveQuerySetCmd(VkCommandBuffer commands,
@@ -433,6 +361,159 @@ void RecordResolveQuerySetCmd(VkCommandBuffer commands,
 
 }  // anonymous namespace
 
+MaybeError RecordBeginRenderPass(CommandRecordingContext* recordingContext,
+                                 Device* device,
+                                 BeginRenderPassCmd* renderPass) {
+    VkCommandBuffer commands = recordingContext->commandBuffer;
+
+    // Query a VkRenderPass from the cache
+    VkRenderPass renderPassVK = VK_NULL_HANDLE;
+    {
+        RenderPassCacheQuery query;
+
+        for (auto i : IterateBitSet(renderPass->attachmentState->GetColorAttachmentsMask())) {
+            const auto& attachmentInfo = renderPass->colorAttachments[i];
+            bool hasResolveTarget = attachmentInfo.resolveTarget != nullptr;
+
+            query.SetColor(i, attachmentInfo.view->GetFormat().format, attachmentInfo.loadOp,
+                           attachmentInfo.storeOp, hasResolveTarget);
+        }
+
+        if (renderPass->attachmentState->HasDepthStencilAttachment()) {
+            const auto& attachmentInfo = renderPass->depthStencilAttachment;
+
+            query.SetDepthStencil(attachmentInfo.view->GetTexture()->GetFormat().format,
+                                  attachmentInfo.depthLoadOp, attachmentInfo.depthStoreOp,
+                                  attachmentInfo.depthReadOnly, attachmentInfo.stencilLoadOp,
+                                  attachmentInfo.stencilStoreOp, attachmentInfo.stencilReadOnly);
+        }
+
+        query.SetSampleCount(renderPass->attachmentState->GetSampleCount());
+
+        RenderPassCache::RenderPassInfo renderPassInfo;
+        DAWN_TRY_ASSIGN(renderPassInfo, device->GetRenderPassCache()->GetRenderPass(query));
+        renderPassVK = renderPassInfo.renderPass;
+    }
+
+    // Create a framebuffer that will be used once for the render pass and gather the clear
+    // values for the attachments at the same time.
+    std::array<VkClearValue, kMaxColorAttachments + 1> clearValues;
+    VkFramebuffer framebuffer = VK_NULL_HANDLE;
+    uint32_t attachmentCount = 0;
+    {
+        // Fill in the attachment info that will be chained in the framebuffer create info.
+        std::array<VkImageView, kMaxColorAttachments * 2 + 1> attachments;
+
+        for (auto i : IterateBitSet(renderPass->attachmentState->GetColorAttachmentsMask())) {
+            auto& attachmentInfo = renderPass->colorAttachments[i];
+            TextureView* view = ToBackend(attachmentInfo.view.Get());
+            if (view == nullptr) {
+                continue;
+            }
+
+            if (view->GetDimension() == wgpu::TextureViewDimension::e3D) {
+                VkImageView handleFor2DViewOn3D;
+                DAWN_TRY_ASSIGN(handleFor2DViewOn3D,
+                                view->GetOrCreate2DViewOn3D(attachmentInfo.depthSlice));
+                attachments[attachmentCount] = handleFor2DViewOn3D;
+            } else {
+                attachments[attachmentCount] = view->GetHandle();
+            }
+
+            switch (view->GetFormat().GetAspectInfo(Aspect::Color).baseType) {
+                case TextureComponentType::Float: {
+                    const std::array<float, 4> appliedClearColor =
+                        ConvertToFloatColor(attachmentInfo.clearColor);
+                    for (uint32_t j = 0; j < 4; ++j) {
+                        clearValues[attachmentCount].color.float32[j] = appliedClearColor[j];
+                    }
+                    break;
+                }
+                case TextureComponentType::Uint: {
+                    const std::array<uint32_t, 4> appliedClearColor =
+                        ConvertToUnsignedIntegerColor(attachmentInfo.clearColor);
+                    for (uint32_t j = 0; j < 4; ++j) {
+                        clearValues[attachmentCount].color.uint32[j] = appliedClearColor[j];
+                    }
+                    break;
+                }
+                case TextureComponentType::Sint: {
+                    const std::array<int32_t, 4> appliedClearColor =
+                        ConvertToSignedIntegerColor(attachmentInfo.clearColor);
+                    for (uint32_t j = 0; j < 4; ++j) {
+                        clearValues[attachmentCount].color.int32[j] = appliedClearColor[j];
+                    }
+                    break;
+                }
+            }
+            attachmentCount++;
+        }
+
+        if (renderPass->attachmentState->HasDepthStencilAttachment()) {
+            auto& attachmentInfo = renderPass->depthStencilAttachment;
+            TextureView* view = ToBackend(attachmentInfo.view.Get());
+
+            attachments[attachmentCount] = view->GetHandle();
+
+            clearValues[attachmentCount].depthStencil.depth = attachmentInfo.clearDepth;
+            clearValues[attachmentCount].depthStencil.stencil = attachmentInfo.clearStencil;
+
+            attachmentCount++;
+        }
+
+        for (auto i : IterateBitSet(renderPass->attachmentState->GetColorAttachmentsMask())) {
+            if (renderPass->colorAttachments[i].resolveTarget != nullptr) {
+                TextureView* view = ToBackend(renderPass->colorAttachments[i].resolveTarget.Get());
+
+                attachments[attachmentCount] = view->GetHandle();
+
+                attachmentCount++;
+            }
+        }
+
+        // Chain attachments and create the framebuffer
+        VkFramebufferCreateInfo createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        createInfo.pNext = nullptr;
+        createInfo.flags = 0;
+        createInfo.renderPass = renderPassVK;
+        createInfo.attachmentCount = attachmentCount;
+        createInfo.pAttachments = AsVkArray(attachments.data());
+        createInfo.width = renderPass->width;
+        createInfo.height = renderPass->height;
+        createInfo.layers = 1;
+
+        DAWN_TRY(CheckVkSuccess(device->fn.CreateFramebuffer(device->GetVkDevice(), &createInfo,
+                                                             nullptr, &*framebuffer),
+                                "CreateFramebuffer"));
+
+        // We don't reuse VkFramebuffers so mark the framebuffer for deletion as soon as the
+        // commands currently being recorded are finished.
+        device->GetFencedDeleter()->DeleteWhenUnused(framebuffer);
+    }
+
+    VkRenderPassBeginInfo beginInfo;
+    beginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    beginInfo.pNext = nullptr;
+    beginInfo.renderPass = renderPassVK;
+    beginInfo.framebuffer = framebuffer;
+    beginInfo.renderArea.offset.x = 0;
+    beginInfo.renderArea.offset.y = 0;
+    beginInfo.renderArea.extent.width = renderPass->width;
+    beginInfo.renderArea.extent.height = renderPass->height;
+    beginInfo.clearValueCount = attachmentCount;
+    beginInfo.pClearValues = clearValues.data();
+
+    if (renderPass->attachmentState->GetExpandResolveInfo().attachmentsToExpandResolve.any()) {
+        DAWN_TRY(BeginRenderPassAndExpandResolveTextureWithDraw(device, recordingContext,
+                                                                renderPass, beginInfo));
+    } else {
+        device->fn.CmdBeginRenderPass(commands, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
+    }
+
+    return {};
+}
+
 // static
 Ref<CommandBuffer> CommandBuffer::Create(CommandEncoder* encoder,
                                          const CommandBufferDescriptor* descriptor) {
@@ -447,13 +528,13 @@ MaybeError CommandBuffer::RecordCopyImageWithTemporaryBuffer(
     const TextureCopy& srcCopy,
     const TextureCopy& dstCopy,
     const Extent3D& copySize) {
-    ASSERT(srcCopy.texture->GetFormat().CopyCompatibleWith(dstCopy.texture->GetFormat()));
-    ASSERT(srcCopy.aspect == dstCopy.aspect);
+    DAWN_ASSERT(srcCopy.texture->GetFormat().CopyCompatibleWith(dstCopy.texture->GetFormat()));
+    DAWN_ASSERT(srcCopy.aspect == dstCopy.aspect);
     dawn::native::Format format = srcCopy.texture->GetFormat();
     const TexelBlockInfo& blockInfo = format.GetAspectInfo(srcCopy.aspect).block;
-    ASSERT(copySize.width % blockInfo.width == 0);
+    DAWN_ASSERT(copySize.width % blockInfo.width == 0);
     uint32_t widthInBlocks = copySize.width / blockInfo.width;
-    ASSERT(copySize.height % blockInfo.height == 0);
+    DAWN_ASSERT(copySize.height % blockInfo.height == 0);
     uint32_t heightInBlocks = copySize.height / blockInfo.height;
 
     // Create the temporary buffer. Note that We don't need to respect WebGPU's 256 alignment
@@ -525,10 +606,6 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
     size_t nextComputePassNumber = 0;
     size_t nextRenderPassNumber = 0;
 
-    // Need to track if a render pass has already been recorded for the
-    // VulkanSplitCommandBufferOnComputePassAfterRenderPass workaround.
-    bool hasRecordedRenderPassInCurrentCommandBuffer = false;
-
     Command type;
     while (mCommands.NextCommandId(&type)) {
         switch (type) {
@@ -579,7 +656,7 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
                     GetSubresourcesAffectedByCopy(copy->destination, copy->copySize);
 
                 if (IsCompleteSubresourceCopiedTo(dst.texture.Get(), copy->copySize,
-                                                  subresource.mipLevel)) {
+                                                  subresource.mipLevel, dst.aspect)) {
                     // Since texture has been overwritten, it has been "initialized"
                     dst.texture->SetIsSubresourceContentInitialized(true, range);
                 } else {
@@ -589,7 +666,8 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
                 ToBackend(src.buffer)
                     ->TransitionUsageNow(recordingContext, wgpu::BufferUsage::CopySrc);
                 ToBackend(dst.texture)
-                    ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::CopyDst, range);
+                    ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::CopyDst,
+                                         wgpu::ShaderStage::None, range);
                 VkBuffer srcBuffer = ToBackend(src.buffer)->GetHandle();
                 VkImage dstImage = ToBackend(dst.texture)->GetHandle();
 
@@ -621,7 +699,8 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
                              ->EnsureSubresourceContentInitialized(recordingContext, range));
 
                 ToBackend(src.texture)
-                    ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::CopySrc, range);
+                    ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::CopySrc,
+                                         wgpu::ShaderStage::None, range);
                 ToBackend(dst.buffer)
                     ->TransitionUsageNow(recordingContext, wgpu::BufferUsage::CopyDst);
 
@@ -647,8 +726,8 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
 
                 DAWN_TRY(ToBackend(src.texture)
                              ->EnsureSubresourceContentInitialized(recordingContext, srcRange));
-                if (IsCompleteSubresourceCopiedTo(dst.texture.Get(), copy->copySize,
-                                                  dst.mipLevel)) {
+                if (IsCompleteSubresourceCopiedTo(dst.texture.Get(), copy->copySize, dst.mipLevel,
+                                                  dst.aspect)) {
                     // Since destination texture has been overwritten, it has been "initialized"
                     dst.texture->SetIsSubresourceContentInitialized(true, dstRange);
                 } else {
@@ -660,15 +739,17 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
                     // When there are overlapped subresources, the layout of the overlapped
                     // subresources should all be GENERAL instead of what we set now. Currently
                     // it is not allowed to copy with overlapped subresources, but we still
-                    // add the ASSERT here as a reminder for this possible misuse.
-                    ASSERT(!IsRangeOverlapped(src.origin.z, dst.origin.z,
-                                              copy->copySize.depthOrArrayLayers));
+                    // add the DAWN_ASSERT here as a reminder for this possible misuse.
+                    DAWN_ASSERT(!IsRangeOverlapped(src.origin.z, dst.origin.z,
+                                                   copy->copySize.depthOrArrayLayers));
                 }
 
                 ToBackend(src.texture)
-                    ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::CopySrc, srcRange);
+                    ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::CopySrc,
+                                         wgpu::ShaderStage::None, srcRange);
                 ToBackend(dst.texture)
-                    ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::CopyDst, dstRange);
+                    ->TransitionUsageNow(recordingContext, wgpu::TextureUsage::CopyDst,
+                                         wgpu::ShaderStage::None, dstRange);
 
                 // In some situations we cannot do texture-to-texture copies with vkCmdCopyImage
                 // because as Vulkan SPEC always validates image copies with the virtual size of
@@ -740,7 +821,7 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
                 LazyClearRenderPassAttachments(cmd);
                 DAWN_TRY(RecordRenderPass(recordingContext, cmd));
 
-                hasRecordedRenderPassInCurrentCommandBuffer = true;
+                recordingContext->hasRecordedRenderPass = true;
                 nextRenderPassNumber++;
                 break;
             }
@@ -750,12 +831,12 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
 
                 // If required, split the command buffer any time a compute pass follows a render
                 // pass to work around a Qualcomm bug.
-                if (hasRecordedRenderPassInCurrentCommandBuffer &&
+                if (recordingContext->hasRecordedRenderPass &&
                     device->IsToggleEnabled(
                         Toggle::VulkanSplitCommandBufferOnComputePassAfterRenderPass)) {
                     // Identified a potential crash case, split the command buffer.
-                    DAWN_TRY(device->SplitRecordingContext(recordingContext));
-                    hasRecordedRenderPassInCurrentCommandBuffer = false;
+                    DAWN_TRY(
+                        ToBackend(device->GetQueue())->SplitRecordingContext(recordingContext));
                     commands = recordingContext->commandBuffer;
                 }
 
@@ -805,7 +886,7 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
                 WriteTimestampCmd* cmd = mCommands.NextCommand<WriteTimestampCmd>();
 
                 RecordWriteTimestampCmd(recordingContext, device, cmd->querySet.Get(),
-                                        cmd->queryIndex, false);
+                                        cmd->queryIndex, false, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
                 break;
             }
 
@@ -871,10 +952,11 @@ MaybeError CommandBuffer::RecordCommands(CommandRecordingContext* recordingConte
                 uint8_t* data = mCommands.NextData<uint8_t>(size);
 
                 UploadHandle uploadHandle;
-                DAWN_TRY_ASSIGN(uploadHandle, device->GetDynamicUploader()->Allocate(
-                                                  size, device->GetPendingCommandSerial(),
-                                                  kCopyBufferToBufferOffsetAlignment));
-                ASSERT(uploadHandle.mappedBuffer != nullptr);
+                DAWN_TRY_ASSIGN(uploadHandle,
+                                device->GetDynamicUploader()->Allocate(
+                                    size, device->GetQueue()->GetPendingCommandSerial(),
+                                    kCopyBufferToBufferOffsetAlignment));
+                DAWN_ASSERT(uploadHandle.mappedBuffer != nullptr);
                 memcpy(uploadHandle.mappedBuffer, data, size);
 
                 dstBuffer->EnsureDataInitializedAsDestination(recordingContext, offset, size);
@@ -906,10 +988,12 @@ MaybeError CommandBuffer::RecordComputePass(CommandRecordingContext* recordingCo
     Device* device = ToBackend(GetDevice());
 
     // Write timestamp at the beginning of compute pass if it's set
-    if (computePassCmd->beginTimestamp.querySet.Get() != nullptr) {
+    if (computePassCmd->timestampWrites.beginningOfPassWriteIndex !=
+        wgpu::kQuerySetIndexUndefined) {
         RecordWriteTimestampCmd(recordingContext, device,
-                                computePassCmd->beginTimestamp.querySet.Get(),
-                                computePassCmd->beginTimestamp.queryIndex, false);
+                                computePassCmd->timestampWrites.querySet.Get(),
+                                computePassCmd->timestampWrites.beginningOfPassWriteIndex, false,
+                                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
     }
 
     VkCommandBuffer commands = recordingContext->commandBuffer;
@@ -924,10 +1008,12 @@ MaybeError CommandBuffer::RecordComputePass(CommandRecordingContext* recordingCo
                 mCommands.NextCommand<EndComputePassCmd>();
 
                 // Write timestamp at the end of compute pass if it's set.
-                if (computePassCmd->endTimestamp.querySet.Get() != nullptr) {
+                if (computePassCmd->timestampWrites.endOfPassWriteIndex !=
+                    wgpu::kQuerySetIndexUndefined) {
                     RecordWriteTimestampCmd(recordingContext, device,
-                                            computePassCmd->endTimestamp.querySet.Get(),
-                                            computePassCmd->endTimestamp.queryIndex, false);
+                                            computePassCmd->timestampWrites.querySet.Get(),
+                                            computePassCmd->timestampWrites.endOfPassWriteIndex,
+                                            false, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
                 }
                 return {};
             }
@@ -1036,17 +1122,17 @@ MaybeError CommandBuffer::RecordComputePass(CommandRecordingContext* recordingCo
                 WriteTimestampCmd* cmd = mCommands.NextCommand<WriteTimestampCmd>();
 
                 RecordWriteTimestampCmd(recordingContext, device, cmd->querySet.Get(),
-                                        cmd->queryIndex, false);
+                                        cmd->queryIndex, false, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
                 break;
             }
 
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
         }
     }
 
     // EndComputePass should have been called
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 MaybeError CommandBuffer::RecordRenderPass(CommandRecordingContext* recordingContext,
@@ -1054,14 +1140,17 @@ MaybeError CommandBuffer::RecordRenderPass(CommandRecordingContext* recordingCon
     Device* device = ToBackend(GetDevice());
     VkCommandBuffer commands = recordingContext->commandBuffer;
 
-    DAWN_TRY(RecordBeginRenderPass(recordingContext, device, renderPassCmd));
-
     // Write timestamp at the beginning of render pass if it's set.
-    if (renderPassCmd->beginTimestamp.querySet.Get() != nullptr) {
+    // We've observed that this must be called before the render pass or the timestamps produced
+    // are nonsensical on multiple Android devices.
+    if (renderPassCmd->timestampWrites.beginningOfPassWriteIndex != wgpu::kQuerySetIndexUndefined) {
         RecordWriteTimestampCmd(recordingContext, device,
-                                renderPassCmd->beginTimestamp.querySet.Get(),
-                                renderPassCmd->beginTimestamp.queryIndex, true);
+                                renderPassCmd->timestampWrites.querySet.Get(),
+                                renderPassCmd->timestampWrites.beginningOfPassWriteIndex, true,
+                                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
     }
+
+    DAWN_TRY(RecordBeginRenderPass(recordingContext, device, renderPassCmd));
 
     // Set the default value for the dynamic state
     {
@@ -1149,7 +1238,7 @@ MaybeError CommandBuffer::RecordRenderPass(CommandRecordingContext* recordingCon
             case Command::DrawIndexedIndirect: {
                 DrawIndexedIndirectCmd* draw = iter->NextCommand<DrawIndexedIndirectCmd>();
                 Buffer* buffer = ToBackend(draw->indirectBuffer.Get());
-                ASSERT(buffer != nullptr);
+                DAWN_ASSERT(buffer != nullptr);
 
                 descriptorSets.Apply(device, recordingContext, VK_PIPELINE_BIND_POINT_GRAPHICS);
                 device->fn.CmdDrawIndexedIndirect(commands, buffer->GetHandle(),
@@ -1256,7 +1345,7 @@ MaybeError CommandBuffer::RecordRenderPass(CommandRecordingContext* recordingCon
             }
 
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
                 break;
         }
     };
@@ -1267,14 +1356,19 @@ MaybeError CommandBuffer::RecordRenderPass(CommandRecordingContext* recordingCon
             case Command::EndRenderPass: {
                 mCommands.NextCommand<EndRenderPassCmd>();
 
+                device->fn.CmdEndRenderPass(commands);
+
                 // Write timestamp at the end of render pass if it's set.
-                if (renderPassCmd->endTimestamp.querySet.Get() != nullptr) {
+                // We've observed that this must be called after the render pass ends or the
+                // timestamps produced are nonsensical on multiple Android devices.
+                if (renderPassCmd->timestampWrites.endOfPassWriteIndex !=
+                    wgpu::kQuerySetIndexUndefined) {
                     RecordWriteTimestampCmd(recordingContext, device,
-                                            renderPassCmd->endTimestamp.querySet.Get(),
-                                            renderPassCmd->endTimestamp.queryIndex, true);
+                                            renderPassCmd->timestampWrites.querySet.Get(),
+                                            renderPassCmd->timestampWrites.endOfPassWriteIndex,
+                                            true, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
                 }
 
-                device->fn.CmdEndRenderPass(commands);
                 return {};
             }
 
@@ -1368,7 +1462,7 @@ MaybeError CommandBuffer::RecordRenderPass(CommandRecordingContext* recordingCon
                 WriteTimestampCmd* cmd = mCommands.NextCommand<WriteTimestampCmd>();
 
                 RecordWriteTimestampCmd(recordingContext, device, cmd->querySet.Get(),
-                                        cmd->queryIndex, true);
+                                        cmd->queryIndex, true, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
                 break;
             }
 
@@ -1380,7 +1474,7 @@ MaybeError CommandBuffer::RecordRenderPass(CommandRecordingContext* recordingCon
     }
 
     // EndRenderPass should have been called
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 }  // namespace dawn::native::vulkan

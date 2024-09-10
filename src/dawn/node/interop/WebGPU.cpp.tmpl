@@ -166,7 +166,7 @@ Wrappers* Wrappers::instance = nullptr;
         InstanceAccessor("size", &W{{$.Name}}::getSize, nullptr),
 {{-  end}}
 {{-  range $m := $methods}}
-        InstanceMethod("{{$m.Name}}", &W{{$.Name}}::{{$m.Name}}, static_cast<napi_property_attributes>(napi_writable | napi_configurable)),
+        InstanceMethod("{{$m.Name}}", &W{{$.Name}}::{{$m.Name}}, static_cast<napi_property_attributes>(napi_writable | napi_configurable | napi_enumerable)),
 {{-  end}}
 {{-  range $a := $attributes}}
 {{-   if not (HasAnnotation $a "SameObject")}}

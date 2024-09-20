@@ -71,11 +71,10 @@ void AsyncRunner::ScheduleProcessEvents(Napi::Env env) {
             Napi::Function::New(env,
                                 [weak_self, env](const Napi::CallbackInfo&) {
                                     auto self = weak_self.lock();
+                                    self->process_events_queued_ = false;
                                     if (self == nullptr || self->tasks_waiting_ == 0) {
                                         return;
                                     }
-
-                                    self->process_events_queued_ = false;
                                     wgpuInstanceProcessEvents(self->instance_->Get());
                                     self->ScheduleProcessEvents(env);
                                 }),

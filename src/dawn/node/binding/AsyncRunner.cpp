@@ -71,7 +71,7 @@ void AsyncRunner::ScheduleProcessEvents(Napi::Env env) {
             Napi::Function::New(env,
                                 [weak_self, env](const Napi::CallbackInfo&) {
                                     auto self = weak_self.lock();
-                                    if (self == nullptr) {
+                                    if (self == nullptr || self->tasks_waiting_ == 0) {
                                         return;
                                     }
 

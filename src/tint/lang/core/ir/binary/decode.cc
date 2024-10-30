@@ -44,6 +44,7 @@
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/core/type/vector.h"
+#include "src/tint/utils/constants/internal_limits.h"
 #include "src/tint/utils/containers/hashset.h"
 #include "src/tint/utils/containers/transform.h"
 #include "src/tint/utils/diagnostic/diagnostic.h"
@@ -241,7 +242,12 @@ struct Decoder {
 
     void PopulateFunction(ir::Function* fn_out, const pb::Function& fn_in) {
         if (!fn_in.name().empty()) {
-            mod_out_.SetName(fn_out, fn_in.name());
+            if (DAWN_UNLIKELY(fn_in.name().find('\0') != std::string::npos)) {
+                Error() << "function name '" << fn_in.name()
+                        << "' contains '\\0' before end of the string";
+            } else {
+                mod_out_.SetName(fn_out, fn_in.name());
+            }
         }
         fn_out->SetReturnType(Type(fn_in.return_type()));
         if (fn_in.has_pipeline_stage()) {
@@ -249,7 +255,10 @@ struct Decoder {
         }
         if (fn_in.has_workgroup_size()) {
             auto& wg_size_in = fn_in.workgroup_size();
-            fn_out->SetWorkgroupSize(wg_size_in.x(), wg_size_in.y(), wg_size_in.z());
+            // TODO(dsinclair): When overrides are supported we should add support for generating
+            // override expressions here.
+            fn_out->SetWorkgroupSize(Value(wg_size_in.x()), Value(wg_size_in.y()),
+                                     Value(wg_size_in.z()));
         }
 
         Vector<FunctionParam*, 8> params_out;
@@ -827,6 +836,12 @@ struct Decoder {
             Error() << "array element stride is smaller than the implicit stride";
             return mod_out_.Types().invalid();
         }
+        if (count >= internal_limits::kMaxArrayElementCount) {
+            Error() << "array count (" << count << ") must be less than "
+                    << internal_limits::kMaxArrayElementCount;
+            return mod_out_.Types().invalid();
+        }
+
         return count > 0 ? mod_out_.Types().array(element, count, stride)
                          : mod_out_.Types().runtime_array(element, stride);
     }
@@ -940,6 +955,11 @@ struct Decoder {
         auto* type = Type(res_in.type());
         auto* res_out = b.InstructionResult(type);
         if (!res_in.name().empty()) {
+            if (DAWN_UNLIKELY(res_in.name().find('\0') != std::string::npos)) {
+                Error() << "result name '" << res_in.name()
+                        << "' contains '\\0' before end of the string";
+                return nullptr;
+            }
             mod_out_.SetName(res_out, res_in.name());
         }
         return res_out;
@@ -949,6 +969,11 @@ struct Decoder {
         auto* type = Type(param_in.type());
         auto* param_out = b.FunctionParam(type);
         if (!param_in.name().empty()) {
+            if (DAWN_UNLIKELY(param_in.name().find('\0') != std::string::npos)) {
+                Error() << "param name '" << param_in.name()
+                        << "' contains '\\0' before end of the string";
+                return nullptr;
+            }
             mod_out_.SetName(param_out, param_in.name());
         }
 
@@ -982,6 +1007,11 @@ struct Decoder {
         auto* type = Type(param_in.type());
         auto* param_out = b.BlockParam(type);
         if (!param_in.name().empty()) {
+            if (DAWN_UNLIKELY(param_in.name().find('\0') != std::string::npos)) {
+                Error() << "param name '" << param_in.name()
+                        << "' contains '\\0' before end of the string";
+                return nullptr;
+            }
             mod_out_.SetName(param_out, param_in.name());
         }
         return param_out;
@@ -1078,6 +1108,11 @@ struct Decoder {
         uint32_t num_elements = type->Elements().count;
         if (DAWN_UNLIKELY(num_elements == 0)) {
             Error() << "cannot create a splat of type " << type->FriendlyName();
+            return b.InvalidConstant()->Value();
+        }
+        if (DAWN_UNLIKELY(num_elements > internal_limits::kMaxArrayConstructorElements)) {
+            Error() << "array constructor has excessive number of elements (>"
+                    << internal_limits::kMaxArrayConstructorElements << ")";
             return b.InvalidConstant()->Value();
         }
         auto* value = ConstantValue(splat_in.elements());
@@ -1645,10 +1680,14 @@ struct Decoder {
                 return core::BuiltinFn::kInputAttachmentLoad;
             case pb::BuiltinFn::subgroup_add:
                 return core::BuiltinFn::kSubgroupAdd;
+            case pb::BuiltinFn::subgroup_inclusive_add:
+                return core::BuiltinFn::kSubgroupInclusiveAdd;
             case pb::BuiltinFn::subgroup_exclusive_add:
                 return core::BuiltinFn::kSubgroupExclusiveAdd;
             case pb::BuiltinFn::subgroup_mul:
                 return core::BuiltinFn::kSubgroupMul;
+            case pb::BuiltinFn::subgroup_inclusive_mul:
+                return core::BuiltinFn::kSubgroupInclusiveMul;
             case pb::BuiltinFn::subgroup_exclusive_mul:
                 return core::BuiltinFn::kSubgroupExclusiveMul;
             case pb::BuiltinFn::subgroup_and:

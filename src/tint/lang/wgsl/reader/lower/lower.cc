@@ -175,8 +175,10 @@ core::BuiltinFn Convert(wgsl::BuiltinFn fn) {
         CASE(kSubgroupShuffleDown)
         CASE(kInputAttachmentLoad)
         CASE(kSubgroupAdd)
+        CASE(kSubgroupInclusiveAdd)
         CASE(kSubgroupExclusiveAdd)
         CASE(kSubgroupMul)
+        CASE(kSubgroupInclusiveMul)
         CASE(kSubgroupExclusiveMul)
         CASE(kSubgroupAnd)
         CASE(kSubgroupOr)
@@ -202,7 +204,7 @@ core::BuiltinFn Convert(wgsl::BuiltinFn fn) {
 }  // namespace
 
 Result<SuccessType> Lower(core::ir::Module& mod) {
-    if (auto res = core::ir::ValidateAndDumpIfNeeded(mod, "lowering from WGSL"); res != Success) {
+    if (auto res = core::ir::ValidateAndDumpIfNeeded(mod, "wgsl.Lower"); res != Success) {
         return res.Failure();
     }
 

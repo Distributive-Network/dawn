@@ -4,19 +4,19 @@ cbuffer cbuffer_u : register(b0) {
 };
 RWByteAddressBuffer s : register(u1);
 float16_t a(matrix<float16_t, 4, 3> a_1[4]) {
-  return a_1[0][0][0u];
+  return a_1[int(0)][int(0)][0u];
 }
 
 float16_t b(matrix<float16_t, 4, 3> m) {
-  return m[0][0u];
+  return m[int(0)][0u];
 }
 
 float16_t c(vector<float16_t, 3> v) {
   return v[0u];
 }
 
-float16_t d(float16_t f) {
-  return f;
+float16_t d(float16_t f_1) {
+  return f_1;
 }
 
 vector<float16_t, 4> tint_bitcast_to_f16(uint4 src) {
@@ -40,7 +40,7 @@ matrix<float16_t, 4, 3> v_4(uint start_byte_offset) {
 
 typedef matrix<float16_t, 4, 3> ary_ret[4];
 ary_ret v_8(uint start_byte_offset) {
-  matrix<float16_t, 4, 3> a[4] = (matrix<float16_t, 4, 3>[4])0;
+  matrix<float16_t, 4, 3> a_2[4] = (matrix<float16_t, 4, 3>[4])0;
   {
     uint v_9 = 0u;
     v_9 = 0u;
@@ -49,14 +49,14 @@ ary_ret v_8(uint start_byte_offset) {
       if ((v_10 >= 4u)) {
         break;
       }
-      a[v_10] = v_4((start_byte_offset + (v_10 * 32u)));
+      a_2[v_10] = v_4((start_byte_offset + (v_10 * 32u)));
       {
         v_9 = (v_10 + 1u);
       }
       continue;
     }
   }
-  matrix<float16_t, 4, 3> v_11[4] = a;
+  matrix<float16_t, 4, 3> v_11[4] = a_2;
   return v_11;
 }
 

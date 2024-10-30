@@ -668,6 +668,7 @@ if (DAWN_ENABLE_VULKAN)
         "vulkan/FencedDeleter.h"
         "vulkan/Forward.h"
         "vulkan/PhysicalDeviceVk.h"
+        "vulkan/PipelineVk.h"
         "vulkan/PipelineCacheVk.h"
         "vulkan/PipelineLayoutVk.h"
         "vulkan/QuerySetVk.h"
@@ -684,6 +685,7 @@ if (DAWN_ENABLE_VULKAN)
         "vulkan/SharedTextureMemoryVk.h"
         "vulkan/SwapChainVk.h"
         "vulkan/TextureVk.h"
+        "vulkan/UniqueVkHandle.h"
         "vulkan/UtilsVulkan.h"
         "vulkan/VulkanError.h"
         "vulkan/VulkanExtensions.h"
@@ -706,6 +708,7 @@ if (DAWN_ENABLE_VULKAN)
         "vulkan/DeviceVk.cpp"
         "vulkan/FencedDeleter.cpp"
         "vulkan/PhysicalDeviceVk.cpp"
+        "vulkan/PipelineVk.cpp"
         "vulkan/PipelineCacheVk.cpp"
         "vulkan/PipelineLayoutVk.cpp"
         "vulkan/QuerySetVk.cpp"
@@ -859,6 +862,11 @@ endif()
 if (DAWN_ENABLE_SWIFTSHADER)
     target_compile_definitions(dawn_native PRIVATE "DAWN_ENABLE_SWIFTSHADER")
     target_compile_definitions(dawn_native_objects PRIVATE "DAWN_ENABLE_SWIFTSHADER")
+endif()
+
+if (IOS)
+    target_compile_options(dawn_native_objects PRIVATE -fno-objc-arc)
+    target_compile_options(dawn_native PRIVATE -fno-objc-arc)
 endif()
 
 if (DAWN_BUILD_MONOLITHIC_LIBRARY)

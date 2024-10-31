@@ -428,8 +428,7 @@ const std::string& AdapterBase::GetName() const {
 
 std::vector<Ref<AdapterBase>> SortAdapters(std::vector<Ref<AdapterBase>> adapters,
                                            const RequestAdapterOptions* options) {
-    const bool highPerformance =
-        options != nullptr && options->powerPreference == wgpu::PowerPreference::HighPerformance;
+    const bool highPerformance = true; // DCP Native: Always choose the high performance GPU first.
 
     const auto ComputeAdapterTypeRank = [&](const Ref<AdapterBase>& a) {
         switch (a->GetPhysicalDevice()->GetAdapterType()) {

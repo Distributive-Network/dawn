@@ -118,7 +118,7 @@ struct IsResultOrError<ResultOrError<T>> {
     DAWN_MAKE_ERROR(InternalErrorType::Validation, absl::StrFormat(__VA_ARGS__))
 
 #define DAWN_INVALID_IF(EXPR, ...)                                                           \
-    if (DAWN_UNLIKELY(EXPR)) {                                                               \
+    if (EXPR) [[unlikely]] {                                                                 \
         return DAWN_MAKE_ERROR(InternalErrorType::Validation, absl::StrFormat(__VA_ARGS__)); \
     }                                                                                        \
     for (;;)                                                                                 \
@@ -136,7 +136,7 @@ struct IsResultOrError<ResultOrError<T>> {
     DAWN_MAKE_ERROR(InternalErrorType::Internal, absl::StrFormat(__VA_ARGS__))
 
 #define DAWN_INTERNAL_ERROR_IF(EXPR, ...)                                                  \
-    if (DAWN_UNLIKELY(EXPR)) {                                                             \
+    if (EXPR) [[unlikely]] {                                                               \
         return DAWN_MAKE_ERROR(InternalErrorType::Internal, absl::StrFormat(__VA_ARGS__)); \
     }                                                                                      \
     for (;;)                                                                               \
@@ -149,6 +149,22 @@ struct IsResultOrError<ResultOrError<T>> {
 // Dawn to free up unused resources. Or, it may bubble up to the application to signal an allocation
 // was too large or they should free some existing resources.
 #define DAWN_OUT_OF_MEMORY_ERROR(MESSAGE) DAWN_MAKE_ERROR(InternalErrorType::OutOfMemory, MESSAGE)
+
+template <typename T>
+std::string MakeIncreaseLimitMessage(std::string_view limitName, T adapterLimitValue) {
+    return absl::StrFormat(
+        " This adapter supports a higher %s of %u, which can be specified in requiredLimits when "
+        "calling requestDevice(). Limits differ by hardware, so always check the adapter limits "
+        "prior to requesting a higher limit.",
+        limitName, adapterLimitValue);
+}
+
+#define DAWN_INCREASE_LIMIT_MESSAGE(adapterLimits, limitName, limitValue)                         \
+    [&]() -> std::string {                                                                        \
+        return (limitValue > adapterLimits.limitName) ? ""                                        \
+                                                      : ::dawn::native::MakeIncreaseLimitMessage( \
+                                                            #limitName, adapterLimits.limitName); \
+    }()
 
 #define DAWN_CONCAT1(x, y) x##y
 #define DAWN_CONCAT2(x, y) DAWN_CONCAT1(x, y)
@@ -178,7 +194,7 @@ struct IsResultOrError<ResultOrError<T>> {
 #define DAWN_TRY_WITH_CLEANUP(EXPR, BODY)                                       \
     {                                                                           \
         auto DAWN_LOCAL_VAR(Result) = EXPR;                                     \
-        if (DAWN_UNLIKELY(DAWN_LOCAL_VAR(Result).IsError())) {                  \
+        if (DAWN_LOCAL_VAR(Result).IsError()) [[unlikely]] {                    \
             auto DAWN_LOCAL_VAR(Error) = DAWN_LOCAL_VAR(Result).AcquireError(); \
             {BODY} /* comment to force the formatter to insert a newline */     \
             DAWN_APPEND_ERROR_BACKTRACE(DAWN_LOCAL_VAR(Error));                 \
@@ -237,7 +253,7 @@ struct IsResultOrError<ResultOrError<T>> {
 #define DAWN_TRY_ASSIGN_WITH_CLEANUP_IMPL_4_(VAR, EXPR, BODY, RET)              \
     {                                                                           \
         auto DAWN_LOCAL_VAR(Result) = EXPR;                                     \
-        if (DAWN_UNLIKELY(DAWN_LOCAL_VAR(Result).IsError())) {                  \
+        if (DAWN_LOCAL_VAR(Result).IsError()) [[unlikely]] {                    \
             auto DAWN_LOCAL_VAR(Error) = DAWN_LOCAL_VAR(Result).AcquireError(); \
             {BODY} /* comment to force the formatter to insert a newline */     \
             DAWN_APPEND_ERROR_BACKTRACE(DAWN_LOCAL_VAR(Error));                 \

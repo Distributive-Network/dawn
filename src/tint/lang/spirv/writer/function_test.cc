@@ -46,6 +46,10 @@ TEST_F(SpirvWriterTest, Function_Empty) {
                OpReturn
                OpFunctionEnd
 )");
+    // There is always an injected entry point if none exists in the source program.
+    EXPECT_EQ(workgroup_info.x, 1u);
+    EXPECT_EQ(workgroup_info.y, 1u);
+    EXPECT_EQ(workgroup_info.z, 1u);
 }
 
 // Test that we do not emit the same function type more than once.
@@ -113,6 +117,9 @@ TEST_F(SpirvWriterTest, Function_EntryPoint_Compute) {
                OpReturn
                OpFunctionEnd
 )");
+    EXPECT_EQ(workgroup_info.x, 32u);
+    EXPECT_EQ(workgroup_info.y, 4u);
+    EXPECT_EQ(workgroup_info.z, 1u);
 }
 
 TEST_F(SpirvWriterTest, Function_EntryPoint_Fragment) {
@@ -139,6 +146,9 @@ TEST_F(SpirvWriterTest, Function_EntryPoint_Fragment) {
                OpReturn
                OpFunctionEnd
 )");
+    EXPECT_EQ(workgroup_info.x, 0u);
+    EXPECT_EQ(workgroup_info.y, 0u);
+    EXPECT_EQ(workgroup_info.z, 0u);
 }
 
 TEST_F(SpirvWriterTest, Function_EntryPoint_Vertex) {
@@ -190,60 +200,9 @@ TEST_F(SpirvWriterTest, Function_EntryPoint_Vertex) {
                OpReturn
                OpFunctionEnd
 )");
-}
-
-TEST_F(SpirvWriterTest, Function_EntryPoint_Multiple) {
-    auto* f1 = b.ComputeFunction("main1", 32_u, 4_u, 1_u);
-    b.Append(f1->Block(), [&] {  //
-        b.Return(f1);
-    });
-
-    auto* f2 = b.ComputeFunction("main2", 8_u, 2_u, 16_u);
-    b.Append(f2->Block(), [&] {  //
-        b.Return(f2);
-    });
-
-    auto* f3 = b.Function("main3", ty.void_(), core::ir::Function::PipelineStage::kFragment);
-    b.Append(f3->Block(), [&] {  //
-        b.Return(f3);
-    });
-
-    ASSERT_TRUE(Generate()) << Error() << output_;
-    EXPECT_INST(R"(
-               OpEntryPoint GLCompute %main1 "main1"
-               OpEntryPoint GLCompute %main2 "main2"
-               OpEntryPoint Fragment %main3 "main3"
-               OpExecutionMode %main1 LocalSize 32 4 1
-               OpExecutionMode %main2 LocalSize 8 2 16
-               OpExecutionMode %main3 OriginUpperLeft
-
-               ; Debug Information
-               OpName %main1 "main1"                ; id %1
-               OpName %main2 "main2"                ; id %5
-               OpName %main3 "main3"                ; id %7
-
-               ; Types, variables and constants
-       %void = OpTypeVoid
-          %3 = OpTypeFunction %void
-
-               ; Function main1
-      %main1 = OpFunction %void None %3
-          %4 = OpLabel
-               OpReturn
-               OpFunctionEnd
-
-               ; Function main2
-      %main2 = OpFunction %void None %3
-          %6 = OpLabel
-               OpReturn
-               OpFunctionEnd
-
-               ; Function main3
-      %main3 = OpFunction %void None %3
-          %8 = OpLabel
-               OpReturn
-               OpFunctionEnd
-)");
+    EXPECT_EQ(workgroup_info.x, 0u);
+    EXPECT_EQ(workgroup_info.y, 0u);
+    EXPECT_EQ(workgroup_info.z, 0u);
 }
 
 TEST_F(SpirvWriterTest, Function_ReturnValue) {
@@ -482,33 +441,24 @@ TEST_F(SpirvWriterTest, Function_ShaderIO_F16_Output_WithoutCapability) {
 }
 
 TEST_F(SpirvWriterTest, Function_ShaderIO_DualSourceBlend) {
-    auto* outputs =
-        ty.Struct(mod.symbols.New("Outputs"), {
-                                                  {
-                                                      mod.symbols.Register("a"),
-                                                      ty.f32(),
-                                                      core::IOAttributes{
-                                                          /* location */ 0u,
-                                                          /* index */ 0u,
-                                                          /* color */ std::nullopt,
-                                                          /* builtin */ std::nullopt,
-                                                          /* interpolation */ std::nullopt,
-                                                          /* invariant */ false,
-                                                      },
-                                                  },
-                                                  {
-                                                      mod.symbols.Register("b"),
-                                                      ty.f32(),
-                                                      core::IOAttributes{
-                                                          /* location */ 0u,
-                                                          /* index */ 1u,
-                                                          /* color */ std::nullopt,
-                                                          /* builtin */ std::nullopt,
-                                                          /* interpolation */ std::nullopt,
-                                                          /* invariant */ false,
-                                                      },
-                                                  },
-                                              });
+    auto* outputs = ty.Struct(mod.symbols.New("Outputs"), {
+                                                              {
+                                                                  mod.symbols.Register("a"),
+                                                                  ty.f32(),
+                                                                  core::IOAttributes{
+                                                                      .location = 0u,
+                                                                      .blend_src = 0u,
+                                                                  },
+                                                              },
+                                                              {
+                                                                  mod.symbols.Register("b"),
+                                                                  ty.f32(),
+                                                                  core::IOAttributes{
+                                                                      .location = 0u,
+                                                                      .blend_src = 1u,
+                                                                  },
+                                                              },
+                                                          });
 
     auto* func = b.Function("main", outputs, core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {  //
@@ -523,7 +473,7 @@ TEST_F(SpirvWriterTest, Function_ShaderIO_DualSourceBlend) {
                OpDecorate %main_loc0_idx0_Output Index 0
                OpDecorate %main_loc0_idx1_Output Location 0
                OpDecorate %main_loc0_idx1_Output Index 1
-    )");
+)");
     EXPECT_INST(R"(
 %main_loc0_idx0_Output = OpVariable %_ptr_Output_float Output   ; Location 0, Index 0
 %main_loc0_idx1_Output = OpVariable %_ptr_Output_float Output   ; Location 0, Index 1
@@ -607,6 +557,95 @@ TEST_F(SpirvWriterTest, Function_PassMatrixByPointer) {
                OpReturnValue %42
                OpFunctionEnd
 )");
+}
+
+TEST_F(SpirvWriterTest, WorkgroupStorageSizeEmpty) {
+    auto* func = b.ComputeFunction("main", 32_u, 4_u, 1_u);
+    b.Append(func->Block(), [&] {  //
+        b.Return(func);
+    });
+
+    ASSERT_TRUE(Generate()) << Error() << output_;
+    EXPECT_EQ(0u, workgroup_info.storage_size);
+}
+
+TEST_F(SpirvWriterTest, WorkgroupStorageSizeSimple) {
+    auto* var = mod.root_block->Append(b.Var("var", ty.ptr(workgroup, ty.f32())));
+    auto* var2 = mod.root_block->Append(b.Var("var2", ty.ptr(workgroup, ty.i32())));
+
+    auto* func = b.ComputeFunction("main", 32_u, 4_u, 1_u);
+    b.Append(func->Block(), [&] {  //
+        b.Let("x", var);
+        b.Let("y", var2);
+        b.Return(func);
+    });
+
+    ASSERT_TRUE(Generate()) << Error() << output_;
+    EXPECT_EQ(32u, workgroup_info.storage_size);
+}
+
+TEST_F(SpirvWriterTest, WorkgroupStorageSizeCompoundTypes) {
+    Vector members{
+        ty.Get<core::type::StructMember>(mod.symbols.New("a"), ty.i32(), 0u, 0u, 4u, 4u,
+                                         core::IOAttributes{}),
+        ty.Get<core::type::StructMember>(mod.symbols.New("b"), ty.array<i32, 4>(), 1u, 4u, 16u, 64u,
+                                         core::IOAttributes{}),
+    };
+
+    // This struct should occupy 68 bytes. 4 from the i32 field, and another 64
+    // from the 4-element array with 16-byte stride.
+    auto* wg_struct_ty = ty.Struct(mod.symbols.New("WgStruct"), members);
+    auto* str_var = mod.root_block->Append(b.Var("var_struct", ty.ptr(workgroup, wg_struct_ty)));
+
+    // Plus another 4 bytes from this other workgroup-class f32.
+    auto* f32_var = mod.root_block->Append(b.Var("var_f32", ty.ptr(workgroup, ty.f32())));
+
+    auto* func = b.ComputeFunction("main", 32_u, 4_u, 1_u);
+    b.Append(func->Block(), [&] {  //
+        b.Let("x", f32_var);
+        b.Let("y", str_var);
+        b.Return(func);
+    });
+
+    ASSERT_TRUE(Generate()) << Error() << output_;
+    EXPECT_EQ(96u, workgroup_info.storage_size);
+}
+
+TEST_F(SpirvWriterTest, WorkgroupStorageSizeAlignmentPadding) {
+    // vec3<f32> has an alignment of 16 but a size of 12. We leverage this to test
+    // that our padded size calculation for workgroup storage is accurate.
+    auto* var = mod.root_block->Append(b.Var("var_f32", ty.ptr(workgroup, ty.vec3<f32>())));
+
+    auto* func = b.ComputeFunction("main", 32_u, 4_u, 1_u);
+    b.Append(func->Block(), [&] {  //
+        b.Let("x", var);
+        b.Return(func);
+    });
+
+    ASSERT_TRUE(Generate()) << Error() << output_;
+    EXPECT_EQ(16u, workgroup_info.storage_size);
+}
+
+TEST_F(SpirvWriterTest, WorkgroupStorageSizeStructAlignment) {
+    // Per WGSL spec, a struct's size is the offset its last member plus the size
+    // of its last member, rounded up to the alignment of its largest member. So
+    // here the struct is expected to occupy 1024 bytes of workgroup storage.
+    Vector members{
+        ty.Get<core::type::StructMember>(mod.symbols.New("a"), ty.i32(), 0u, 0u, 1024u, 4u,
+                                         core::IOAttributes{}),
+    };
+
+    auto* wg_struct_ty = ty.Struct(mod.symbols.New("WgStruct"), members);
+    auto* var = mod.root_block->Append(b.Var("var_f32", ty.ptr(workgroup, wg_struct_ty)));
+
+    auto* func = b.ComputeFunction("main", 32_u, 4_u, 1_u);
+    b.Append(func->Block(), [&] {  //
+        b.Let("x", var);
+        b.Return(func);
+    });
+
+    ASSERT_TRUE(Generate()) << Error() << output_;
+    EXPECT_EQ(1024u, workgroup_info.storage_size);
 }
 
 }  // namespace

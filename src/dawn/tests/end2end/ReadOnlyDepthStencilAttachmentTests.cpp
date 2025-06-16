@@ -113,20 +113,39 @@ class ReadOnlyDepthStencilAttachmentTests
             bgl = utils::MakeBindGroupLayout(device, {});
         } else if (spec.sampledAspect == wgpu::TextureAspect::DepthOnly) {
             // Sample from depth attachment and draw that sampled texel into color buffer.
-            pipelineDescriptor.cFragment.module = utils::CreateShaderModule(device, R"(
-                    @group(0) @binding(0) var samp : sampler;
-                    @group(0) @binding(1) var tex : texture_depth_2d;
+            if (IsCompatibilityMode()) {
+                // Can not use texture_depth_xx with non-comparison sampler in compat mode.
+                pipelineDescriptor.cFragment.module = utils::CreateShaderModule(device, R"(
+                        @group(0) @binding(0) var samp : sampler;
+                        @group(0) @binding(1) var tex : texture_2d<f32>;
 
-                    @fragment
-                    fn main(@builtin(position) FragCoord : vec4f) -> @location(0) vec4f {
-                        return vec4f(textureSample(tex, samp, FragCoord.xy), 0.0, 0.0, 0.0);
-                    })");
-            bgl = utils::MakeBindGroupLayout(
-                device,
-                {
-                    {0, wgpu::ShaderStage::Fragment, wgpu::SamplerBindingType::NonFiltering},
-                    {1, wgpu::ShaderStage::Fragment, wgpu::TextureSampleType::Depth},
-                });
+                        @fragment
+                        fn main(@builtin(position) FragCoord : vec4f) -> @location(0) vec4f {
+                            return vec4f(textureSample(tex, samp, FragCoord.xy).r, 0.0, 0.0, 0.0);
+                        })");
+                bgl = utils::MakeBindGroupLayout(
+                    device,
+                    {
+                        {0, wgpu::ShaderStage::Fragment, wgpu::SamplerBindingType::NonFiltering},
+                        {1, wgpu::ShaderStage::Fragment,
+                         wgpu::TextureSampleType::UnfilterableFloat},
+                    });
+            } else {
+                pipelineDescriptor.cFragment.module = utils::CreateShaderModule(device, R"(
+                        @group(0) @binding(0) var samp : sampler;
+                        @group(0) @binding(1) var tex : texture_depth_2d;
+
+                        @fragment
+                        fn main(@builtin(position) FragCoord : vec4f) -> @location(0) vec4f {
+                            return vec4f(textureSample(tex, samp, FragCoord.xy), 0.0, 0.0, 0.0);
+                        })");
+                bgl = utils::MakeBindGroupLayout(
+                    device,
+                    {
+                        {0, wgpu::ShaderStage::Fragment, wgpu::SamplerBindingType::NonFiltering},
+                        {1, wgpu::ShaderStage::Fragment, wgpu::TextureSampleType::Depth},
+                    });
+            }
         } else {
             DAWN_ASSERT(spec.sampledAspect == wgpu::TextureAspect::StencilOnly);
             // Sample from stencil attachment and draw that sampled texel into color buffer.
@@ -277,10 +296,6 @@ TEST_P(ReadOnlyDepthAttachmentTests, SampleFromAttachment) {
     // TODO(dawn:2163): The texture reads zeroes, maybe ANGLE's TextureStorageD3D11 is missing a
     // copy between the storages?
     DAWN_SUPPRESS_TEST_IF(IsANGLED3D11());
-    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
-    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
-    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
-    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
 
     TestSpec spec;
     spec.readonlyAspects = wgpu::TextureAspect::DepthOnly;
@@ -439,10 +454,6 @@ TEST_P(ReadOnlyDepthAndStencilAttachmentTests, SampleDepthModifyStencil) {
     // TODO(dawn:2163): The texture reads zeroes, maybe ANGLE's TextureStorageD3D11 is missing a
     // copy between the storages?
     DAWN_SUPPRESS_TEST_IF(IsANGLED3D11());
-    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
-    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
-    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
-    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
 
     // Depth/stencil tests are true, the depth is correctly sampled from the depthClearValue.
     // The stencil is written to the value of the stencil ref.
@@ -472,10 +483,6 @@ TEST_P(ReadOnlyDepthAndStencilAttachmentTests, BothReadOnlySampleDepth) {
     // TODO(dawn:2163): The texture reads zeroes, maybe ANGLE's TextureStorageD3D11 is missing a
     // copy between the storages?
     DAWN_SUPPRESS_TEST_IF(IsANGLED3D11());
-    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
-    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
-    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 6 OpenGLES
-    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsARM());
 
     // Sample the depth while using both depth an stencil testing.
 

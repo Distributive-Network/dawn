@@ -33,7 +33,6 @@
 #include "dawn/native/Commands.h"
 #include "dawn/native/DynamicUploader.h"
 #include "dawn/native/MetalBackend.h"
-#include "dawn/native/WaitAnySystemEvent.h"
 #include "dawn/native/metal/CommandBufferMTL.h"
 #include "dawn/native/metal/DeviceMTL.h"
 #include "dawn/platform/DawnPlatform.h"
@@ -72,13 +71,11 @@ MaybeError Queue::Initialize() {
         return DAWN_INTERNAL_ERROR("Failed to allocate MTLCommandQueue.");
     }
 
-    if (@available(macOS 10.14, iOS 12.0, *)) {
-        mMtlSharedEvent.Acquire([mtlDevice newSharedEvent]);
-        if (mMtlSharedEvent == nil) {
-            return DAWN_INTERNAL_ERROR("Failed to create MTLSharedEvent.");
-        }
-        DAWN_TRY_ASSIGN(mSharedFence, GetOrCreateSharedFence());
+    mMtlSharedEvent.Acquire([mtlDevice newSharedEvent]);
+    if (mMtlSharedEvent == nil) {
+        return DAWN_INTERNAL_ERROR("Failed to create MTLSharedEvent.");
     }
+    DAWN_TRY_ASSIGN(mSharedFence, GetOrCreateSharedFence());
 
     return mCommandContext.PrepareNextCommandBuffer(*mCommandQueue);
 }
@@ -140,8 +137,6 @@ MaybeError Queue::SubmitPendingCommandBuffer() {
 
     auto platform = GetDevice()->GetPlatform();
 
-    IncrementLastSubmittedCommandSerial();
-
     // Acquire the pending command buffer, which is retained. It must be released later.
     NSPRef<id<MTLCommandBuffer>> pendingCommands = mCommandContext.AcquireCommands();
 
@@ -166,7 +161,7 @@ MaybeError Queue::SubmitPendingCommandBuffer() {
 
     // Update the completed serial once the completed handler is fired. Make a local copy of
     // mLastSubmittedSerial so it is captured by value.
-    ExecutionSerial pendingSerial = GetLastSubmittedCommandSerial();
+    ExecutionSerial pendingSerial = GetPendingCommandSerial();
     // this ObjC block runs on a different thread
     [*pendingCommands addCompletedHandler:^(id<MTLCommandBuffer>) {
         TRACE_EVENT_ASYNC_END0(platform, GPUWork, "DeviceMTL::SubmitPendingCommandBuffer",
@@ -185,12 +180,13 @@ MaybeError Queue::SubmitPendingCommandBuffer() {
 
     TRACE_EVENT_ASYNC_BEGIN0(platform, GPUWork, "DeviceMTL::SubmitPendingCommandBuffer",
                              uint64_t(pendingSerial));
-    if (@available(macOS 10.14, iOS 12.0, *)) {
-        DAWN_ASSERT(mSharedFence);
-        [*pendingCommands encodeSignalEvent:mSharedFence->GetMTLSharedEvent()
-                                      value:static_cast<uint64_t>(pendingSerial)];
-    }
+
+    DAWN_ASSERT(mSharedFence);
+    [*pendingCommands encodeSignalEvent:mSharedFence->GetMTLSharedEvent()
+                                  value:static_cast<uint64_t>(pendingSerial)];
+
     [*pendingCommands commit];
+    IncrementLastSubmittedCommandSerial();
 
     return mCommandContext.PrepareNextCommandBuffer(*mCommandQueue);
 }
@@ -228,7 +224,7 @@ bool Queue::HasPendingCommands() const {
     return mCommandContext.NeedsSubmit();
 }
 
-MaybeError Queue::SubmitPendingCommands() {
+MaybeError Queue::SubmitPendingCommandsImpl() {
     return SubmitPendingCommandBuffer();
 }
 
@@ -255,10 +251,9 @@ void Queue::ForceEventualFlushOfCommands() {
     }
 }
 
-Ref<SystemEvent> Queue::CreateWorkDoneSystemEvent(ExecutionSerial serial) {
-    Ref<SystemEvent> completionEvent = AcquireRef(new SystemEvent());
+Ref<WaitListEvent> Queue::CreateWorkDoneEvent(ExecutionSerial serial) {
+    Ref<WaitListEvent> completionEvent = AcquireRef(new WaitListEvent());
     mWaitingEvents.Use([&](auto events) {
-        SystemEventReceiver receiver;
         // Now that we hold the lock, check against mCompletedSerial before inserting.
         // This serial may have just completed. If it did, mark the event complete.
         // Also check for device loss. Otherwise, we could enqueue the event
@@ -276,11 +271,7 @@ Ref<SystemEvent> Queue::CreateWorkDoneSystemEvent(ExecutionSerial serial) {
 }
 
 ResultOrError<bool> Queue::WaitForQueueSerial(ExecutionSerial serial, Nanoseconds timeout) {
-    Ref<SystemEvent> event = CreateWorkDoneSystemEvent(serial);
-    bool ready = false;
-    std::array<std::pair<const dawn::native::SystemEventReceiver&, bool*>, 1> events{
-        {{event->GetOrCreateSystemEventReceiver(), &ready}}};
-    return WaitAnySystemEvent(events.begin(), events.end(), timeout);
+    return CreateWorkDoneEvent(serial)->Wait(timeout);
 }
 
 }  // namespace dawn::native::metal

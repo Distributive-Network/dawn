@@ -27,8 +27,7 @@
 
 #include "src/tint/lang/spirv/writer/raise/raise.h"
 
-#include <utility>
-
+#include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/transform/add_empty_entry_point.h"
 #include "src/tint/lang/core/ir/transform/bgra8unorm_polyfill.h"
 #include "src/tint/lang/core/ir/transform/binary_polyfill.h"
@@ -40,14 +39,18 @@
 #include "src/tint/lang/core/ir/transform/demote_to_helper.h"
 #include "src/tint/lang/core/ir/transform/direct_variable_access.h"
 #include "src/tint/lang/core/ir/transform/multiplanar_external_texture.h"
+#include "src/tint/lang/core/ir/transform/prepare_immediate_data.h"
 #include "src/tint/lang/core/ir/transform/preserve_padding.h"
+#include "src/tint/lang/core/ir/transform/prevent_infinite_loops.h"
 #include "src/tint/lang/core/ir/transform/robustness.h"
 #include "src/tint/lang/core/ir/transform/std140.h"
 #include "src/tint/lang/core/ir/transform/vectorize_scalar_matrix_constructors.h"
 #include "src/tint/lang/core/ir/transform/zero_init_workgroup_memory.h"
+#include "src/tint/lang/core/type/f32.h"
 #include "src/tint/lang/spirv/writer/common/option_helpers.h"
 #include "src/tint/lang/spirv/writer/raise/builtin_polyfill.h"
 #include "src/tint/lang/spirv/writer/raise/expand_implicit_splats.h"
+#include "src/tint/lang/spirv/writer/raise/fork_explicit_layout_types.h"
 #include "src/tint/lang/spirv/writer/raise/handle_matrix_arithmetic.h"
 #include "src/tint/lang/spirv/writer/raise/merge_return.h"
 #include "src/tint/lang/spirv/writer/raise/pass_matrix_by_pointer.h"
@@ -72,6 +75,26 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
 
     RUN_TRANSFORM(core::ir::transform::BindingRemapper, module, remapper_data);
 
+    if (!options.disable_robustness) {
+        RUN_TRANSFORM(core::ir::transform::PreventInfiniteLoops, module);
+    }
+
+    // PrepareImmediateData must come before any transform that needs internal immediate data.
+    core::ir::transform::PrepareImmediateDataConfig immediate_data_config;
+    if (options.depth_range_offsets) {
+        immediate_data_config.AddInternalImmediateData(options.depth_range_offsets.value().min,
+                                                       module.symbols.New("tint_frag_depth_min"),
+                                                       module.Types().f32());
+        immediate_data_config.AddInternalImmediateData(options.depth_range_offsets.value().max,
+                                                       module.symbols.New("tint_frag_depth_max"),
+                                                       module.Types().f32());
+    }
+    auto immediate_data_layout =
+        core::ir::transform::PrepareImmediateData(module, immediate_data_config);
+    if (immediate_data_layout != Success) {
+        return immediate_data_layout.Failure();
+    }
+
     core::ir::transform::BinaryPolyfillConfig binary_polyfills;
     binary_polyfills.bitshift_modulo = true;
     binary_polyfills.int_div_mod = !options.disable_polyfill_integer_div_mod;
@@ -90,6 +113,7 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
     core_polyfills.dot_4x8_packed = options.polyfill_dot_4x8_packed;
     core_polyfills.pack_unpack_4x8 = true;
     core_polyfills.pack_4xu8_clamp = true;
+    core_polyfills.pack_unpack_4x8_norm = options.polyfill_pack_unpack_4x8_norm;
     RUN_TRANSFORM(core::ir::transform::BuiltinPolyfill, module, core_polyfills);
 
     core::ir::transform::ConversionPolyfillConfig conversion_polyfills;
@@ -103,6 +127,7 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
         }
         config.disable_runtime_sized_array_index_clamping =
             options.disable_runtime_sized_array_index_clamping;
+        config.use_integer_range_analysis = options.enable_integer_range_analysis;
         RUN_TRANSFORM(core::ir::transform::Robustness, module, config);
     }
 
@@ -119,6 +144,7 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
     core::ir::transform::DirectVariableAccessOptions dva_options;
     dva_options.transform_function = true;
     dva_options.transform_private = true;
+    dva_options.transform_handle = options.dva_transform_handle;
     RUN_TRANSFORM(core::ir::transform::DirectVariableAccess, module, dva_options);
 
     if (options.pass_matrix_by_pointer) {
@@ -136,18 +162,30 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
     // produce pointers to matrices.
     RUN_TRANSFORM(core::ir::transform::CombineAccessInstructions, module);
 
-    // DemoteToHelper must come before any transform that introduces non-core instructions.
-    RUN_TRANSFORM(core::ir::transform::DemoteToHelper, module);
+    if (!options.use_demote_to_helper_invocation_extensions) {
+        // DemoteToHelper must come before any transform that introduces non-core instructions.
+        RUN_TRANSFORM(core::ir::transform::DemoteToHelper, module);
+    }
 
-    RUN_TRANSFORM(raise::BuiltinPolyfill, module, options.use_vulkan_memory_model);
+    raise::PolyfillConfig config = {.use_vulkan_memory_model = options.use_vulkan_memory_model,
+                                    .scalarize_clamp_builtin = options.scalarize_clamp_builtin,
+                                    .version = options.spirv_version};
+    RUN_TRANSFORM(raise::BuiltinPolyfill, module, config);
     RUN_TRANSFORM(raise::ExpandImplicitSplats, module);
+    // kAllowAnyInputAttachmentIndexType required after ExpandImplicitSplats
     RUN_TRANSFORM(raise::HandleMatrixArithmetic, module);
     RUN_TRANSFORM(raise::MergeReturn, module);
     RUN_TRANSFORM(raise::RemoveUnreachableInLoopContinuing, module);
-    RUN_TRANSFORM(raise::ShaderIO, module,
-                  raise::ShaderIOConfig{options.clamp_frag_depth, options.emit_vertex_point_size,
-                                        !options.use_storage_input_output_16});
+    RUN_TRANSFORM(
+        raise::ShaderIO, module,
+        raise::ShaderIOConfig{immediate_data_layout.Get(), options.emit_vertex_point_size,
+                              !options.use_storage_input_output_16, options.depth_range_offsets});
     RUN_TRANSFORM(core::ir::transform::Std140, module);
+
+    // ForkExplicitLayoutTypes must come after Std140, since it rewrites host-shareable array types
+    // to use the explicitly laid array type defined by the SPIR-V dialect.
+    RUN_TRANSFORM(raise::ForkExplicitLayoutTypes, module, options.spirv_version);
+
     RUN_TRANSFORM(raise::VarForDynamicIndex, module);
 
     return Success;

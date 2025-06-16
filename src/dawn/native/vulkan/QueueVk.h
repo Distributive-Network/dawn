@@ -36,7 +36,7 @@
 #include "dawn/common/vulkan_platform.h"
 #include "dawn/native/Device.h"
 #include "dawn/native/Queue.h"
-#include "dawn/native/vulkan/CommandRecordingContext.h"
+#include "dawn/native/vulkan/CommandRecordingContextVk.h"
 
 namespace dawn::native::vulkan {
 
@@ -52,8 +52,6 @@ class Queue final : public QueueBase {
 
     CommandRecordingContext* GetPendingRecordingContext(SubmitMode submitMode = SubmitMode::Normal);
     MaybeError SplitRecordingContext(CommandRecordingContext* recordingContext);
-    MaybeError SubmitPendingCommands() override;
-
     void RecycleCompletedCommands(ExecutionSerial completedSerial);
 
     ResultOrError<bool> WaitForQueueSerial(ExecutionSerial serial, Nanoseconds timeout) override;
@@ -70,6 +68,7 @@ class Queue final : public QueueBase {
     ResultOrError<ExecutionSerial> CheckAndUpdateCompletedSerials() override;
     void ForceEventualFlushOfCommands() override;
     MaybeError WaitForIdleForDestruction() override;
+    MaybeError SubmitPendingCommandsImpl() override;
     void DestroyImpl() override;
 
     // Dawn API

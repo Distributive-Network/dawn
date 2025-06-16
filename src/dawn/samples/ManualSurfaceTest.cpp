@@ -146,7 +146,7 @@ static wgpu::Queue queue;
 
 static std::unordered_map<wgpu::TextureFormat, wgpu::RenderPipeline> trianglePipelines;
 wgpu::RenderPipeline GetOrCreateTrianglePipeline(wgpu::TextureFormat format) {
-    if (trianglePipelines.count(format)) {
+    if (trianglePipelines.contains(format)) {
         return trianglePipelines[format];
     }
 
@@ -303,7 +303,7 @@ void OnKeyPress(GLFWwindow* window, int key, int, int action, int) {
         return;
     }
 
-    DAWN_ASSERT(windows.count(window) == 1);
+    DAWN_ASSERT(windows.contains(window));
 
     WindowData* data = windows[window].get();
     switch (key) {
@@ -409,7 +409,7 @@ int main(int argc, const char* argv[]) {
 
     wgpu::InstanceDescriptor instanceDescriptor{};
     instanceDescriptor.nextInChain = &toggles;
-    instanceDescriptor.features.timedWaitAnyEnable = true;
+    instanceDescriptor.capabilities.timedWaitAnyEnable = true;
     instance = wgpu::CreateInstance(&instanceDescriptor);
 
     // Choose an adapter we like.
@@ -417,7 +417,9 @@ int main(int argc, const char* argv[]) {
     wgpu::RequestAdapterOptions options = {};
     options.backendType = backendOpt.GetValue();
     if (options.backendType != wgpu::BackendType::Undefined) {
-        options.compatibilityMode = dawn::utils::BackendRequiresCompat(options.backendType);
+        options.featureLevel = dawn::utils::BackendRequiresCompat(options.backendType)
+                                   ? wgpu::FeatureLevel::Compatibility
+                                   : wgpu::FeatureLevel::Core;
     }
 
     wgpu::Future adapterFuture = instance.RequestAdapter(

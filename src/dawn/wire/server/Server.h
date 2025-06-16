@@ -80,20 +80,8 @@ struct ForwardToServerHelper {
     // An internal structure used to unpack the various types that compose the type of F
     template <typename Return, typename Class, typename Userdata, typename... Args>
     struct ExtractedTypes<Return (Class::*)(Userdata*, Args...)> {
-        using UntypedCallback = Return (*)(Args..., void*);
-        using UntypedCallback2 = Return (*)(Args..., void*, void*);
-        static Return Callback(Args... args, void* userdata) {
-            // Acquire the userdata, and cast it to UserdataT.
-            std::unique_ptr<Userdata> data(static_cast<Userdata*>(userdata));
-            auto server = data->server.lock();
-            if (!server) {
-                // Do nothing if the server has already been destroyed.
-                return;
-            }
-            // Forward the arguments and the typed userdata to the Server:: member function.
-            (server.get()->*F)(data.get(), std::forward<decltype(args)>(args)...);
-        }
-        static Return Callback2(Args... args, void* userdata, void*) {
+        using UntypedCallback = Return (*)(Args..., void*, void*);
+        static Return Callback(Args... args, void* userdata, void*) {
             // Acquire the userdata, and cast it to UserdataT.
             std::unique_ptr<Userdata> data(static_cast<Userdata*>(userdata));
             auto server = data->server.lock();
@@ -109,15 +97,10 @@ struct ForwardToServerHelper {
     static constexpr typename ExtractedTypes<decltype(F)>::UntypedCallback Create() {
         return ExtractedTypes<decltype(F)>::Callback;
     }
-    static constexpr typename ExtractedTypes<decltype(F)>::UntypedCallback2 Create2() {
-        return ExtractedTypes<decltype(F)>::Callback2;
-    }
 };
 
 template <auto F>
 constexpr auto ForwardToServer = ForwardToServerHelper<F>::Create();
-template <auto F>
-constexpr auto ForwardToServer2 = ForwardToServerHelper<F>::Create2();
 
 struct MapUserdata : CallbackUserdata {
     using CallbackUserdata::CallbackUserdata;
@@ -129,7 +112,6 @@ struct MapUserdata : CallbackUserdata {
     uint64_t offset;
     uint64_t size;
     WGPUMapMode mode;
-    uint8_t userdataCount;
 };
 
 struct ErrorScopeUserdata : CallbackUserdata {
@@ -238,6 +220,17 @@ class Server : public ServerBase {
         return result;
     }
 
+    // Wrapper RAII helper for structs with FreeMember calls.
+    template <typename Struct>
+    class FreeMembers : public Struct {
+      public:
+        explicit FreeMembers(const DawnProcTable& procs) : Struct({}), mProcs(procs) {}
+        ~FreeMembers() { (mProcs.*WGPUTraits<Struct>::FreeMembers)(*this); }
+
+      private:
+        const DawnProcTable& mProcs;
+    };
+
     void SetForwardingDeviceCallbacks(Known<WGPUDevice> device);
     void ClearDeviceCallbacks(WGPUDevice device);
 
@@ -254,11 +247,12 @@ class Server : public ServerBase {
                                WGPUPopErrorScopeStatus status,
                                WGPUErrorType type,
                                WGPUStringView message);
-    void OnBufferMapAsyncCallback(MapUserdata* userdata, WGPUBufferMapAsyncStatus status);
-    void OnBufferMapAsyncCallback2(MapUserdata* userdata,
-                                   WGPUMapAsyncStatus status,
-                                   WGPUStringView message);
-    void OnQueueWorkDone(QueueWorkDoneUserdata* userdata, WGPUQueueWorkDoneStatus status);
+    void OnBufferMapAsyncCallback(MapUserdata* userdata,
+                                  WGPUMapAsyncStatus status,
+                                  WGPUStringView message);
+    void OnQueueWorkDone(QueueWorkDoneUserdata* userdata,
+                         WGPUQueueWorkDoneStatus status,
+                         WGPUStringView message);
     void OnCreateComputePipelineAsyncCallback(CreatePipelineAsyncUserData* userdata,
                                               WGPUCreatePipelineAsyncStatus status,
                                               WGPUComputePipeline pipeline,

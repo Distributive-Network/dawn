@@ -57,8 +57,8 @@ TEST_F(GlslWriter_ShaderIOTest, NoInputsOrOutputs) {
 
     auto* expect = src;
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
@@ -108,10 +108,10 @@ TEST_F(GlslWriter_ShaderIOTest, Parameters_NonStruct) {
 
     auto* expect = R"(
 $B1: {  # root
-  %gl_FrontFacing:ptr<__in, bool, read> = var @builtin(front_facing)
-  %gl_FragCoord:ptr<__in, vec4<f32>, read> = var @invariant @builtin(position)
-  %foo_loc0_Input:ptr<__in, f32, read> = var @location(0)
-  %foo_loc1_Input:ptr<__in, f32, read> = var @location(1) @interpolate(linear, sample)
+  %foo_front_facing:ptr<__in, bool, read> = var undef @builtin(front_facing)
+  %foo_position:ptr<__in, vec4<f32>, read> = var undef @invariant @builtin(position)
+  %foo_loc0_Input:ptr<__in, f32, read> = var undef @location(0)
+  %foo_loc1_Input:ptr<__in, f32, read> = var undef @location(1) @interpolate(linear, sample)
 }
 
 %foo_inner = func(%front_facing:bool, %position:vec4<f32>, %color1:f32, %color2:f32):void {
@@ -128,8 +128,8 @@ $B1: {  # root
 }
 %foo = @fragment func():void {
   $B4: {
-    %13:bool = load %gl_FrontFacing
-    %14:vec4<f32> = load %gl_FragCoord
+    %13:bool = load %foo_front_facing
+    %14:vec4<f32> = load %foo_position
     %15:f32 = load %foo_loc0_Input
     %16:f32 = load %foo_loc1_Input
     %17:void = call %foo_inner, %13, %14, %15, %16
@@ -137,9 +137,8 @@ $B1: {  # root
   }
 }
 )";
-
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
@@ -152,52 +151,34 @@ TEST_F(GlslWriter_ShaderIOTest, Parameters_Struct) {
                                      mod.symbols.New("front_facing"),
                                      ty.bool_(),
                                      core::IOAttributes{
-                                         /* location */ std::nullopt,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ core::BuiltinValue::kFrontFacing,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
+                                         .builtin = core::BuiltinValue::kFrontFacing,
                                      },
                                  },
                                  {
                                      mod.symbols.New("position"),
                                      ty.vec4<f32>(),
                                      core::IOAttributes{
-                                         /* location */ std::nullopt,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ core::BuiltinValue::kPosition,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ true,
+                                         .builtin = core::BuiltinValue::kPosition,
+                                         .invariant = true,
                                      },
                                  },
                                  {
                                      mod.symbols.New("color1"),
                                      ty.f32(),
                                      core::IOAttributes{
-                                         /* location */ 0u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
+                                         .location = 0u,
                                      },
                                  },
                                  {
                                      mod.symbols.New("color2"),
                                      ty.f32(),
                                      core::IOAttributes{
-                                         /* location */ 1u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */
-                                         core::Interpolation{
-                                             core::InterpolationType::kLinear,
-                                             core::InterpolationSampling::kSample,
-                                         },
-                                         /* invariant */ false,
+                                         .location = 1u,
+                                         .interpolation =
+                                             core::Interpolation{
+                                                 core::InterpolationType::kLinear,
+                                                 core::InterpolationSampling::kSample,
+                                             },
                                      },
                                  },
                              });
@@ -255,10 +236,10 @@ Inputs = struct @align(16) {
 }
 
 $B1: {  # root
-  %gl_FrontFacing:ptr<__in, bool, read> = var @builtin(front_facing)
-  %gl_FragCoord:ptr<__in, vec4<f32>, read> = var @invariant @builtin(position)
-  %foo_loc0_Input:ptr<__in, f32, read> = var @location(0)
-  %foo_loc1_Input:ptr<__in, f32, read> = var @location(1) @interpolate(linear, sample)
+  %foo_front_facing:ptr<__in, bool, read> = var undef @builtin(front_facing)
+  %foo_position:ptr<__in, vec4<f32>, read> = var undef @invariant @builtin(position)
+  %foo_loc0_Input:ptr<__in, f32, read> = var undef @location(0)
+  %foo_loc1_Input:ptr<__in, f32, read> = var undef @location(1) @interpolate(linear, sample)
 }
 
 %foo_inner = func(%inputs:Inputs):void {
@@ -279,8 +260,8 @@ $B1: {  # root
 }
 %foo = @fragment func():void {
   $B4: {
-    %14:bool = load %gl_FrontFacing
-    %15:vec4<f32> = load %gl_FragCoord
+    %14:bool = load %foo_front_facing
+    %15:vec4<f32> = load %foo_position
     %16:f32 = load %foo_loc0_Input
     %17:f32 = load %foo_loc1_Input
     %18:Inputs = construct %14, %15, %16, %17
@@ -290,41 +271,32 @@ $B1: {  # root
 }
 )";
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(GlslWriter_ShaderIOTest, Parameters_Mixed) {
-    auto* str_ty = ty.Struct(mod.symbols.New("Inputs"),
-                             {
-                                 {
-                                     mod.symbols.New("position"),
-                                     ty.vec4<f32>(),
-                                     core::IOAttributes{
-                                         /* location */ std::nullopt,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ core::BuiltinValue::kPosition,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ true,
-                                     },
-                                 },
-                                 {
-                                     mod.symbols.New("color1"),
-                                     ty.f32(),
-                                     core::IOAttributes{
-                                         /* location */ 0u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
-                                     },
-                                 },
-                             });
+    auto* str_ty =
+        ty.Struct(mod.symbols.New("Inputs"), {
+                                                 {
+                                                     mod.symbols.New("position"),
+                                                     ty.vec4<f32>(),
+                                                     core::IOAttributes{
+                                                         .builtin = core::BuiltinValue::kPosition,
+                                                         .invariant = true,
+                                                     },
+                                                 },
+                                                 {
+                                                     mod.symbols.New("color1"),
+                                                     ty.f32(),
+                                                     core::IOAttributes{
+                                                         .location = 0u,
+                                                     },
+                                                 },
+                                             });
 
     auto* ep = b.Function("foo", ty.void_());
     auto* front_facing = b.FunctionParam("front_facing", ty.bool_());
@@ -379,10 +351,10 @@ Inputs = struct @align(16) {
 }
 
 $B1: {  # root
-  %gl_FrontFacing:ptr<__in, bool, read> = var @builtin(front_facing)
-  %gl_FragCoord:ptr<__in, vec4<f32>, read> = var @invariant @builtin(position)
-  %foo_loc0_Input:ptr<__in, f32, read> = var @location(0)
-  %foo_loc1_Input:ptr<__in, f32, read> = var @location(1) @interpolate(linear, sample)
+  %foo_front_facing:ptr<__in, bool, read> = var undef @builtin(front_facing)
+  %foo_position:ptr<__in, vec4<f32>, read> = var undef @invariant @builtin(position)
+  %foo_loc0_Input:ptr<__in, f32, read> = var undef @location(0)
+  %foo_loc1_Input:ptr<__in, f32, read> = var undef @location(1) @interpolate(linear, sample)
 }
 
 %foo_inner = func(%front_facing:bool, %inputs:Inputs, %color2:f32):void {
@@ -401,8 +373,8 @@ $B1: {  # root
 }
 %foo = @fragment func():void {
   $B4: {
-    %14:bool = load %gl_FrontFacing
-    %15:vec4<f32> = load %gl_FragCoord
+    %14:bool = load %foo_front_facing
+    %15:vec4<f32> = load %foo_position
     %16:f32 = load %foo_loc0_Input
     %17:Inputs = construct %15, %16
     %18:f32 = load %foo_loc1_Input
@@ -412,8 +384,8 @@ $B1: {  # root
 }
 )";
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
@@ -441,8 +413,8 @@ TEST_F(GlslWriter_ShaderIOTest, ReturnValue_NonStructBuiltin) {
 
     auto* expect = R"(
 $B1: {  # root
-  %gl_Position:ptr<__out, vec4<f32>, write> = var @invariant @builtin(position)
-  %gl_PointSize:ptr<__out, f32, write> = var @builtin(__point_size)
+  %foo_position:ptr<__out, vec4<f32>, write> = var undef @invariant @builtin(position)
+  %foo___point_size:ptr<__out, f32, write> = var undef @builtin(__point_size)
 }
 
 %foo_inner = func():vec4<f32> {
@@ -454,23 +426,23 @@ $B1: {  # root
 %foo = @vertex func():void {
   $B3: {
     %6:vec4<f32> = call %foo_inner
-    store %gl_Position, %6
-    %7:f32 = swizzle %gl_Position, y
-    %8:f32 = negation %7
-    store_vector_element %gl_Position, 1u, %8
-    %9:f32 = swizzle %gl_Position, z
-    %10:f32 = swizzle %gl_Position, w
-    %11:f32 = mul 2.0f, %9
-    %12:f32 = sub %11, %10
-    store_vector_element %gl_Position, 2u, %12
-    store %gl_PointSize, 1.0f
+    %7:f32 = swizzle %6, x
+    %8:f32 = swizzle %6, y
+    %9:f32 = negation %8
+    %10:f32 = swizzle %6, z
+    %11:f32 = swizzle %6, w
+    %12:f32 = mul 2.0f, %10
+    %13:f32 = sub %12, %11
+    %14:vec4<f32> = construct %7, %9, %13, %11
+    store %foo_position, %14
+    store %foo___point_size, 1.0f
     ret
   }
 }
 )";
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
@@ -497,7 +469,7 @@ TEST_F(GlslWriter_ShaderIOTest, ReturnValue_NonStructLocation) {
 
     auto* expect = R"(
 $B1: {  # root
-  %foo_loc1_Output:ptr<__out, vec4<f32>, write> = var @location(1)
+  %foo_loc1_Output:ptr<__out, vec4<f32>, write> = var undef @location(1)
 }
 
 %foo_inner = func():vec4<f32> {
@@ -515,8 +487,8 @@ $B1: {  # root
 }
 )";
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
@@ -529,40 +501,27 @@ TEST_F(GlslWriter_ShaderIOTest, ReturnValue_Struct) {
                                      mod.symbols.New("position"),
                                      ty.vec4<f32>(),
                                      core::IOAttributes{
-                                         /* location */ std::nullopt,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ core::BuiltinValue::kPosition,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ true,
+                                         .builtin = core::BuiltinValue::kPosition,
+                                         .invariant = true,
                                      },
                                  },
                                  {
                                      mod.symbols.New("color1"),
                                      ty.f32(),
                                      core::IOAttributes{
-                                         /* location */ 0u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
+                                         .location = 0u,
                                      },
                                  },
                                  {
                                      mod.symbols.New("color2"),
                                      ty.f32(),
                                      core::IOAttributes{
-                                         /* location */ 1u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */
-                                         core::Interpolation{
-                                             core::InterpolationType::kLinear,
-                                             core::InterpolationSampling::kSample,
-                                         },
-                                         /* invariant */ false,
+                                         .location = 1u,
+                                         .interpolation =
+                                             core::Interpolation{
+                                                 core::InterpolationType::kLinear,
+                                                 core::InterpolationSampling::kSample,
+                                             },
                                      },
                                  },
                              });
@@ -599,10 +558,10 @@ Outputs = struct @align(16) {
 }
 
 $B1: {  # root
-  %gl_Position:ptr<__out, vec4<f32>, write> = var @invariant @builtin(position)
-  %foo_loc0_Output:ptr<__out, f32, write> = var @location(0)
-  %foo_loc1_Output:ptr<__out, f32, write> = var @location(1) @interpolate(linear, sample)
-  %gl_PointSize:ptr<__out, f32, write> = var @builtin(__point_size)
+  %foo_position:ptr<__out, vec4<f32>, write> = var undef @invariant @builtin(position)
+  %foo_loc0_Output:ptr<__out, f32, write> = var undef @location(0)
+  %foo_loc1_Output:ptr<__out, f32, write> = var undef @location(1) @interpolate(linear, sample)
+  %foo___point_size:ptr<__out, f32, write> = var undef @builtin(__point_size)
 }
 
 %foo_inner = func():Outputs {
@@ -616,60 +575,51 @@ $B1: {  # root
   $B3: {
     %9:Outputs = call %foo_inner
     %10:vec4<f32> = access %9, 0u
-    store %gl_Position, %10
-    %11:f32 = swizzle %gl_Position, y
-    %12:f32 = negation %11
-    store_vector_element %gl_Position, 1u, %12
-    %13:f32 = swizzle %gl_Position, z
-    %14:f32 = swizzle %gl_Position, w
-    %15:f32 = mul 2.0f, %13
-    %16:f32 = sub %15, %14
-    store_vector_element %gl_Position, 2u, %16
-    %17:f32 = access %9, 1u
-    store %foo_loc0_Output, %17
-    %18:f32 = access %9, 2u
-    store %foo_loc1_Output, %18
-    store %gl_PointSize, 1.0f
+    %11:f32 = swizzle %10, x
+    %12:f32 = swizzle %10, y
+    %13:f32 = negation %12
+    %14:f32 = swizzle %10, z
+    %15:f32 = swizzle %10, w
+    %16:f32 = mul 2.0f, %14
+    %17:f32 = sub %16, %15
+    %18:vec4<f32> = construct %11, %13, %17, %15
+    store %foo_position, %18
+    %19:f32 = access %9, 1u
+    store %foo_loc0_Output, %19
+    %20:f32 = access %9, 2u
+    store %foo_loc1_Output, %20
+    store %foo___point_size, 1.0f
     ret
   }
 }
 )";
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(GlslWriter_ShaderIOTest, ReturnValue_DualSourceBlending) {
-    auto* str_ty =
-        ty.Struct(mod.symbols.New("Output"), {
-                                                 {
-                                                     mod.symbols.New("color1"),
-                                                     ty.f32(),
-                                                     core::IOAttributes{
-                                                         /* location */ 0u,
-                                                         /* blend_src */ 0u,
-                                                         /* color */ std::nullopt,
-                                                         /* builtin */ std::nullopt,
-                                                         /* interpolation */ std::nullopt,
-                                                         /* invariant */ false,
-                                                     },
-                                                 },
-                                                 {
-                                                     mod.symbols.New("color2"),
-                                                     ty.f32(),
-                                                     core::IOAttributes{
-                                                         /* location */ 0u,
-                                                         /* blend_src */ 1u,
-                                                         /* color */ std::nullopt,
-                                                         /* builtin */ std::nullopt,
-                                                         /* interpolation */ std::nullopt,
-                                                         /* invariant */ false,
-                                                     },
-                                                 },
-                                             });
+    auto* str_ty = ty.Struct(mod.symbols.New("Output"), {
+                                                            {
+                                                                mod.symbols.New("color1"),
+                                                                ty.f32(),
+                                                                core::IOAttributes{
+                                                                    .location = 0u,
+                                                                    .blend_src = 0u,
+                                                                },
+                                                            },
+                                                            {
+                                                                mod.symbols.New("color2"),
+                                                                ty.f32(),
+                                                                core::IOAttributes{
+                                                                    .location = 0u,
+                                                                    .blend_src = 1u,
+                                                                },
+                                                            },
+                                                        });
 
     auto* ep = b.Function("foo", str_ty);
     ep->SetStage(core::ir::Function::PipelineStage::kFragment);
@@ -700,8 +650,8 @@ Output = struct @align(4) {
 }
 
 $B1: {  # root
-  %foo_loc0_idx0_Output:ptr<__out, f32, write> = var @location(0) @blend_src(0)
-  %foo_loc0_idx1_Output:ptr<__out, f32, write> = var @location(0) @blend_src(1)
+  %foo_loc0_idx0_Output:ptr<__out, f32, write> = var undef @location(0) @blend_src(0)
+  %foo_loc0_idx1_Output:ptr<__out, f32, write> = var undef @location(0) @blend_src(1)
 }
 
 %foo_inner = func():Output {
@@ -722,159 +672,8 @@ $B1: {  # root
 }
 )";
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
-    Run(ShaderIO, config);
-
-    EXPECT_EQ(expect, str());
-}
-
-TEST_F(GlslWriter_ShaderIOTest, Struct_SharedByVertexAndFragment) {
-    auto* vec4f = ty.vec4<f32>();
-    auto* str_ty = ty.Struct(mod.symbols.New("Interface"),
-                             {
-                                 {
-                                     mod.symbols.New("position"),
-                                     vec4f,
-                                     core::IOAttributes{
-                                         /* location */ std::nullopt,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ core::BuiltinValue::kPosition,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
-                                     },
-                                 },
-                                 {
-                                     mod.symbols.New("color"),
-                                     vec4f,
-                                     core::IOAttributes{
-                                         /* location */ 0u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
-                                     },
-                                 },
-                             });
-
-    // Vertex shader.
-    {
-        auto* ep = b.Function("vert", str_ty);
-        ep->SetStage(core::ir::Function::PipelineStage::kVertex);
-
-        b.Append(ep->Block(), [&] {  //
-            auto* position = b.Construct(vec4f, 0_f);
-            auto* color = b.Construct(vec4f, 1_f);
-            b.Return(ep, b.Construct(str_ty, position, color));
-        });
-    }
-
-    // Fragment shader.
-    {
-        auto* ep = b.Function("frag", vec4f);
-        auto* inputs = b.FunctionParam("inputs", str_ty);
-        ep->SetStage(core::ir::Function::PipelineStage::kFragment);
-        ep->SetParams({inputs});
-        ep->SetReturnLocation(0u);
-
-        b.Append(ep->Block(), [&] {  //
-            auto* position = b.Access(vec4f, inputs, 0_u);
-            auto* color = b.Access(vec4f, inputs, 1_u);
-            b.Return(ep, b.Add(vec4f, position, color));
-        });
-    }
-
-    auto* src = R"(
-Interface = struct @align(16) {
-  position:vec4<f32> @offset(0), @builtin(position)
-  color:vec4<f32> @offset(16), @location(0)
-}
-
-%vert = @vertex func():Interface {
-  $B1: {
-    %2:vec4<f32> = construct 0.0f
-    %3:vec4<f32> = construct 1.0f
-    %4:Interface = construct %2, %3
-    ret %4
-  }
-}
-%frag = @fragment func(%inputs:Interface):vec4<f32> [@location(0)] {
-  $B2: {
-    %7:vec4<f32> = access %inputs, 0u
-    %8:vec4<f32> = access %inputs, 1u
-    %9:vec4<f32> = add %7, %8
-    ret %9
-  }
-}
-)";
-    EXPECT_EQ(src, str());
-
-    auto* expect = R"(
-Interface = struct @align(16) {
-  position:vec4<f32> @offset(0)
-  color:vec4<f32> @offset(16)
-}
-
-$B1: {  # root
-  %gl_Position:ptr<__out, vec4<f32>, write> = var @builtin(position)
-  %vert_loc0_Output:ptr<__out, vec4<f32>, write> = var @location(0)
-  %gl_PointSize:ptr<__out, f32, write> = var @builtin(__point_size)
-  %gl_FragCoord:ptr<__in, vec4<f32>, read> = var @builtin(position)
-  %frag_loc0_Input:ptr<__in, vec4<f32>, read> = var @location(0)
-  %frag_loc0_Output:ptr<__out, vec4<f32>, write> = var @location(0)
-}
-
-%vert_inner = func():Interface {
-  $B2: {
-    %8:vec4<f32> = construct 0.0f
-    %9:vec4<f32> = construct 1.0f
-    %10:Interface = construct %8, %9
-    ret %10
-  }
-}
-%frag_inner = func(%inputs:Interface):vec4<f32> {
-  $B3: {
-    %13:vec4<f32> = access %inputs, 0u
-    %14:vec4<f32> = access %inputs, 1u
-    %15:vec4<f32> = add %13, %14
-    ret %15
-  }
-}
-%vert = @vertex func():void {
-  $B4: {
-    %17:Interface = call %vert_inner
-    %18:vec4<f32> = access %17, 0u
-    store %gl_Position, %18
-    %19:f32 = swizzle %gl_Position, y
-    %20:f32 = negation %19
-    store_vector_element %gl_Position, 1u, %20
-    %21:f32 = swizzle %gl_Position, z
-    %22:f32 = swizzle %gl_Position, w
-    %23:f32 = mul 2.0f, %21
-    %24:f32 = sub %23, %22
-    store_vector_element %gl_Position, 2u, %24
-    %25:vec4<f32> = access %17, 1u
-    store %vert_loc0_Output, %25
-    store %gl_PointSize, 1.0f
-    ret
-  }
-}
-%frag = @fragment func():void {
-  $B5: {
-    %27:vec4<f32> = load %gl_FragCoord
-    %28:vec4<f32> = load %frag_loc0_Input
-    %29:Interface = construct %27, %28
-    %30:vec4<f32> = call %frag_inner, %29
-    store %frag_loc0_Output, %30
-    ret
-  }
-}
-)";
-
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
@@ -882,33 +681,23 @@ $B1: {  # root
 
 TEST_F(GlslWriter_ShaderIOTest, Struct_SharedWithBuffer) {
     auto* vec4f = ty.vec4<f32>();
-    auto* str_ty = ty.Struct(mod.symbols.New("Outputs"),
-                             {
-                                 {
-                                     mod.symbols.New("position"),
-                                     vec4f,
-                                     core::IOAttributes{
-                                         /* location */ std::nullopt,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ core::BuiltinValue::kPosition,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
-                                     },
-                                 },
-                                 {
-                                     mod.symbols.New("color"),
-                                     vec4f,
-                                     core::IOAttributes{
-                                         /* location */ 0u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
-                                     },
-                                 },
-                             });
+    auto* str_ty =
+        ty.Struct(mod.symbols.New("Outputs"), {
+                                                  {
+                                                      mod.symbols.New("position"),
+                                                      vec4f,
+                                                      core::IOAttributes{
+                                                          .builtin = core::BuiltinValue::kPosition,
+                                                      },
+                                                  },
+                                                  {
+                                                      mod.symbols.New("color"),
+                                                      vec4f,
+                                                      core::IOAttributes{
+                                                          .location = 0u,
+                                                      },
+                                                  },
+                                              });
 
     auto* var = b.Var(ty.ptr(storage, str_ty, read));
     var->SetBindingPoint(0, 0);
@@ -928,7 +717,7 @@ Outputs = struct @align(16) {
 }
 
 $B1: {  # root
-  %1:ptr<storage, Outputs, read> = var @binding_point(0, 0)
+  %1:ptr<storage, Outputs, read> = var undef @binding_point(0, 0)
 }
 
 %vert = @vertex func():Outputs {
@@ -947,10 +736,10 @@ Outputs = struct @align(16) {
 }
 
 $B1: {  # root
-  %1:ptr<storage, Outputs, read> = var @binding_point(0, 0)
-  %gl_Position:ptr<__out, vec4<f32>, write> = var @builtin(position)
-  %vert_loc0_Output:ptr<__out, vec4<f32>, write> = var @location(0)
-  %gl_PointSize:ptr<__out, f32, write> = var @builtin(__point_size)
+  %1:ptr<storage, Outputs, read> = var undef @binding_point(0, 0)
+  %vert_position:ptr<__out, vec4<f32>, write> = var undef @builtin(position)
+  %vert_loc0_Output:ptr<__out, vec4<f32>, write> = var undef @location(0)
+  %vert___point_size:ptr<__out, f32, write> = var undef @builtin(__point_size)
 }
 
 %vert_inner = func():Outputs {
@@ -963,25 +752,25 @@ $B1: {  # root
   $B3: {
     %8:Outputs = call %vert_inner
     %9:vec4<f32> = access %8, 0u
-    store %gl_Position, %9
-    %10:f32 = swizzle %gl_Position, y
-    %11:f32 = negation %10
-    store_vector_element %gl_Position, 1u, %11
-    %12:f32 = swizzle %gl_Position, z
-    %13:f32 = swizzle %gl_Position, w
-    %14:f32 = mul 2.0f, %12
-    %15:f32 = sub %14, %13
-    store_vector_element %gl_Position, 2u, %15
-    %16:vec4<f32> = access %8, 1u
-    store %vert_loc0_Output, %16
-    store %gl_PointSize, 1.0f
+    %10:f32 = swizzle %9, x
+    %11:f32 = swizzle %9, y
+    %12:f32 = negation %11
+    %13:f32 = swizzle %9, z
+    %14:f32 = swizzle %9, w
+    %15:f32 = mul 2.0f, %13
+    %16:f32 = sub %15, %14
+    %17:vec4<f32> = construct %10, %12, %16, %14
+    store %vert_position, %17
+    %18:vec4<f32> = access %8, 1u
+    store %vert_loc0_Output, %18
+    store %vert___point_size, 1.0f
     ret
   }
 }
 )";
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
@@ -995,24 +784,14 @@ TEST_F(GlslWriter_ShaderIOTest, SampleMask) {
                                      mod.symbols.New("color"),
                                      ty.f32(),
                                      core::IOAttributes{
-                                         /* location */ 0u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
+                                         .location = 0u,
                                      },
                                  },
                                  {
                                      mod.symbols.New("mask"),
                                      ty.u32(),
                                      core::IOAttributes{
-                                         /* location */ std::nullopt,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ core::BuiltinValue::kSampleMask,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
+                                         .builtin = core::BuiltinValue::kSampleMask,
                                      },
                                  },
                              });
@@ -1050,9 +829,9 @@ Outputs = struct @align(4) {
 }
 
 $B1: {  # root
-  %gl_SampleMaskIn:ptr<__in, array<i32, 1>, read> = var @builtin(sample_mask)
-  %foo_loc0_Output:ptr<__out, f32, write> = var @location(0)
-  %gl_SampleMask:ptr<__out, array<i32, 1>, write> = var @builtin(sample_mask)
+  %foo_sample_mask:ptr<__in, array<i32, 1>, read> = var undef @builtin(sample_mask)
+  %foo_loc0_Output:ptr<__out, f32, write> = var undef @location(0)
+  %foo_sample_mask_1:ptr<__out, array<i32, 1>, write> = var undef @builtin(sample_mask)  # %foo_sample_mask_1: 'foo_sample_mask'
 }
 
 %foo_inner = func(%mask_in:u32):Outputs {
@@ -1063,14 +842,14 @@ $B1: {  # root
 }
 %foo = @fragment func():void {
   $B3: {
-    %8:array<i32, 1> = load %gl_SampleMaskIn
+    %8:array<i32, 1> = load %foo_sample_mask
     %9:i32 = access %8, 0u
     %10:u32 = convert %9
     %11:Outputs = call %foo_inner, %10
     %12:f32 = access %11, 0u
     store %foo_loc0_Output, %12
     %13:u32 = access %11, 1u
-    %14:ptr<__out, i32, write> = access %gl_SampleMask, 0u
+    %14:ptr<__out, i32, write> = access %foo_sample_mask_1, 0u
     %15:i32 = convert %13
     store %14, %15
     ret
@@ -1078,74 +857,45 @@ $B1: {  # root
 }
 )";
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
 }
 
-// Test that interpolation attributes are stripped from vertex inputs and fragment outputs.
-TEST_F(GlslWriter_ShaderIOTest, InterpolationOnVertexInputOrFragmentOutput) {
-    auto* str_ty =
-        ty.Struct(mod.symbols.New("MyStruct"), {
-                                                   {
-                                                       mod.symbols.New("color"),
-                                                       ty.f32(),
-                                                       core::IOAttributes{
-                                                           /* location */ 1u,
-                                                           /* blend_src */ std::nullopt,
-                                                           /* color */ std::nullopt,
-                                                           /* builtin */ std::nullopt,
-                                                           /* interpolation */
-                                                           core::Interpolation{
-                                                               core::InterpolationType::kLinear,
-                                                               core::InterpolationSampling::kSample,
-                                                           },
-                                                           /* invariant */ false,
-                                                       },
-                                                   },
-                                               });
+// Test that interpolation attributes are stripped from vertex inputs.
+TEST_F(GlslWriter_ShaderIOTest, InterpolationOnVertexInput) {
+    auto* str_ty = ty.Struct(mod.symbols.New("MyStruct"),
+                             {
+                                 {
+                                     mod.symbols.New("color"),
+                                     ty.f32(),
+                                     core::IOAttributes{
+                                         .location = 1u,
+                                         .interpolation =
+                                             core::Interpolation{
+                                                 core::InterpolationType::kLinear,
+                                                 core::InterpolationSampling::kSample,
+                                             },
+                                     },
+                                 },
+                             });
 
-    // Vertex shader.
-    {
-        auto* ep = b.Function("vert", ty.vec4<f32>());
-        ep->SetReturnBuiltin(core::BuiltinValue::kPosition);
-        ep->SetReturnInvariant(true);
-        ep->SetStage(core::ir::Function::PipelineStage::kVertex);
+    auto* ep = b.Function("vert", ty.vec4<f32>());
+    ep->SetReturnBuiltin(core::BuiltinValue::kPosition);
+    ep->SetReturnInvariant(true);
+    ep->SetStage(core::ir::Function::PipelineStage::kVertex);
 
-        auto* str_param = b.FunctionParam("input", str_ty);
-        auto* ival = b.FunctionParam("ival", ty.i32());
-        ival->SetLocation(1);
-        ival->SetInterpolation(core::Interpolation{core::InterpolationType::kFlat});
-        ep->SetParams({str_param, ival});
+    auto* str_param = b.FunctionParam("input", str_ty);
+    auto* ival = b.FunctionParam("ival", ty.i32());
+    ival->SetLocation(1);
+    ival->SetInterpolation(core::Interpolation{core::InterpolationType::kFlat});
+    ep->SetParams({str_param, ival});
 
-        b.Append(ep->Block(), [&] {  //
-            b.Return(ep, b.Construct(ty.vec4<f32>(), 0.5_f));
-        });
-    }
-
-    // Fragment shader with struct output.
-    {
-        auto* ep = b.Function("frag1", str_ty);
-        ep->SetStage(core::ir::Function::PipelineStage::kFragment);
-
-        b.Append(ep->Block(), [&] {  //
-            b.Return(ep, b.Construct(str_ty, 0.5_f));
-        });
-    }
-
-    // Fragment shader with non-struct output.
-    {
-        auto* ep = b.Function("frag2", ty.i32());
-        ep->SetStage(core::ir::Function::PipelineStage::kFragment);
-        ep->SetReturnLocation(0);
-        ep->SetReturnInterpolation(core::Interpolation{core::InterpolationType::kFlat});
-
-        b.Append(ep->Block(), [&] {  //
-            b.Return(ep, b.Constant(42_i));
-        });
-    }
+    b.Append(ep->Block(), [&] {  //
+        b.Return(ep, b.Construct(ty.vec4<f32>(), 0.5_f));
+    });
 
     auto* src = R"(
 MyStruct = struct @align(4) {
@@ -1158,15 +908,89 @@ MyStruct = struct @align(4) {
     ret %4
   }
 }
-%frag1 = @fragment func():MyStruct {
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+MyStruct = struct @align(4) {
+  color:f32 @offset(0)
+}
+
+$B1: {  # root
+  %vert_loc1_Input:ptr<__in, f32, read> = var undef @location(1)
+  %vert_loc1_Input_1:ptr<__in, i32, read> = var undef @location(1)  # %vert_loc1_Input_1: 'vert_loc1_Input'
+  %vert_position:ptr<__out, vec4<f32>, write> = var undef @invariant @builtin(position)
+  %vert___point_size:ptr<__out, f32, write> = var undef @builtin(__point_size)
+}
+
+%vert_inner = func(%input:MyStruct, %ival:i32):vec4<f32> {
   $B2: {
-    %6:MyStruct = construct 0.5f
-    ret %6
+    %8:vec4<f32> = construct 0.5f
+    ret %8
   }
 }
-%frag2 = @fragment func():i32 [@location(0), @interpolate(flat)] {
+%vert = @vertex func():void {
   $B3: {
-    ret 42i
+    %10:f32 = load %vert_loc1_Input
+    %11:MyStruct = construct %10
+    %12:i32 = load %vert_loc1_Input_1
+    %13:vec4<f32> = call %vert_inner, %11, %12
+    %14:f32 = swizzle %13, x
+    %15:f32 = swizzle %13, y
+    %16:f32 = negation %15
+    %17:f32 = swizzle %13, z
+    %18:f32 = swizzle %13, w
+    %19:f32 = mul 2.0f, %17
+    %20:f32 = sub %19, %18
+    %21:vec4<f32> = construct %14, %16, %20, %18
+    store %vert_position, %21
+    store %vert___point_size, 1.0f
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+// Test that interpolation attributes are stripped from fragment struct outputs
+TEST_F(GlslWriter_ShaderIOTest, InterpolationOnFragmentOutput_Struct) {
+    auto* str_ty = ty.Struct(mod.symbols.New("MyStruct"),
+                             {
+                                 {
+                                     mod.symbols.New("color"),
+                                     ty.f32(),
+                                     core::IOAttributes{
+                                         .location = 1u,
+                                         .interpolation =
+                                             core::Interpolation{
+                                                 core::InterpolationType::kLinear,
+                                                 core::InterpolationSampling::kSample,
+                                             },
+                                     },
+                                 },
+                             });
+
+    auto* ep = b.Function("frag1", str_ty);
+    ep->SetStage(core::ir::Function::PipelineStage::kFragment);
+
+    b.Append(ep->Block(), [&] {  //
+        b.Return(ep, b.Construct(str_ty, 0.5_f));
+    });
+
+    auto* src = R"(
+MyStruct = struct @align(4) {
+  color:f32 @offset(0), @location(1), @interpolate(linear, sample)
+}
+
+%frag1 = @fragment func():MyStruct {
+  $B1: {
+    %2:MyStruct = construct 0.5f
+    ret %2
   }
 }
 )";
@@ -1178,102 +1002,96 @@ MyStruct = struct @align(4) {
 }
 
 $B1: {  # root
-  %vert_loc1_Input:ptr<__in, f32, read> = var @location(1)
-  %vert_loc1_Input_1:ptr<__in, i32, read> = var @location(1)  # %vert_loc1_Input_1: 'vert_loc1_Input'
-  %gl_Position:ptr<__out, vec4<f32>, write> = var @invariant @builtin(position)
-  %gl_PointSize:ptr<__out, f32, write> = var @builtin(__point_size)
-  %frag1_loc1_Output:ptr<__out, f32, write> = var @location(1)
-  %frag2_loc0_Output:ptr<__out, i32, write> = var @location(0)
+  %frag1_loc1_Output:ptr<__out, f32, write> = var undef @location(1)
 }
 
-%vert_inner = func(%input:MyStruct, %ival:i32):vec4<f32> {
-  $B2: {
-    %10:vec4<f32> = construct 0.5f
-    ret %10
-  }
-}
 %frag1_inner = func():MyStruct {
-  $B3: {
-    %12:MyStruct = construct 0.5f
-    ret %12
-  }
-}
-%frag2_inner = func():i32 {
-  $B4: {
-    ret 42i
-  }
-}
-%vert = @vertex func():void {
-  $B5: {
-    %15:f32 = load %vert_loc1_Input
-    %16:MyStruct = construct %15
-    %17:i32 = load %vert_loc1_Input_1
-    %18:vec4<f32> = call %vert_inner, %16, %17
-    store %gl_Position, %18
-    %19:f32 = swizzle %gl_Position, y
-    %20:f32 = negation %19
-    store_vector_element %gl_Position, 1u, %20
-    %21:f32 = swizzle %gl_Position, z
-    %22:f32 = swizzle %gl_Position, w
-    %23:f32 = mul 2.0f, %21
-    %24:f32 = sub %23, %22
-    store_vector_element %gl_Position, 2u, %24
-    store %gl_PointSize, 1.0f
-    ret
+  $B2: {
+    %3:MyStruct = construct 0.5f
+    ret %3
   }
 }
 %frag1 = @fragment func():void {
-  $B6: {
-    %26:MyStruct = call %frag1_inner
-    %27:f32 = access %26, 0u
-    store %frag1_loc1_Output, %27
-    ret
-  }
-}
-%frag2 = @fragment func():void {
-  $B7: {
-    %29:i32 = call %frag2_inner
-    store %frag2_loc0_Output, %29
+  $B3: {
+    %5:MyStruct = call %frag1_inner
+    %6:f32 = access %5, 0u
+    store %frag1_loc1_Output, %6
     ret
   }
 }
 )";
 
-    core::ir::transform::PushConstantLayout push_constants;
-    ShaderIOConfig config{push_constants};
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+// Test that interpolation attributes are stripped from fragment struct outputs
+TEST_F(GlslWriter_ShaderIOTest, InterpolationOnFragmentOutput_NonStruct) {
+    auto* ep = b.Function("frag2", ty.i32());
+    ep->SetStage(core::ir::Function::PipelineStage::kFragment);
+    ep->SetReturnLocation(0);
+    ep->SetReturnInterpolation(core::Interpolation{core::InterpolationType::kFlat});
+
+    b.Append(ep->Block(), [&] {  //
+        b.Return(ep, b.Constant(42_i));
+    });
+
+    auto* src = R"(
+%frag2 = @fragment func():i32 [@location(0), @interpolate(flat)] {
+  $B1: {
+    ret 42i
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %frag2_loc0_Output:ptr<__out, i32, write> = var undef @location(0)
+}
+
+%frag2_inner = func():i32 {
+  $B2: {
+    ret 42i
+  }
+}
+%frag2 = @fragment func():void {
+  $B3: {
+    %4:i32 = call %frag2_inner
+    store %frag2_loc0_Output, %4
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(GlslWriter_ShaderIOTest, ClampFragDepth) {
-    auto* str_ty = ty.Struct(mod.symbols.New("Outputs"),
-                             {
-                                 {
-                                     mod.symbols.New("color"),
-                                     ty.f32(),
-                                     core::IOAttributes{
-                                         /* location */ 0u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
-                                     },
-                                 },
-                                 {
-                                     mod.symbols.New("depth"),
-                                     ty.f32(),
-                                     core::IOAttributes{
-                                         /* location */ std::nullopt,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ core::BuiltinValue::kFragDepth,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
-                                     },
-                                 },
-                             });
+    auto* str_ty =
+        ty.Struct(mod.symbols.New("Outputs"), {
+                                                  {
+                                                      mod.symbols.New("color"),
+                                                      ty.f32(),
+                                                      core::IOAttributes{
+                                                          .location = 0u,
+                                                      },
+                                                  },
+                                                  {
+                                                      mod.symbols.New("depth"),
+                                                      ty.f32(),
+                                                      core::IOAttributes{
+                                                          .builtin = core::BuiltinValue::kFragDepth,
+                                                      },
+                                                  },
+                                              });
 
     auto* ep = b.Function("foo", str_ty);
     ep->SetStage(core::ir::Function::PipelineStage::kFragment);
@@ -1303,15 +1121,15 @@ Outputs = struct @align(4) {
   depth:f32 @offset(4)
 }
 
-tint_push_constant_struct = struct @align(4), @block {
+tint_immediate_data_struct = struct @align(4), @block {
   depth_min:f32 @offset(4)
   depth_max:f32 @offset(8)
 }
 
 $B1: {  # root
-  %tint_push_constants:ptr<push_constant, tint_push_constant_struct, read> = var
-  %foo_loc0_Output:ptr<__out, f32, write> = var @location(0)
-  %gl_FragDepth:ptr<__out, f32, write> = var @builtin(frag_depth)
+  %tint_immediate_data:ptr<immediate, tint_immediate_data_struct, read> = var undef
+  %foo_loc0_Output:ptr<__out, f32, write> = var undef @location(0)
+  %foo_frag_depth:ptr<__out, f32, write> = var undef @builtin(frag_depth)
 }
 
 %foo_inner = func():Outputs {
@@ -1326,191 +1144,185 @@ $B1: {  # root
     %8:f32 = access %7, 0u
     store %foo_loc0_Output, %8
     %9:f32 = access %7, 1u
-    %10:ptr<push_constant, f32, read> = access %tint_push_constants, 0u
+    %10:ptr<immediate, f32, read> = access %tint_immediate_data, 0u
     %11:f32 = load %10
-    %12:ptr<push_constant, f32, read> = access %tint_push_constants, 1u
+    %12:ptr<immediate, f32, read> = access %tint_immediate_data, 1u
     %13:f32 = load %12
     %14:f32 = clamp %9, %11, %13
-    store %gl_FragDepth, %14
+    store %foo_frag_depth, %14
     ret
   }
 }
 )";
 
-    core::ir::transform::PreparePushConstantsConfig push_constants_config;
-    push_constants_config.AddInternalConstant(4, mod.symbols.New("depth_min"), ty.f32());
-    push_constants_config.AddInternalConstant(8, mod.symbols.New("depth_max"), ty.f32());
-    auto push_constants = PreparePushConstants(mod, push_constants_config);
-    EXPECT_EQ(push_constants, Success);
-
-    ShaderIOConfig config{push_constants.Get()};
+    core::ir::transform::PrepareImmediateDataConfig immediate_data_config;
+    immediate_data_config.AddInternalImmediateData(4, mod.symbols.New("depth_min"), ty.f32());
+    immediate_data_config.AddInternalImmediateData(8, mod.symbols.New("depth_max"), ty.f32());
+    auto immediate_data = PrepareImmediateData(mod, immediate_data_config);
+    EXPECT_EQ(immediate_data, Success);
+    ShaderIOConfig config{immediate_data.Get()};
     config.depth_range_offsets = {4, 8};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
 }
 
-TEST_F(GlslWriter_ShaderIOTest, ClampFragDepth_MultipleFragmentShaders) {
-    auto* str_ty = ty.Struct(mod.symbols.New("Outputs"),
-                             {
-                                 {
-                                     mod.symbols.New("color"),
-                                     ty.f32(),
-                                     core::IOAttributes{
-                                         /* location */ 0u,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ std::nullopt,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
-                                     },
-                                 },
-                                 {
-                                     mod.symbols.New("depth"),
-                                     ty.f32(),
-                                     core::IOAttributes{
-                                         /* location */ std::nullopt,
-                                         /* blend_src */ std::nullopt,
-                                         /* color */ std::nullopt,
-                                         /* builtin */ core::BuiltinValue::kFragDepth,
-                                         /* interpolation */ std::nullopt,
-                                         /* invariant */ false,
-                                     },
-                                 },
-                             });
+TEST_F(GlslWriter_ShaderIOTest, BGRASwizzleSingleValue) {
+    auto* ep = b.Function("vert", ty.vec4<f32>());
+    ep->SetReturnBuiltin(core::BuiltinValue::kPosition);
+    ep->SetReturnInvariant(true);
+    ep->SetStage(core::ir::Function::PipelineStage::kVertex);
 
-    auto make_entry_point = [&](std::string_view name) {
-        auto* ep = b.Function(name, str_ty);
-        ep->SetStage(core::ir::Function::PipelineStage::kFragment);
-        b.Append(ep->Block(), [&] {  //
-            b.Return(ep, b.Construct(str_ty, 0.5_f, 2_f));
-        });
-    };
-    make_entry_point("ep1");
-    make_entry_point("ep2");
-    make_entry_point("ep3");
+    auto* val = b.FunctionParam("val", ty.vec4<f32>());
+    val->SetLocation(0);
+    ep->SetParams({val});
+
+    b.Append(ep->Block(), [&] {  //
+        b.Return(ep, b.Construct(ty.vec4<f32>(), 0.5_f));
+    });
 
     auto* src = R"(
-Outputs = struct @align(4) {
-  color:f32 @offset(0), @location(0)
-  depth:f32 @offset(4), @builtin(frag_depth)
-}
-
-%ep1 = @fragment func():Outputs {
+%vert = @vertex func(%val:vec4<f32> [@location(0)]):vec4<f32> [@invariant, @position] {
   $B1: {
-    %2:Outputs = construct 0.5f, 2.0f
-    ret %2
-  }
-}
-%ep2 = @fragment func():Outputs {
-  $B2: {
-    %4:Outputs = construct 0.5f, 2.0f
-    ret %4
-  }
-}
-%ep3 = @fragment func():Outputs {
-  $B3: {
-    %6:Outputs = construct 0.5f, 2.0f
-    ret %6
+    %3:vec4<f32> = construct 0.5f
+    ret %3
   }
 }
 )";
     EXPECT_EQ(src, str());
 
     auto* expect = R"(
-Outputs = struct @align(4) {
-  color:f32 @offset(0)
-  depth:f32 @offset(4)
-}
-
-tint_push_constant_struct = struct @align(4), @block {
-  depth_min:f32 @offset(4)
-  depth_max:f32 @offset(8)
-}
-
 $B1: {  # root
-  %tint_push_constants:ptr<push_constant, tint_push_constant_struct, read> = var
-  %ep1_loc0_Output:ptr<__out, f32, write> = var @location(0)
-  %gl_FragDepth:ptr<__out, f32, write> = var @builtin(frag_depth)
-  %ep2_loc0_Output:ptr<__out, f32, write> = var @location(0)
-  %gl_FragDepth_1:ptr<__out, f32, write> = var @builtin(frag_depth)  # %gl_FragDepth_1: 'gl_FragDepth'
-  %ep3_loc0_Output:ptr<__out, f32, write> = var @location(0)
-  %gl_FragDepth_2:ptr<__out, f32, write> = var @builtin(frag_depth)  # %gl_FragDepth_2: 'gl_FragDepth'
+  %vert_loc0_Input:ptr<__in, vec4<f32>, read> = var undef @location(0)
+  %vert_position:ptr<__out, vec4<f32>, write> = var undef @invariant @builtin(position)
+  %vert___point_size:ptr<__out, f32, write> = var undef @builtin(__point_size)
 }
 
-%ep1_inner = func():Outputs {
+%vert_inner = func(%val:vec4<f32>):vec4<f32> {
   $B2: {
-    %9:Outputs = construct 0.5f, 2.0f
-    ret %9
+    %6:vec4<f32> = construct 0.5f
+    ret %6
   }
 }
-%ep2_inner = func():Outputs {
+%vert = @vertex func():void {
   $B3: {
-    %11:Outputs = construct 0.5f, 2.0f
-    ret %11
-  }
-}
-%ep3_inner = func():Outputs {
-  $B4: {
-    %13:Outputs = construct 0.5f, 2.0f
-    ret %13
-  }
-}
-%ep1 = @fragment func():void {
-  $B5: {
-    %15:Outputs = call %ep1_inner
-    %16:f32 = access %15, 0u
-    store %ep1_loc0_Output, %16
-    %17:f32 = access %15, 1u
-    %18:ptr<push_constant, f32, read> = access %tint_push_constants, 0u
-    %19:f32 = load %18
-    %20:ptr<push_constant, f32, read> = access %tint_push_constants, 1u
-    %21:f32 = load %20
-    %22:f32 = clamp %17, %19, %21
-    store %gl_FragDepth, %22
-    ret
-  }
-}
-%ep2 = @fragment func():void {
-  $B6: {
-    %24:Outputs = call %ep2_inner
-    %25:f32 = access %24, 0u
-    store %ep2_loc0_Output, %25
-    %26:f32 = access %24, 1u
-    %27:ptr<push_constant, f32, read> = access %tint_push_constants, 0u
-    %28:f32 = load %27
-    %29:ptr<push_constant, f32, read> = access %tint_push_constants, 1u
-    %30:f32 = load %29
-    %31:f32 = clamp %26, %28, %30
-    store %gl_FragDepth_1, %31
-    ret
-  }
-}
-%ep3 = @fragment func():void {
-  $B7: {
-    %33:Outputs = call %ep3_inner
-    %34:f32 = access %33, 0u
-    store %ep3_loc0_Output, %34
-    %35:f32 = access %33, 1u
-    %36:ptr<push_constant, f32, read> = access %tint_push_constants, 0u
-    %37:f32 = load %36
-    %38:ptr<push_constant, f32, read> = access %tint_push_constants, 1u
-    %39:f32 = load %38
-    %40:f32 = clamp %35, %37, %39
-    store %gl_FragDepth_2, %40
+    %8:vec4<f32> = load %vert_loc0_Input
+    %9:vec4<f32> = swizzle %8, zyxw
+    %10:vec4<f32> = call %vert_inner, %9
+    %11:f32 = swizzle %10, x
+    %12:f32 = swizzle %10, y
+    %13:f32 = negation %12
+    %14:f32 = swizzle %10, z
+    %15:f32 = swizzle %10, w
+    %16:f32 = mul 2.0f, %14
+    %17:f32 = sub %16, %15
+    %18:vec4<f32> = construct %11, %13, %17, %15
+    store %vert_position, %18
+    store %vert___point_size, 1.0f
     ret
   }
 }
 )";
 
-    core::ir::transform::PreparePushConstantsConfig push_constants_config;
-    push_constants_config.AddInternalConstant(4, mod.symbols.New("depth_min"), ty.f32());
-    push_constants_config.AddInternalConstant(8, mod.symbols.New("depth_max"), ty.f32());
-    auto push_constants = PreparePushConstants(mod, push_constants_config);
-    EXPECT_EQ(push_constants, Success);
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    config.bgra_swizzle_locations.insert(0u);
+    Run(ShaderIO, config);
 
-    ShaderIOConfig config{push_constants.Get()};
-    config.depth_range_offsets = {4, 8};
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(GlslWriter_ShaderIOTest, BGRASwizzleMultipleValueMixedTypes) {
+    auto* ep = b.Function("vert", ty.vec4<f32>());
+    ep->SetReturnBuiltin(core::BuiltinValue::kPosition);
+    ep->SetReturnInvariant(true);
+    ep->SetStage(core::ir::Function::PipelineStage::kVertex);
+
+    std::unordered_set<uint32_t> swizzled_locations;
+
+    // Checks swizzling happens before conversion to the original type.
+    auto* val1 = b.FunctionParam("val1", ty.f32());
+    val1->SetLocation(5);
+    swizzled_locations.insert(5);
+
+    auto* val2 = b.FunctionParam("val2", ty.vec2<f32>());
+    val2->SetLocation(0);
+    swizzled_locations.insert(0);
+
+    auto* val3 = b.FunctionParam("val3", ty.vec3<f32>());
+    val3->SetLocation(3);
+    swizzled_locations.insert(3);
+
+    auto* val4 = b.FunctionParam("val4", ty.vec4<f32>());
+    val4->SetLocation(7);
+    swizzled_locations.insert(7);
+
+    // Checks that the sentinel doesn't get swizzled.
+    auto* sentinel = b.FunctionParam("sentinel", ty.vec4<f32>());
+    sentinel->SetLocation(4);
+
+    ep->SetParams({val1, val2, sentinel, val3, val4});
+    b.Append(ep->Block(), [&] {  //
+        b.Return(ep, b.Construct(ty.vec4<f32>(), 0.5_f));
+    });
+
+    auto* src = R"(
+%vert = @vertex func(%val1:f32 [@location(5)], %val2:vec2<f32> [@location(0)], %sentinel:vec4<f32> [@location(4)], %val3:vec3<f32> [@location(3)], %val4:vec4<f32> [@location(7)]):vec4<f32> [@invariant, @position] {
+  $B1: {
+    %7:vec4<f32> = construct 0.5f
+    ret %7
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %vert_loc5_Input:ptr<__in, vec4<f32>, read> = var undef @location(5)
+  %vert_loc0_Input:ptr<__in, vec4<f32>, read> = var undef @location(0)
+  %vert_loc4_Input:ptr<__in, vec4<f32>, read> = var undef @location(4)
+  %vert_loc3_Input:ptr<__in, vec4<f32>, read> = var undef @location(3)
+  %vert_loc7_Input:ptr<__in, vec4<f32>, read> = var undef @location(7)
+  %vert_position:ptr<__out, vec4<f32>, write> = var undef @invariant @builtin(position)
+  %vert___point_size:ptr<__out, f32, write> = var undef @builtin(__point_size)
+}
+
+%vert_inner = func(%val1:f32, %val2:vec2<f32>, %sentinel:vec4<f32>, %val3:vec3<f32>, %val4:vec4<f32>):vec4<f32> {
+  $B2: {
+    %14:vec4<f32> = construct 0.5f
+    ret %14
+  }
+}
+%vert = @vertex func():void {
+  $B3: {
+    %16:vec4<f32> = load %vert_loc5_Input
+    %17:f32 = swizzle %16, z
+    %18:vec4<f32> = load %vert_loc0_Input
+    %19:vec2<f32> = swizzle %18, zy
+    %20:vec4<f32> = load %vert_loc4_Input
+    %21:vec4<f32> = load %vert_loc3_Input
+    %22:vec3<f32> = swizzle %21, zyx
+    %23:vec4<f32> = load %vert_loc7_Input
+    %24:vec4<f32> = swizzle %23, zyxw
+    %25:vec4<f32> = call %vert_inner, %17, %19, %20, %22, %24
+    %26:f32 = swizzle %25, x
+    %27:f32 = swizzle %25, y
+    %28:f32 = negation %27
+    %29:f32 = swizzle %25, z
+    %30:f32 = swizzle %25, w
+    %31:f32 = mul 2.0f, %29
+    %32:f32 = sub %31, %30
+    %33:vec4<f32> = construct %26, %28, %32, %30
+    store %vert_position, %33
+    store %vert___point_size, 1.0f
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    config.bgra_swizzle_locations = swizzled_locations;
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());

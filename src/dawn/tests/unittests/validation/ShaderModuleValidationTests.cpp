@@ -25,11 +25,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "dawn/common/Constants.h"
+#include "dawn/native/CompilationMessages.h"
 #include "dawn/native/ShaderModule.h"
 #include "dawn/tests/unittests/validation/ValidationTest.h"
 #include "dawn/utils/ComboRenderPipelineDescriptor.h"
@@ -73,7 +76,11 @@ TEST_F(ShaderModuleValidationTest, CreationSuccess) {
     utils::CreateShaderModuleFromASM(device, shader);
 }
 
-// Test that it is not allowed to use combined texture and sampler.
+// Tint's SPIR-V reader transforms a combined image sampler into two
+// variables: an image part and a sampler part.  The sampler part's binding
+// number is incremented. This may produce a conflict, which is solved
+// by iterating further binding increments.  It's easy to use in simple cases:
+// a sampled image variable effectively takes up two binding slots.
 TEST_F(ShaderModuleValidationTest, CombinedTextureAndSampler) {
     // SPIR-V ASM produced by glslang for the following fragment shader:
     //
@@ -105,6 +112,44 @@ TEST_F(ShaderModuleValidationTest, CombinedTextureAndSampler) {
           %8 = OpTypeSampledImage %7
 %_ptr_UniformConstant_8 = OpTypePointer UniformConstant %8
         %tex = OpVariable %_ptr_UniformConstant_8 UniformConstant
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+               OpReturn
+               OpFunctionEnd
+        )";
+
+    utils::CreateShaderModuleFromASM(device, shader);
+}
+
+TEST_F(ShaderModuleValidationTest, ArrayOfCombinedTextureAndSampler) {
+    // SPIR-V ASM produced by glslang for the following fragment shader:
+    //
+    //   #version 450
+    //   layout(set = 0, binding = 0) uniform sampler2D tex[2];
+    //   void main () {}
+    //
+    // Dawn/WebGPU does not yet support arrays of sampled images.
+    const char* shader = R"(
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %main "main"
+               OpExecutionMode %main OriginUpperLeft
+               OpSource GLSL 450
+               OpName %main "main"
+               OpName %tex "tex"
+               OpDecorate %tex Binding 0
+               OpDecorate %tex DescriptorSet 0
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+      %float = OpTypeFloat 32
+          %7 = OpTypeImage %float 2D 0 0 0 1 Unknown
+          %8 = OpTypeSampledImage %7
+       %uint = OpTypeInt 32 0
+     %uint_2 = OpConstant %uint 2
+%_arr_8_uint_2 = OpTypeArray %8 %uint_2
+%_ptr_UniformConstant__arr_8_uint_2 = OpTypePointer UniformConstant %_arr_8_uint_2
+        %tex = OpVariable %_ptr_UniformConstant__arr_8_uint_2 UniformConstant
        %main = OpFunction %void None %3
           %5 = OpLabel
                OpReturn
@@ -274,13 +319,19 @@ TEST_F(ShaderModuleValidationTest, GetCompilationMessages) {
         })");
 
     native::ShaderModuleBase* shaderModuleBase = native::FromAPI(shaderModule.Get());
-    native::OwnedCompilationMessages* messages = shaderModuleBase->GetCompilationMessages();
-    messages->ClearMessages();
-    messages->AddMessageForTesting("Info Message");
-    messages->AddMessageForTesting("Warning Message", wgpu::CompilationMessageType::Warning);
-    messages->AddMessageForTesting("Error Message", wgpu::CompilationMessageType::Error, 3, 4);
-    messages->AddMessageForTesting("Complete Message", wgpu::CompilationMessageType::Info, 3, 4, 5,
-                                   6);
+
+    // Build a list of messages to test.
+    native::ParsedCompilationMessages messages;
+    messages.AddMessageForTesting("Info Message");
+    messages.AddMessageForTesting("Warning Message", wgpu::CompilationMessageType::Warning);
+    messages.AddMessageForTesting("Error Message", wgpu::CompilationMessageType::Error, 3, 4);
+    messages.AddMessageForTesting("Complete Message", wgpu::CompilationMessageType::Info, 3, 4, 5,
+                                  6);
+    auto ownedMessages = std::make_unique<native::OwnedCompilationMessages>(std::move(messages));
+    // Set the messages on the shader module base.
+    shaderModuleBase->SetCompilationMessagesForTesting(&ownedMessages);
+    // Assert that the messages are set.
+    ASSERT_EQ(ownedMessages, nullptr);
 
     shaderModule.GetCompilationInfo(
         wgpu::CallbackMode::AllowSpontaneous,
@@ -294,18 +345,33 @@ TEST_F(ShaderModuleValidationTest, GetCompilationMessages) {
             ASSERT_EQ(wgpu::CompilationMessageType::Info, message->type);
             ASSERT_EQ(0u, message->lineNum);
             ASSERT_EQ(0u, message->linePos);
+            ASSERT_NE(nullptr, message->nextInChain);
+            ASSERT_EQ(wgpu::SType::DawnCompilationMessageUtf16, message->nextInChain->sType);
+            const wgpu::DawnCompilationMessageUtf16* utf16 =
+                reinterpret_cast<const wgpu::DawnCompilationMessageUtf16*>(message->nextInChain);
+            EXPECT_EQ(0u, utf16->linePos);
 
             message = &info->messages[1];
             ASSERT_EQ("Warning Message", std::string_view(message->message));
             ASSERT_EQ(wgpu::CompilationMessageType::Warning, message->type);
             ASSERT_EQ(0u, message->lineNum);
             ASSERT_EQ(0u, message->linePos);
+            ASSERT_NE(nullptr, message->nextInChain);
+            ASSERT_EQ(wgpu::SType::DawnCompilationMessageUtf16, message->nextInChain->sType);
+            utf16 =
+                reinterpret_cast<const wgpu::DawnCompilationMessageUtf16*>(message->nextInChain);
+            EXPECT_EQ(0u, utf16->linePos);
 
             message = &info->messages[2];
             ASSERT_EQ("Error Message", std::string_view(message->message));
             ASSERT_EQ(wgpu::CompilationMessageType::Error, message->type);
             ASSERT_EQ(3u, message->lineNum);
             ASSERT_EQ(4u, message->linePos);
+            ASSERT_NE(nullptr, message->nextInChain);
+            ASSERT_EQ(wgpu::SType::DawnCompilationMessageUtf16, message->nextInChain->sType);
+            utf16 =
+                reinterpret_cast<const wgpu::DawnCompilationMessageUtf16*>(message->nextInChain);
+            EXPECT_EQ(4u, utf16->linePos);
 
             message = &info->messages[3];
             ASSERT_EQ("Complete Message", std::string_view(message->message));
@@ -314,6 +380,13 @@ TEST_F(ShaderModuleValidationTest, GetCompilationMessages) {
             ASSERT_EQ(4u, message->linePos);
             ASSERT_EQ(5u, message->offset);
             ASSERT_EQ(6u, message->length);
+            ASSERT_NE(nullptr, message->nextInChain);
+            ASSERT_EQ(wgpu::SType::DawnCompilationMessageUtf16, message->nextInChain->sType);
+            utf16 =
+                reinterpret_cast<const wgpu::DawnCompilationMessageUtf16*>(message->nextInChain);
+            EXPECT_EQ(4u, utf16->linePos);
+            ASSERT_EQ(5u, utf16->offset);
+            ASSERT_EQ(6u, utf16->length);
         });
 }
 
@@ -757,17 +830,16 @@ const struct WGSLExtensionInfo kExtensions[] = {
     {"f16", false, {"shader-f16"}, {}},
     {"clip_distances", false, {"clip-distances"}, {}},
     {"dual_source_blending", false, {"dual-source-blending"}, {}},
-    {"chromium_experimental_subgroups", true, {"chromium-experimental-subgroups"}, {}},
     {"subgroups", false, {"subgroups"}, {}},
-    {"subgroups_f16", false, {"shader-f16", "subgroups", "subgroups-f16"}, {"f16", "subgroups"}},
     {"chromium_experimental_pixel_local", true, {"pixel-local-storage-coherent"}, {}},
     {"chromium_disable_uniformity_analysis", true, {}, {}},
     {"chromium_internal_graphite", true, {}, {}},
     {"chromium_experimental_framebuffer_fetch", true, {"framebuffer-fetch"}, {}},
+    {"chromium_experimental_subgroup_matrix", true, {"chromium-experimental-subgroup-matrix"}, {}},
 
     // Currently the following WGSL extensions are not enabled under any situation.
     /*
-    {"chromium_experimental_push_constant", true, {}},
+    {"chromium_experimental_immediate", true, {}},
     {"chromium_internal_relaxed_uniform_layout", true, {}},
     */
 };
@@ -791,9 +863,11 @@ class ShaderModuleExtensionValidationTestBase : public ValidationTest {
 
     std::vector<wgpu::FeatureName> GetAllFeatures() {
         std::vector<wgpu::FeatureName> requiredFeatures;
-        const size_t featureCount = adapter.EnumerateFeatures(nullptr);
-        requiredFeatures.resize(featureCount);
-        adapter.EnumerateFeatures(requiredFeatures.data());
+        wgpu::SupportedFeatures supportedFeatures;
+        adapter.GetFeatures(&supportedFeatures);
+        for (uint32_t i = 0; i < supportedFeatures.featureCount; ++i) {
+            requiredFeatures.push_back(supportedFeatures.features[i]);
+        }
         return requiredFeatures;
     }
 };

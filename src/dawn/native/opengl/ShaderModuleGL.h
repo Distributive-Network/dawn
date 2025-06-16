@@ -28,9 +28,11 @@
 #ifndef SRC_DAWN_NATIVE_OPENGL_SHADERMODULEGL_H_
 #define SRC_DAWN_NATIVE_OPENGL_SHADERMODULEGL_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "dawn/native/IntegerTypes.h"
 #include "dawn/native/Serializable.h"
 #include "dawn/native/ShaderModule.h"
 #include "dawn/native/opengl/BindingPoint.h"
@@ -84,8 +86,7 @@ class ShaderModule final : public ShaderModuleBase {
         Device* device,
         const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
         const std::vector<tint::wgsl::Extension>& internalExtensions,
-        ShaderModuleParseResult* parseResult,
-        OwnedCompilationMessages* compilationMessages);
+        ShaderModuleParseResult* parseResult);
 
     ResultOrError<GLuint> CompileShader(const OpenGLFunctions& gl,
                                         const ProgrammableStage& programmableStage,
@@ -93,19 +94,19 @@ class ShaderModule final : public ShaderModuleBase {
                                         bool usesVertexIndex,
                                         bool usesInstanceIndex,
                                         bool usesFragDepth,
+                                        VertexAttributeMask bgraSwizzleAttributes,
                                         CombinedSamplerInfo* combinedSamplers,
                                         const PipelineLayout* layout,
                                         bool* needsPlaceholderSampler,
-                                        bool* needsTextureBuiltinUniformBuffer,
-                                        BindingPointToFunctionAndOffset* bindingPointToData) const;
+                                        BindingPointToFunctionAndOffset* bindingPointToData,
+                                        bool* needsSSBOLengthUniformBuffer);
 
   private:
     ShaderModule(Device* device,
                  const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
                  std::vector<tint::wgsl::Extension> internalExtensions);
     ~ShaderModule() override = default;
-    MaybeError Initialize(ShaderModuleParseResult* parseResult,
-                          OwnedCompilationMessages* compilationMessages);
+    MaybeError Initialize(ShaderModuleParseResult* parseResult);
 };
 
 }  // namespace opengl

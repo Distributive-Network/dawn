@@ -64,7 +64,7 @@ struct State {
     /// The mapping from functions to their transitively referenced output variables.
     core::ir::ReferencedModuleVars<core::ir::Module> referenced_output_vars{
         ir, [](const core::ir::Var* var) {
-            auto* view = var->Result(0)->Type()->As<core::type::MemoryView>();
+            auto* view = var->Result()->Type()->As<core::type::MemoryView>();
             return view && view->AddressSpace() == core::AddressSpace::kOut;
         }};
 
@@ -85,7 +85,7 @@ struct State {
         // Use a worklist as `ProcessEntryPointOutputs()` will add new functions.
         Vector<core::ir::Function*, 4> entry_points;
         for (auto& func : ir.functions) {
-            if (func->Stage() != core::ir::Function::PipelineStage::kUndefined) {
+            if (func->IsEntryPoint()) {
                 entry_points.Push(func);
             }
         }
@@ -96,11 +96,11 @@ struct State {
         // Remove attributes from all of the original structs and module-scope output variables.
         // This is done last as we need to copy attributes during `ProcessEntryPointOutputs()`.
         for (auto& var : output_variables) {
-            var->SetAttributes({});
-            if (auto* str = var->Result(0)->Type()->UnwrapPtr()->As<core::type::Struct>()) {
+            var->ResetAttributes();
+            if (auto* str = var->Result()->Type()->UnwrapPtr()->As<core::type::Struct>()) {
                 for (auto* member : str->Members()) {
                     // TODO(crbug.com/tint/745): Remove the const_cast.
-                    const_cast<core::type::StructMember*>(member)->SetAttributes({});
+                    const_cast<core::type::StructMember*>(member)->ResetAttributes();
                 }
             }
         }
@@ -118,7 +118,7 @@ struct State {
         Vector<core::ir::Var*, 4> inputs;
         for (auto* global : *ir.root_block) {
             if (auto* var = global->As<core::ir::Var>()) {
-                auto addrspace = var->Result(0)->Type()->As<core::type::Pointer>()->AddressSpace();
+                auto addrspace = var->Result()->Type()->As<core::type::Pointer>()->AddressSpace();
                 if (addrspace == core::AddressSpace::kIn) {
                     inputs.Push(var);
                 }
@@ -127,7 +127,7 @@ struct State {
 
         // Replace the input variables with function parameters.
         for (auto* var : inputs) {
-            ReplaceInputPointerUses(var, var->Result(0));
+            ReplaceInputPointerUses(var, var->Result());
             var->Destroy();
         }
     }
@@ -143,7 +143,9 @@ struct State {
         // Update all uses of the module-scope variable.
         value->ForEachUseUnsorted([&](core::ir::Usage use) {
             if (auto* access = use.instruction->As<core::ir::Access>()) {
-                ReplaceOutputPointerAddressSpace(access->Result(0));
+                ReplaceOutputPointerAddressSpace(access->Result());
+            } else if (use.instruction->Is<core::ir::Phony>()) {
+                use.instruction->Destroy();
             } else if (!use.instruction->IsAnyOf<core::ir::Load, core::ir::LoadVectorElement,
                                                  core::ir::Store, core::ir::StoreVectorElement>()) {
                 TINT_UNREACHABLE()
@@ -189,15 +191,22 @@ struct State {
             // Change the address space of the variable to private and update its uses, if we
             // haven't already seen this variable.
             if (output_variables.Add(var)) {
-                ReplaceOutputPointerAddressSpace(var->Result(0));
+                ReplaceOutputPointerAddressSpace(var->Result());
             }
 
             // Copy the variable attributes to the struct member.
             auto var_attributes = var->Attributes();
-            auto var_type = var->Result(0)->Type()->UnwrapPtr();
+            auto var_type = var->Result()->Type()->UnwrapPtr();
             if (auto* str = var_type->As<core::type::Struct>()) {
+                bool skipped_member_emission = false;
+
                 // Add an output for each member of the struct.
                 for (auto* member : str->Members()) {
+                    if (ShouldSkipMemberEmission(var, member)) {
+                        skipped_member_emission = true;
+                        continue;
+                    }
+
                     // Use the base variable attributes if not specified directly on the member.
                     auto member_attributes = member->Attributes();
                     if (auto base_loc = var_attributes.location) {
@@ -214,18 +223,35 @@ struct State {
                     b.Append(wrapper->Block(), [&] {  //
                         auto* access =
                             b.Access(ty.ptr<private_>(member->Type()), var, u32(member->Index()));
-                        results.Push(b.Load(access)->Result(0));
+                        results.Push(b.Load(access)->Result());
                     });
+                }
+
+                // If we skipped emission of any member, then we need to make sure the var is only
+                // used through `access` instructions, otherwise the members may no longer match due
+                // to the skipping.
+                if (skipped_member_emission) {
+                    for (auto& usage : var->Result()->UsagesUnsorted()) {
+                        TINT_ASSERT(usage->instruction->Is<core::ir::Access>());
+                    }
                 }
             } else {
                 // Load the final result from the original variable.
                 b.Append(wrapper->Block(), [&] {
-                    results.Push(b.Load(var)->Result(0));
+                    results.Push(b.Load(var)->Result());
 
                     // If we're dealing with sample_mask, extract the scalar from the array.
                     if (var_attributes.builtin == core::BuiltinValue::kSampleMask) {
+                        // The SPIR-V mask can be either i32 or u32, but WGSL is only u32. So,
+                        // convert if necessary.
+                        auto* access = b.Access(results.Back()->Type()->DeepestElement(),
+                                                results.Back(), u32(0))
+                                           ->Result();
+                        if (access->Type()->IsSignedIntegerScalar()) {
+                            access = b.Convert(ty.u32(), access)->Result();
+                        }
+                        results.Back() = access;
                         var_type = ty.u32();
-                        results.Back() = b.Access(ty.u32(), results.Back(), u32(0))->Result(0);
                     }
                 });
                 add_output(ir.NameOf(var), var_type, std::move(var_attributes));
@@ -253,6 +279,70 @@ struct State {
         }
     }
 
+    /// Returns true if the struct member should be skipped on emission
+    /// @param var the var which references the structure
+    /// @param member the member to check
+    /// @returns true if the member should be skipped.
+    bool ShouldSkipMemberEmission(core::ir::Var* var, const core::type::StructMember* member) {
+        auto var_attributes = var->Attributes();
+        auto member_attributes = member->Attributes();
+
+        // If neither the var, nor the member has attributes, then skip
+        if (!var_attributes.builtin.has_value() && !var_attributes.color.has_value() &&
+            !var_attributes.location.has_value()) {
+            if (!member_attributes.builtin.has_value() && !member_attributes.color.has_value() &&
+                !member_attributes.location.has_value()) {
+                return true;
+            }
+        }
+
+        // The `gl_PerVertex` structure always gets emitted by glslang, but it may only be used by
+        // the `gl_Position` variable. The structure will also contain the `gl_PointSize`,
+        // `gl_ClipDistance` and `gl_CullDistance`.
+
+        if (member_attributes.builtin == core::BuiltinValue::kPointSize) {
+            // TODO(dsinclair): Validate that all accesses of this member are then used only to
+            // assign the value of 1.0.
+            return true;
+        }
+        if (member_attributes.builtin == core::BuiltinValue::kCullDistance) {
+            TINT_ASSERT(!IsIndexAccessed(var->Result(), member->Index()));
+            return true;
+        }
+        if (member_attributes.builtin == core::BuiltinValue::kClipDistances) {
+            return !IsIndexAccessed(var->Result(), member->Index());
+        }
+        return false;
+    }
+
+    /// Returns true if the `idx` member of `val` is accessed. The `val` must be of type
+    /// `Structure` which contains the given member index.
+    /// @param val the value to check
+    /// @param idx the index to look for
+    /// @returns true if `idx` is accessed.
+    bool IsIndexAccessed(core::ir::Value* val, uint32_t idx) {
+        for (auto& usage : val->UsagesUnsorted()) {
+            // Only care about access chains
+            auto* chain = usage->instruction->As<core::ir::Access>();
+            if (!chain) {
+                continue;
+            }
+            TINT_ASSERT(chain->Indices().Length() >= 1);
+
+            // A member access has to be a constant index
+            auto* cnst = chain->Indices()[0]->As<core::ir::Constant>();
+            if (!cnst) {
+                continue;
+            }
+
+            uint32_t v = cnst->Value()->ValueAs<uint32_t>();
+            if (v == idx) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// Replace a use of an input pointer value.
     /// @param var the originating input variable
     /// @param value the input pointer value
@@ -270,7 +360,7 @@ struct State {
                 use.instruction,
                 [&](core::ir::Load* l) {
                     // Fold the load away and replace its uses with the new parameter.
-                    l->Result(0)->ReplaceAllUsesWith(object);
+                    l->Result()->ReplaceAllUsesWith(object);
                     to_destroy.Push(l);
                 },
                 [&](core::ir::LoadVectorElement* lve) {
@@ -282,9 +372,15 @@ struct State {
                 [&](core::ir::Access* a) {
                     // Remove the pointer from the source and destination type.
                     a->SetOperand(core::ir::Access::kObjectOperandOffset, object);
-                    a->Result(0)->SetType(a->Result(0)->Type()->UnwrapPtr());
-                    ReplaceInputPointerUses(var, a->Result(0));
+                    a->Result()->SetType(a->Result()->Type()->UnwrapPtr());
+                    ReplaceInputPointerUses(var, a->Result());
                 },
+                [&](core::ir::Let* l) {
+                    // Fold away
+                    ReplaceInputPointerUses(var, l->Result());
+                    to_destroy.Push(l);
+                },
+                [&](core::ir::Phony* p) { to_destroy.Push(p); },  //
                 TINT_ICE_ON_NO_MATCH);
         });
 
@@ -309,14 +405,39 @@ struct State {
     /// @returns the function parameter
     core::ir::Value* GetParameter(core::ir::Function* func, core::ir::Var* var) {
         return function_parameter_map.GetOrAddZero(func).GetOrAdd(var, [&] {
-            const bool entry_point = func->Stage() != core::ir::Function::PipelineStage::kUndefined;
-            auto* var_type = var->Result(0)->Type()->UnwrapPtr();
+            const bool entry_point = func->IsEntryPoint();
+            auto* var_type = var->Result()->Type()->UnwrapPtr();
 
-            // Use a scalar u32 for sample_mask builtins for entry point parameters.
-            if (entry_point && var->Attributes().builtin == core::BuiltinValue::kSampleMask) {
-                TINT_ASSERT(var_type->Is<core::type::Array>());
-                TINT_ASSERT(var_type->As<core::type::Array>()->ConstantCount() == 1u);
-                var_type = ty.u32();
+            // The SPIR_V type may not match the required WGSL entry point type, swap them as
+            // needed.
+            if (entry_point && var->Attributes().builtin.has_value()) {
+                switch (var->Attributes().builtin.value()) {
+                    case core::BuiltinValue::kSampleMask: {
+                        TINT_ASSERT(var_type->Is<core::type::Array>());
+                        TINT_ASSERT(var_type->As<core::type::Array>()->ConstantCount() == 1u);
+                        var_type = ty.u32();
+                        break;
+                    }
+                    case core::BuiltinValue::kInstanceIndex:
+                    case core::BuiltinValue::kVertexIndex:
+                    case core::BuiltinValue::kLocalInvocationIndex:
+                    case core::BuiltinValue::kSubgroupInvocationId:
+                    case core::BuiltinValue::kSubgroupSize:
+                    case core::BuiltinValue::kSampleIndex: {
+                        var_type = ty.u32();
+                        break;
+                    }
+                    case core::BuiltinValue::kLocalInvocationId:
+                    case core::BuiltinValue::kGlobalInvocationId:
+                    case core::BuiltinValue::kWorkgroupId:
+                    case core::BuiltinValue::kNumWorkgroups: {
+                        var_type = ty.vec3<u32>();
+                        break;
+                    }
+                    default: {
+                        break;
+                    }
+                }
             }
 
             // Create a new function parameter for the input.
@@ -344,11 +465,62 @@ struct State {
             });
 
             core::ir::Value* result = param;
-            if (entry_point && var->Attributes().builtin == core::BuiltinValue::kSampleMask) {
-                // Construct an array from the scalar sample_mask builtin value for entry points.
-                auto* construct = b.Construct(var->Result(0)->Type()->UnwrapPtr(), param);
-                func->Block()->Prepend(construct);
-                result = construct->Result(0);
+            if (entry_point && var->Attributes().builtin.has_value()) {
+                switch (var->Attributes().builtin.value()) {
+                    case core::BuiltinValue::kSampleMask: {
+                        // Construct an array from the scalar sample_mask builtin value for entry
+                        // points.
+
+                        auto* mask_ty = var->Result()->Type()->UnwrapPtr()->As<core::type::Array>();
+                        TINT_ASSERT(mask_ty);
+
+                        // If the SPIR-V mask was an i32, need to convert from the u32 provided by
+                        // WGSL.
+                        if (mask_ty->ElemType()->IsSignedIntegerScalar()) {
+                            auto* conv = b.Convert(ty.i32(), result);
+                            func->Block()->Prepend(conv);
+
+                            auto* construct = b.Construct(mask_ty, conv);
+                            construct->InsertAfter(conv);
+                            result = construct->Result();
+                        } else {
+                            auto* construct = b.Construct(mask_ty, result);
+                            func->Block()->Prepend(construct);
+                            result = construct->Result();
+                        }
+                        break;
+                    }
+                    case core::BuiltinValue::kInstanceIndex:
+                    case core::BuiltinValue::kVertexIndex:
+                    case core::BuiltinValue::kLocalInvocationIndex:
+                    case core::BuiltinValue::kSubgroupInvocationId:
+                    case core::BuiltinValue::kSubgroupSize:
+                    case core::BuiltinValue::kSampleIndex: {
+                        auto* idx_ty = var->Result()->Type()->UnwrapPtr();
+                        if (idx_ty->IsSignedIntegerScalar()) {
+                            auto* conv = b.Convert(ty.i32(), result);
+                            func->Block()->Prepend(conv);
+                            result = conv->Result();
+                        }
+                        break;
+                    }
+                    case core::BuiltinValue::kLocalInvocationId:
+                    case core::BuiltinValue::kGlobalInvocationId:
+                    case core::BuiltinValue::kWorkgroupId:
+                    case core::BuiltinValue::kNumWorkgroups: {
+                        auto* idx_ty = var->Result()->Type()->UnwrapPtr();
+                        auto* elem_ty = idx_ty->DeepestElement();
+                        if (elem_ty->IsSignedIntegerScalar()) {
+                            auto* conv = b.Convert(ty.MatchWidth(ty.i32(), idx_ty), result);
+                            func->Block()->Prepend(conv);
+                            result = conv->Result();
+                        }
+                        break;
+                    }
+                    default: {
+                        break;
+                    }
+                }
             }
             return result;
         });
@@ -360,19 +532,19 @@ struct State {
     void AddEntryPointParameterAttributes(core::ir::FunctionParam* param,
                                           const core::IOAttributes& attributes) {
         if (auto* str = param->Type()->UnwrapPtr()->As<core::type::Struct>()) {
-            for (auto* member : str->Members()) {
+            for (const auto* const_member : str->Members()) {
+                // TODO(crbug.com/tint/745): Remove the const_cast.
+                auto* member = const_cast<core::type::StructMember*>(const_member);
+
                 // Use the base variable attributes if not specified directly on the member.
                 auto member_attributes = member->Attributes();
                 if (auto base_loc = attributes.location) {
                     // Location values increment from the base location value on the variable.
-                    member_attributes.location = base_loc.value() + member->Index();
+                    member->SetLocation(base_loc.value() + member->Index());
                 }
                 if (!member_attributes.interpolation) {
-                    member_attributes.interpolation = attributes.interpolation;
+                    member->SetInterpolation(attributes.interpolation);
                 }
-                // TODO(crbug.com/tint/745): Remove the const_cast.
-                const_cast<core::type::StructMember*>(member)->SetAttributes(
-                    std::move(member_attributes));
             }
         } else {
             // Set attributes directly on the function parameter.
@@ -384,7 +556,12 @@ struct State {
 }  // namespace
 
 Result<SuccessType> ShaderIO(core::ir::Module& ir) {
-    auto result = ValidateAndDumpIfNeeded(ir, "spirv.ShaderIO");
+    auto result = ValidateAndDumpIfNeeded(ir, "spirv.ShaderIO",
+                                          core::ir::Capabilities{
+                                              core::ir::Capability::kAllowMultipleEntryPoints,
+                                              core::ir::Capability::kAllowOverrides,
+                                              core::ir::Capability::kAllowPhonyInstructions,
+                                          });
     if (result != Success) {
         return result.Failure();
     }

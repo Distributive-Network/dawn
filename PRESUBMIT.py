@@ -26,91 +26,67 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import re
+import sys
 
-NONINCLUSIVE_REGEXES = [
-    r"(?i)black[-_]?list",
-    r"(?i)white[-_]?list",
-    r"(?i)gr[ea]y[-_]?list",
-    r"(?i)(first class citizen)",
-    r"(?i)black[-_]?hat",
-    r"(?i)white[-_]?hat",
-    r"(?i)gr[ea]y[-_]?hat",
-    r"(?i)master",
-    r"(?i)slave",
-    r"(?i)\bhim\b",
-    r"(?i)\bhis\b",
-    r"(?i)\bshe\b",
-    r"(?i)\bher\b",
-    r"(?i)\bguys\b",
-    r"(?i)\bhers\b",
-    r"(?i)\bman\b",
-    r"(?i)\bwoman\b",
-    r"(?i)\she\s",
-    r"(?i)\she$",
-    r"(?i)^he\s",
-    r"(?i)^he$",
-    r"(?i)\she['|\u2019]d\s",
-    r"(?i)\she['|\u2019]d$",
-    r"(?i)^he['|\u2019]d\s",
-    r"(?i)^he['|\u2019]d$",
-    r"(?i)\she['|\u2019]s\s",
-    r"(?i)\she['|\u2019]s$",
-    r"(?i)^he['|\u2019]s\s",
-    r"(?i)^he['|\u2019]s$",
-    r"(?i)\she['|\u2019]ll\s",
-    r"(?i)\she['|\u2019]ll$",
-    r"(?i)^he['|\u2019]ll\s",
-    r"(?i)^he['|\u2019]ll$",
-    r"(?i)grandfather",
-    r"(?i)\bmitm\b",
-    r"(?i)\bcrazy\b",
-    r"(?i)\binsane\b",
-    r"(?i)\bblind\sto\b",
-    r"(?i)\bflying\sblind\b",
-    r"(?i)\bblind\seye\b",
-    r"(?i)\bcripple\b",
-    r"(?i)\bcrippled\b",
-    r"(?i)\bdumb\b",
-    r"(?i)\bdummy\b",
-    r"(?i)\bparanoid\b",
-    r"(?i)\bsane\b",
-    r"(?i)\bsanity\b",
-    r"(?i)red[-_]?line",
+PRESUBMIT_VERSION = '2.0.0'
+
+NONINCLUSIVE_LANGUAGE_REGEXES = [
+    re.compile(reg) for reg in [
+        r"(?i)black[-_]?list",
+        r"(?i)white[-_]?list",
+        r"(?i)gr[ea]y[-_]?list",
+        r"(?i)(first class citizen)",
+        r"(?i)black[-_]?hat",
+        r"(?i)white[-_]?hat",
+        r"(?i)gr[ea]y[-_]?hat",
+        r"(?i)master",
+        r"(?i)slave",
+        r"(?i)\bhim\b",
+        r"(?i)\bhis\b",
+        r"(?i)\bshe\b",
+        r"(?i)\bher\b",
+        r"(?i)\bguys\b",
+        r"(?i)\bhers\b",
+        r"(?i)\bman\b",
+        r"(?i)\bwoman\b",
+        r"(?i)\she\s",
+        r"(?i)\she$",
+        r"(?i)^he\s",
+        r"(?i)^he$",
+        r"(?i)\she['|\u2019]d\s",
+        r"(?i)\she['|\u2019]d$",
+        r"(?i)^he['|\u2019]d\s",
+        r"(?i)^he['|\u2019]d$",
+        r"(?i)\she['|\u2019]s\s",
+        r"(?i)\she['|\u2019]s$",
+        r"(?i)^he['|\u2019]s\s",
+        r"(?i)^he['|\u2019]s$",
+        r"(?i)\she['|\u2019]ll\s",
+        r"(?i)\she['|\u2019]ll$",
+        r"(?i)^he['|\u2019]ll\s",
+        r"(?i)^he['|\u2019]ll$",
+        r"(?i)grandfather",
+        r"(?i)\bmitm\b",
+        r"(?i)\bcrazy\b",
+        r"(?i)\binsane\b",
+        r"(?i)\bblind\sto\b",
+        r"(?i)\bflying\sblind\b",
+        r"(?i)\bblind\seye\b",
+        r"(?i)\bcripple\b",
+        r"(?i)\bcrippled\b",
+        r"(?i)\bdumb\b",
+        r"(?i)\bdummy\b",
+        r"(?i)\bparanoid\b",
+        r"(?i)\bsane\b",
+        r"(?i)\bsanity\b",
+        r"(?i)red[-_]?line",
+    ]
 ]
-
-NONINCLUSIVE_REGEX_LIST = []
-for reg in NONINCLUSIVE_REGEXES:
-    NONINCLUSIVE_REGEX_LIST.append(re.compile(reg))
 
 LINT_FILTERS = []
 
-
-def _CheckNonInclusiveLanguage(input_api, output_api, source_file_filter=None):
-    """Checks the files for non-inclusive language."""
-
-    matches = []
-    for f in input_api.AffectedFiles(include_deletes=False,
-                                     file_filter=source_file_filter):
-        line_num = 0
-        for line in f.NewContents():
-            line_num += 1
-            for reg in NONINCLUSIVE_REGEX_LIST:
-                match = reg.search(line)
-                if match:
-                    matches.append(
-                        "{} ({}): found non-inclusive language: {}".format(
-                            f.LocalPath(), line_num, match.group(0)))
-
-    if len(matches):
-        return [
-            output_api.PresubmitPromptWarning("Non-inclusive language found:",
-                                              items=matches)
-        ]
-
-    return []
-
-
 def _NonInclusiveFileFilter(file):
+    """Filters files that are exempt from the non-inclusive language check."""
     filter_list = [
         "Doxyfile",  # References to main pages
         "PRESUBMIT.py",  # Non-inclusive language check data
@@ -122,7 +98,9 @@ def _NonInclusiveFileFilter(file):
         "infra/config/global/main.star",  # Infra settings
         "infra/kokoro/windows/build.bat",  # External URL
         "src/dawn/common/GPUInfo.cpp",  # External URL
+        "src/dawn/common/ThreadLocal.cpp",  # External URL
         "src/dawn/native/metal/BackendMTL.mm",  # OSX Constant
+        "src/dawn/native/metal/PhysicalDeviceMTL.mm",  # OSX deprecated API
         "src/dawn/native/vulkan/SamplerVk.cpp",  # External URL
         "src/dawn/native/vulkan/TextureVk.cpp",  # External URL
         "src/tools/src/cmd/run-cts/main.go",  # Terminal type name
@@ -139,7 +117,29 @@ def _NonInclusiveFileFilter(file):
     return file.LocalPath().replace('\\', '/') not in filter_list
 
 
-def _CheckNoStaleGen(input_api, output_api):
+def CheckNonInclusiveLanguage(input_api, output_api):
+    """Checks the files for non-inclusive language."""
+    matches = []
+    for f in input_api.AffectedFiles(include_deletes=False,
+                                     file_filter=_NonInclusiveFileFilter):
+        for line_num, line in enumerate(f.NewContents(), start=1):
+            for reg in NONINCLUSIVE_LANGUAGE_REGEXES:
+                if match := reg.search(line):
+                    matches.append(
+                        f"{f.LocalPath()} ({line_num}): found non-inclusive language: {match.group(0)}"
+                    )
+
+    if matches:
+        return [
+            output_api.PresubmitPromptWarning("Non-inclusive language found:",
+                                              items=matches)
+        ]
+
+    return []
+
+
+def CheckNoStaleGen(input_api, output_api):
+    """Checks that Tint generated files are not stale."""
     results = []
     try:
         go = input_api.os_path.join(input_api.change.RepositoryRoot(), "tools",
@@ -159,11 +159,35 @@ def _CheckNoStaleGen(input_api, output_api):
     return results
 
 
-def _DoCommonChecks(input_api, output_api):
+def CheckWebgpuHeaderDiff(input_api, output_api):
+    """Checks that generated WebGPU C Headers are not stale."""
+    results = []
+    try:
+        input_api.subprocess.check_call_out(
+            [sys.executable, "third_party/webgpu-headers/cli", "check"],
+            stdout=input_api.subprocess.PIPE,
+            stderr=input_api.subprocess.PIPE,
+            cwd=input_api.change.RepositoryRoot())
+    except input_api.subprocess.CalledProcessError as e:
+        if input_api.is_committing:
+            results.append(output_api.PresubmitError('%s' % (e, )))
+        else:
+            results.append(output_api.PresubmitPromptWarning('%s' % (e, )))
+    return results
+
+
+def _HasNoStrayWhitespaceFilter(file):
+    """Filters files that are exempt from the canned no stray whitespace check."""
+    filter_list = [
+        "third_party/webgpu-headers/webgpu.h.diff",  # Generated diff file
+    ]
+    return file.LocalPath().replace('\\', '/') not in filter_list
+
+
+def CheckChange(input_api, output_api):
     results = []
     results.extend(
         input_api.canned_checks.CheckForCommitObjects(input_api, output_api))
-    results.extend(_CheckNoStaleGen(input_api, output_api))
 
     result_factory = output_api.PresubmitPromptWarning
     if input_api.is_committing:
@@ -174,7 +198,6 @@ def _DoCommonChecks(input_api, output_api):
         input_api.canned_checks.CheckPatchFormatted(
             input_api,
             output_api,
-            check_python=True,
             result_factory=result_factory))
     results.extend(
         input_api.canned_checks.CheckGNFormatted(input_api, output_api))
@@ -187,7 +210,9 @@ def _DoCommonChecks(input_api, output_api):
         input_api.canned_checks.CheckChangeTodoHasOwner(input_api, output_api))
     results.extend(
         input_api.canned_checks.CheckChangeHasNoStrayWhitespace(
-            input_api, output_api))
+            input_api,
+            output_api,
+            source_file_filter=_HasNoStrayWhitespaceFilter))
 
     results.extend(
         input_api.canned_checks.CheckChangeHasDescription(
@@ -199,11 +224,5 @@ def _DoCommonChecks(input_api, output_api):
     results.extend(
         input_api.canned_checks.CheckChangeLintsClean(
             input_api, output_api, lint_filters=LINT_FILTERS, verbose_level=1))
-    results.extend(
-        _CheckNonInclusiveLanguage(input_api, output_api,
-                                   _NonInclusiveFileFilter))
+
     return results
-
-
-CheckChangeOnUpload = _DoCommonChecks
-CheckChangeOnCommit = _DoCommonChecks

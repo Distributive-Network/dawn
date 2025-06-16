@@ -28,8 +28,6 @@
 #ifndef SRC_TINT_LANG_CORE_IR_MODULE_H_
 #define SRC_TINT_LANG_CORE_IR_MODULE_H_
 
-#include <memory>
-#include <string>
 #include <utility>
 
 #include "src/tint/lang/core/constant/manager.h"
@@ -43,9 +41,8 @@
 #include "src/tint/utils/containers/filtered_iterator.h"
 #include "src/tint/utils/containers/vector.h"
 #include "src/tint/utils/diagnostic/source.h"
-#include "src/tint/utils/id/generation_id.h"
+#include "src/tint/utils/generation_id.h"
 #include "src/tint/utils/memory/block_allocator.h"
-#include "src/tint/utils/result/result.h"
 #include "src/tint/utils/symbol/symbol_table.h"
 
 namespace tint::core::ir {
@@ -113,6 +110,11 @@ class Module {
     /// @param name the desired name of the value. May be suffixed on collision.
     /// @note requires the instruction be a single result instruction.
     void SetName(Instruction* inst, std::string_view name);
+
+    /// @param inst the instruction to set the name of
+    /// @param name the desired name of the value.
+    /// @note requires the instruction be a single result instruction.
+    void SetName(Instruction* inst, Symbol name);
 
     /// @param value the value to name.
     /// @param name the desired name of the value. May be suffixed on collision.

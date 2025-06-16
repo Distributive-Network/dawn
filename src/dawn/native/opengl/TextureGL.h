@@ -62,8 +62,9 @@ class Texture final : public TextureBase {
 
     MaybeError EnsureSubresourceContentInitialized(const SubresourceRange& range);
 
+    MaybeError SynchronizeTextureBeforeUse();
+
   private:
-    Texture(Device* device, const UnpackedPtr<TextureDescriptor>& descriptor);
     ~Texture() override;
 
     void DestroyImpl() override;
@@ -76,13 +77,20 @@ class Texture final : public TextureBase {
 
 class TextureView final : public TextureViewBase {
   public:
-    TextureView(TextureBase* texture, const UnpackedPtr<TextureViewDescriptor>& descriptor);
+    static ResultOrError<Ref<TextureView>> Create(
+        TextureBase* texture,
+        const UnpackedPtr<TextureViewDescriptor>& descriptor);
 
     GLuint GetHandle() const;
     GLenum GetGLTarget() const;
-    void BindToFramebuffer(GLenum target, GLenum attachment, GLuint depthLayer = 0);
+    MaybeError BindToFramebuffer(GLenum target, GLenum attachment, GLuint depthLayer = 0);
 
   private:
+    TextureView(TextureBase* texture,
+                const UnpackedPtr<TextureViewDescriptor>& descriptor,
+                GLuint handle,
+                OwnsHandle ownsHandle);
+
     ~TextureView() override;
     void DestroyImpl() override;
     GLenum GetInternalFormat() const;
@@ -90,7 +98,7 @@ class TextureView final : public TextureViewBase {
     // TODO(crbug.com/dawn/1355): Delete this handle on texture destroy.
     GLuint mHandle;
     GLenum mTarget;
-    bool mOwnsHandle;
+    OwnsHandle mOwnsHandle = OwnsHandle::No;
 };
 
 }  // namespace dawn::native::opengl

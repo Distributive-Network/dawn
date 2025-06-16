@@ -42,23 +42,17 @@ namespace tint::core {
 /// @param str the string to parse
 /// @returns the parsed enum, or AddressSpace::kUndefined if the string could not be parsed.
 AddressSpace ParseAddressSpace(std::string_view str) {
-    if (str == "__in") {
-        return AddressSpace::kIn;
-    }
-    if (str == "__out") {
-        return AddressSpace::kOut;
-    }
     if (str == "function") {
         return AddressSpace::kFunction;
+    }
+    if (str == "immediate") {
+        return AddressSpace::kImmediate;
     }
     if (str == "pixel_local") {
         return AddressSpace::kPixelLocal;
     }
     if (str == "private") {
         return AddressSpace::kPrivate;
-    }
-    if (str == "push_constant") {
-        return AddressSpace::kPushConstant;
     }
     if (str == "storage") {
         return AddressSpace::kStorage;
@@ -84,12 +78,12 @@ std::string_view ToString(AddressSpace value) {
             return "function";
         case AddressSpace::kHandle:
             return "handle";
+        case AddressSpace::kImmediate:
+            return "immediate";
         case AddressSpace::kPixelLocal:
             return "pixel_local";
         case AddressSpace::kPrivate:
             return "private";
-        case AddressSpace::kPushConstant:
-            return "push_constant";
         case AddressSpace::kStorage:
             return "storage";
         case AddressSpace::kUniform:

@@ -39,7 +39,7 @@
 
 #include <cstdint>
 
-#include "src/tint/utils/traits/traits.h"
+#include "src/tint/utils/rtti/traits.h"
 
 namespace tint::core {
 
@@ -72,13 +72,14 @@ enum class BuiltinType : uint8_t {
     kModfResultVec4Abstract,
     kModfResultVec4F16,
     kModfResultVec4F32,
-    kPackedVec3,
     kArray,
     kAtomic,
+    kBindingArray,
     kBool,
     kF16,
     kF32,
     kI32,
+    kI8,
     kInputAttachment,
     kMat2X2,
     kMat2X2F,
@@ -110,6 +111,9 @@ enum class BuiltinType : uint8_t {
     kPtr,
     kSampler,
     kSamplerComparison,
+    kSubgroupMatrixLeft,
+    kSubgroupMatrixResult,
+    kSubgroupMatrixRight,
     kTexture1D,
     kTexture2D,
     kTexture2DArray,
@@ -128,6 +132,7 @@ enum class BuiltinType : uint8_t {
     kTextureStorage2DArray,
     kTextureStorage3D,
     kU32,
+    kU8,
     kVec2,
     kVec2F,
     kVec2H,
@@ -152,7 +157,8 @@ std::string_view ToString(BuiltinType value);
 /// @param out the stream to write to
 /// @param value the BuiltinType
 /// @returns @p out so calls can be chained
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, BuiltinType value) {
     return out << ToString(value);
 }
@@ -189,13 +195,14 @@ constexpr std::string_view kBuiltinTypeStrings[] = {
     "__modf_result_vec4_abstract",
     "__modf_result_vec4_f16",
     "__modf_result_vec4_f32",
-    "__packed_vec3",
     "array",
     "atomic",
+    "binding_array",
     "bool",
     "f16",
     "f32",
     "i32",
+    "i8",
     "input_attachment",
     "mat2x2",
     "mat2x2f",
@@ -227,6 +234,9 @@ constexpr std::string_view kBuiltinTypeStrings[] = {
     "ptr",
     "sampler",
     "sampler_comparison",
+    "subgroup_matrix_left",
+    "subgroup_matrix_result",
+    "subgroup_matrix_right",
     "texture_1d",
     "texture_2d",
     "texture_2d_array",
@@ -245,6 +255,7 @@ constexpr std::string_view kBuiltinTypeStrings[] = {
     "texture_storage_2d_array",
     "texture_storage_3d",
     "u32",
+    "u8",
     "vec2",
     "vec2f",
     "vec2h",

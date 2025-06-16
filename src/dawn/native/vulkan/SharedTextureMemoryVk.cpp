@@ -439,7 +439,7 @@ ResultOrError<Ref<SharedTextureMemory>> SharedTextureMemory::Create(
     // import's constraint.
     memoryRequirements.memoryTypeBits &= fdProperties.memoryTypeBits;
     int memoryTypeIndex = device->GetResourceMemoryAllocator()->FindBestTypeIndex(
-        memoryRequirements, MemoryKind::Opaque);
+        memoryRequirements, MemoryKind::DeviceLocal);
     DAWN_INVALID_IF(memoryTypeIndex == -1, "Unable to find an appropriate memory type for import.");
 
     SystemHandle memoryFD;
@@ -669,7 +669,7 @@ ResultOrError<Ref<SharedTextureMemory>> SharedTextureMemory::Create(
         VkMemoryRequirements memoryRequirements;
         memoryRequirements.memoryTypeBits = bufferProperties.memoryTypeBits;
         int memoryTypeIndex = device->GetResourceMemoryAllocator()->FindBestTypeIndex(
-            memoryRequirements, MemoryKind::Opaque);
+            memoryRequirements, MemoryKind::DeviceLocal);
         DAWN_INVALID_IF(memoryTypeIndex == -1,
                         "Unable to find an appropriate memory type for import.");
 
@@ -811,6 +811,9 @@ ResultOrError<Ref<SharedTextureMemory>> SharedTextureMemory::Create(
     if (createInfo->usage &
         (VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) {
         properties.usage |= wgpu::TextureUsage::RenderAttachment;
+    }
+    if (createInfo->usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT) {
+        properties.usage |= wgpu::TextureUsage::TransientAttachment;
     }
 
     const Format* internalFormat;
@@ -1032,12 +1035,10 @@ ResultOrError<FenceAndSignalValue> SharedTextureMemory::EndAccessImpl(
                     wgpu::SharedFenceType::VkSemaphoreZirconHandle);
 #elif DAWN_PLATFORM_IS(LINUX)
     DAWN_INVALID_IF(!GetDevice()->HasFeature(Feature::SharedFenceSyncFD) &&
-                        !GetDevice()->HasFeature(Feature::SharedFenceVkSemaphoreSyncFD) &&
                         !GetDevice()->HasFeature(Feature::SharedFenceVkSemaphoreOpaqueFD),
-                    "Required feature (%s or %s or %s) for %s or %s is missing.",
+                    "Required feature (%s or %s) for %s or %s is missing.",
                     wgpu::FeatureName::SharedFenceVkSemaphoreOpaqueFD,
                     wgpu::FeatureName::SharedFenceSyncFD,
-                    wgpu::FeatureName::SharedFenceVkSemaphoreSyncFD,
                     wgpu::SharedFenceType::VkSemaphoreOpaqueFD, wgpu::SharedFenceType::SyncFD);
 #endif
 
@@ -1066,8 +1067,7 @@ ResultOrError<FenceAndSignalValue> SharedTextureMemory::EndAccessImpl(
     DAWN_TRY_ASSIGN(fence,
                     SharedFence::Create(ToBackend(GetDevice()), "Internal VkSemaphore", &desc));
 #elif DAWN_PLATFORM_IS(LINUX)
-    if (GetDevice()->HasFeature(Feature::SharedFenceSyncFD) ||
-        GetDevice()->HasFeature(Feature::SharedFenceVkSemaphoreSyncFD)) {
+    if (GetDevice()->HasFeature(Feature::SharedFenceSyncFD)) {
         SharedFenceSyncFDDescriptor desc;
         desc.handle = handle.Get();
 

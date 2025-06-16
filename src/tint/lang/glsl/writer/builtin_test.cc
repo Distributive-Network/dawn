@@ -203,7 +203,7 @@ struct atomic_compare_exchange_result_i32 {
 };
 
 layout(binding = 0, std430)
-buffer v_block_1_ssbo {
+buffer f_v_block_ssbo {
   SB inner;
 } v_1;
 void main() {
@@ -236,7 +236,7 @@ struct atomic_compare_exchange_result_i32 {
 };
 
 layout(binding = 0, std430)
-buffer v_block_1_ssbo {
+buffer f_v_block_ssbo {
   int inner;
 } v_1;
 void main() {
@@ -274,7 +274,7 @@ struct SB {
 
 shared SB v;
 void foo_inner(uint tint_local_index) {
-  if ((tint_local_index == 0u)) {
+  if ((tint_local_index < 1u)) {
     v.padding = vec4(0.0f);
     atomicExchange(v.a, 0);
     atomicExchange(v.b, 0u);
@@ -319,7 +319,7 @@ struct SB {
 
 shared SB v;
 void foo_inner(uint tint_local_index) {
-  if ((tint_local_index == 0u)) {
+  if ((tint_local_index < 1u)) {
     v.padding = vec4(0.0f);
     atomicExchange(v.a, 0);
     atomicExchange(v.b, 0u);
@@ -370,7 +370,7 @@ struct atomic_compare_exchange_result_i32 {
 
 shared SB v;
 void foo_inner(uint tint_local_index) {
-  if ((tint_local_index == 0u)) {
+  if ((tint_local_index < 1u)) {
     v.padding = vec4(0.0f);
     atomicExchange(v.a, 0);
     atomicExchange(v.b, 0u);
@@ -598,7 +598,7 @@ precision highp float;
 precision highp int;
 
 f16vec2 tint_bitcast_to_f16(uint src) {
-  return unpackFloat2x16(uint(src));
+  return unpackFloat2x16(src);
 }
 void main() {
   uint a = 1u;
@@ -621,7 +621,7 @@ precision highp float;
 precision highp int;
 
 uint tint_bitcast_from_f16(f16vec2 src) {
-  return uint(packFloat2x16(src));
+  return packFloat2x16(src);
 }
 void main() {
   f16vec2 a = f16vec2(1.0hf, 2.0hf);
@@ -691,8 +691,7 @@ precision highp int;
 
 f16vec4 tint_bitcast_to_f16(ivec2 src) {
   uvec2 v = uvec2(src);
-  f16vec2 v_1 = unpackFloat2x16(v.x);
-  return f16vec4(v_1, unpackFloat2x16(v.y));
+  return f16vec4(unpackFloat2x16(v.x), unpackFloat2x16(v.y));
 }
 void main() {
   ivec2 a = ivec2(1, 2);
@@ -715,8 +714,7 @@ precision highp float;
 precision highp int;
 
 ivec2 tint_bitcast_from_f16(f16vec4 src) {
-  uint v = packFloat2x16(src.xy);
-  return ivec2(uvec2(v, packFloat2x16(src.zw)));
+  return ivec2(uvec2(packFloat2x16(src.xy), packFloat2x16(src.zw)));
 }
 void main() {
   f16vec4 a = f16vec4(1.0hf, 2.0hf, 3.0hf, 4.0hf);
@@ -739,9 +737,7 @@ precision highp float;
 precision highp int;
 
 f16vec4 tint_bitcast_to_f16(uvec2 src) {
-  uvec2 v = uvec2(src);
-  f16vec2 v_1 = unpackFloat2x16(v.x);
-  return f16vec4(v_1, unpackFloat2x16(v.y));
+  return f16vec4(unpackFloat2x16(src.x), unpackFloat2x16(src.y));
 }
 void main() {
   uvec2 a = uvec2(1u, 2u);
@@ -764,8 +760,7 @@ precision highp float;
 precision highp int;
 
 uvec2 tint_bitcast_from_f16(f16vec4 src) {
-  uint v = packFloat2x16(src.xy);
-  return uvec2(uvec2(v, packFloat2x16(src.zw)));
+  return uvec2(packFloat2x16(src.xy), packFloat2x16(src.zw));
 }
 void main() {
   f16vec4 a = f16vec4(1.0hf, 2.0hf, 3.0hf, 4.0hf);
@@ -788,9 +783,7 @@ precision highp float;
 precision highp int;
 
 f16vec4 tint_bitcast_to_f16(vec2 src) {
-  uvec2 v = floatBitsToUint(src);
-  f16vec2 v_1 = unpackFloat2x16(v.x);
-  return f16vec4(v_1, unpackFloat2x16(v.y));
+  return f16vec4(unpackFloat2x16(floatBitsToUint(src).x), unpackFloat2x16(floatBitsToUint(src).y));
 }
 void main() {
   vec2 a = vec2(1.0f, 2.0f);
@@ -813,8 +806,7 @@ precision highp float;
 precision highp int;
 
 vec2 tint_bitcast_from_f16(f16vec4 src) {
-  uint v = packFloat2x16(src.xy);
-  return uintBitsToFloat(uvec2(v, packFloat2x16(src.zw)));
+  return uintBitsToFloat(uvec2(packFloat2x16(src.xy), packFloat2x16(src.zw)));
 }
 void main() {
   f16vec4 a = f16vec4(1.0hf, 2.0hf, 3.0hf, 4.0hf);
@@ -824,8 +816,8 @@ void main() {
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureDimensions_1d) {
-    auto* type = ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k1d, ty.f32());
-    auto* var = b.Var("v", handle, type, core::Access::kReadWrite);
+    auto* type = ty.sampled_texture(core::type::TextureDimension::k1d, ty.f32());
+    auto* var = b.Var("v", handle, type, core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -842,16 +834,16 @@ TEST_F(GlslWriterTest, BuiltinTextureDimensions_1d) {
 precision highp float;
 precision highp int;
 
-uniform highp sampler2D v;
+uniform highp sampler2D f_v;
 void main() {
-  uint x = uvec2(textureSize(v, 0)).x;
+  uint x = uvec2(textureSize(f_v, 0)).x;
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureDimensions_2d_WithoutLod) {
-    auto* type = ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2d, ty.f32());
-    auto* var = b.Var("v", handle, type, core::Access::kReadWrite);
+    auto* type = ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32());
+    auto* var = b.Var("v", handle, type, core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -865,16 +857,16 @@ TEST_F(GlslWriterTest, BuiltinTextureDimensions_2d_WithoutLod) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D v;
+uniform highp sampler2D f_v;
 void main() {
-  uvec2 x = uvec2(textureSize(v, 0));
+  uvec2 x = uvec2(textureSize(f_v, 0));
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureDimensions_2d_WithU32Lod) {
-    auto* type = ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2d, ty.f32());
-    auto* var = b.Var("v", handle, type, core::Access::kReadWrite);
+    auto* type = ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32());
+    auto* var = b.Var("v", handle, type, core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -885,6 +877,7 @@ TEST_F(GlslWriterTest, BuiltinTextureDimensions_2d_WithU32Lod) {
     });
 
     Options opts{};
+    opts.bindings.texture_builtins_from_uniform.ubo_binding = {0, 1};
     opts.bindings.texture_builtins_from_uniform.ubo_bindingpoint_ordering = {{0, 0}};
     ASSERT_TRUE(Generate(opts)) << err_ << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
@@ -895,21 +888,20 @@ struct TintTextureUniformData {
   uint tint_builtin_value_0;
 };
 
-layout(binding = 0, std140)
-uniform tint_symbol_1_ubo {
+layout(binding = 1, std140)
+uniform f_tint_symbol_ubo {
   TintTextureUniformData inner;
 } v_1;
-uniform highp sampler2D v;
+uniform highp sampler2D f_v;
 void main() {
-  uvec2 x = uvec2(textureSize(v, int(min(3u, (v_1.inner.tint_builtin_value_0 - 1u)))));
+  uvec2 x = uvec2(textureSize(f_v, int(min(3u, (v_1.inner.tint_builtin_value_0 - 1u)))));
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureDimensions_2dArray) {
-    auto* type =
-        ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2dArray, ty.f32());
-    auto* var = b.Var("v", handle, type, core::Access::kReadWrite);
+    auto* type = ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32());
+    auto* var = b.Var("v", handle, type, core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -923,18 +915,17 @@ TEST_F(GlslWriterTest, BuiltinTextureDimensions_2dArray) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray v;
+uniform highp sampler2DArray f_v;
 void main() {
-  uvec2 x = uvec2(textureSize(v, 0).xy);
+  uvec2 x = uvec2(textureSize(f_v, 0).xy);
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureDimensions_Storage1D) {
-    auto* type = ty.Get<core::type::StorageTexture>(
-        core::type::TextureDimension::k2d, core::TexelFormat::kR32Float, core::Access::kRead,
-        core::type::StorageTexture::SubtypeFor(core::TexelFormat::kR32Float, ty));
-    auto* var = b.Var("v", handle, type, core::Access::kReadWrite);
+    auto* type = ty.storage_texture(core::type::TextureDimension::k2d, core::TexelFormat::kR32Float,
+                                    core::Access::kRead);
+    auto* var = b.Var("v", handle, type, core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -948,16 +939,16 @@ TEST_F(GlslWriterTest, BuiltinTextureDimensions_Storage1D) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-layout(binding = 0, r32f) uniform highp readonly image2D v;
+layout(binding = 0, r32f) uniform highp readonly image2D f_v;
 void main() {
-  uvec2 x = uvec2(imageSize(v));
+  uvec2 x = uvec2(imageSize(f_v));
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureDimensions_DepthMultisampled) {
     auto* type = ty.Get<core::type::DepthMultisampledTexture>(core::type::TextureDimension::k2d);
-    auto* var = b.Var("v", handle, type, core::Access::kReadWrite);
+    auto* var = b.Var("v", handle, type, core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -971,9 +962,9 @@ TEST_F(GlslWriterTest, BuiltinTextureDimensions_DepthMultisampled) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DMS v;
+uniform highp sampler2DMS f_v;
 void main() {
-  uvec2 x = uvec2(textureSize(v));
+  uvec2 x = uvec2(textureSize(f_v));
 }
 )");
 }
@@ -1007,10 +998,8 @@ TEST_F(GlslWriterTest, ExtractBits) {
 precision highp int;
 
 void main() {
-  uint v = min(2u, 32u);
-  uint v_1 = min(3u, (32u - v));
-  int v_2 = int(v);
-  uint x = bitfieldExtract(1u, v_2, int(v_1));
+  int v = int(min(2u, 32u));
+  uint x = bitfieldExtract(1u, v, int(min(3u, (32u - min(2u, 32u)))));
 }
 )");
 }
@@ -1027,19 +1016,16 @@ TEST_F(GlslWriterTest, InsertBits) {
 precision highp int;
 
 void main() {
-  uint v = min(3u, 32u);
-  uint v_1 = min(4u, (32u - v));
-  int v_2 = int(v);
-  uint x = bitfieldInsert(1u, 2u, v_2, int(v_1));
+  int v = int(min(3u, 32u));
+  uint x = bitfieldInsert(1u, 2u, v, int(min(4u, (32u - min(3u, 32u)))));
 }
 )");
 }
 
 TEST_F(GlslWriterTest, TextureNumLayers_2DArray) {
     auto* var =
-        b.Var("v", handle,
-              ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2dArray, ty.f32()),
-              core::Access::kReadWrite);
+        b.Var("v", handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32()),
+              core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -1053,9 +1039,9 @@ TEST_F(GlslWriterTest, TextureNumLayers_2DArray) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray v;
+uniform highp sampler2DArray f_v;
 void main() {
-  uint x = uint(textureSize(v, 0).z);
+  uint x = uint(textureSize(f_v, 0).z);
 }
 )");
 }
@@ -1063,7 +1049,7 @@ void main() {
 TEST_F(GlslWriterTest, TextureNumLayers_Depth2DArray) {
     auto* var =
         b.Var("v", handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray),
-              core::Access::kReadWrite);
+              core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -1077,18 +1063,17 @@ TEST_F(GlslWriterTest, TextureNumLayers_Depth2DArray) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray v;
+uniform highp sampler2DArray f_v;
 void main() {
-  uint x = uint(textureSize(v, 0).z);
+  uint x = uint(textureSize(f_v, 0).z);
 }
 )");
 }
 
 TEST_F(GlslWriterTest, TextureNumLayers_CubeArray) {
-    auto* var = b.Var(
-        "v", handle,
-        ty.Get<core::type::SampledTexture>(core::type::TextureDimension::kCubeArray, ty.f32()),
-        core::Access::kReadWrite);
+    auto* var =
+        b.Var("v", handle, ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32()),
+              core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -1105,9 +1090,9 @@ TEST_F(GlslWriterTest, TextureNumLayers_CubeArray) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArray v;
+uniform highp samplerCubeArray f_v;
 void main() {
-  uint x = uint(textureSize(v, 0).z);
+  uint x = uint(textureSize(f_v, 0).z);
 }
 )");
 }
@@ -1115,7 +1100,7 @@ void main() {
 TEST_F(GlslWriterTest, TextureNumLayers_DepthCubeArray) {
     auto* var = b.Var("v", handle,
                       ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray),
-                      core::Access::kReadWrite);
+                      core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -1132,19 +1117,18 @@ TEST_F(GlslWriterTest, TextureNumLayers_DepthCubeArray) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArray v;
+uniform highp samplerCubeArray f_v;
 void main() {
-  uint x = uint(textureSize(v, 0).z);
+  uint x = uint(textureSize(f_v, 0).z);
 }
 )");
 }
 
 TEST_F(GlslWriterTest, TextureNumLayers_Storage2DArray) {
-    auto* storage_ty = ty.Get<core::type::StorageTexture>(
-        core::type::TextureDimension::k2dArray, core::TexelFormat::kRg32Float, core::Access::kRead,
-        core::type::StorageTexture::SubtypeFor(core::TexelFormat::kRg32Float, ty));
+    auto* storage_ty = ty.storage_texture(core::type::TextureDimension::k2dArray,
+                                          core::TexelFormat::kRg32Float, core::Access::kRead);
 
-    auto* var = b.Var("v", handle, storage_ty, core::Access::kReadWrite);
+    auto* var = b.Var("v", handle, storage_ty, core::Access::kRead);
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
@@ -1161,16 +1145,16 @@ TEST_F(GlslWriterTest, TextureNumLayers_Storage2DArray) {
 precision highp float;
 precision highp int;
 
-layout(binding = 0, rg32f) uniform highp readonly image2DArray v;
+layout(binding = 0, rg32f) uniform highp readonly image2DArray f_v;
 void main() {
-  uint x = uint(imageSize(v).z);
+  uint x = uint(imageSize(f_v).z);
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureLoad_1DF32) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k1d, ty.f32())));
+    auto* t =
+        b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k1d, ty.f32())));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
@@ -1190,17 +1174,17 @@ TEST_F(GlslWriterTest, BuiltinTextureLoad_1DF32) {
 precision highp float;
 precision highp int;
 
-uniform highp sampler2D t;
+uniform highp sampler2D f_t;
 void main() {
   ivec2 v = ivec2(uvec2(1u, 0u));
-  vec4 x = texelFetch(t, v, int(3u));
+  vec4 x = texelFetch(f_t, v, int(3u));
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureLoad_2DLevelI32) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2d, ty.i32())));
+    auto* t =
+        b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.i32())));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
@@ -1218,17 +1202,17 @@ TEST_F(GlslWriterTest, BuiltinTextureLoad_2DLevelI32) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp isampler2D t;
+uniform highp isampler2D f_t;
 void main() {
   ivec2 v = ivec2(uvec2(1u, 2u));
-  ivec4 x = texelFetch(t, v, int(3u));
+  ivec4 x = texelFetch(f_t, v, int(3u));
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureLoad_3DLevelU32) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k3d, ty.f32())));
+    auto* t =
+        b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
@@ -1246,10 +1230,9 @@ TEST_F(GlslWriterTest, BuiltinTextureLoad_3DLevelU32) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler3D t;
+uniform highp sampler3D f_t;
 void main() {
-  ivec3 v = ivec3(ivec3(1, 2, 3));
-  vec4 x = texelFetch(t, v, int(4u));
+  vec4 x = texelFetch(f_t, ivec3(1, 2, 3), int(4u));
 }
 )");
 }
@@ -1274,20 +1257,17 @@ TEST_F(GlslWriterTest, BuiltinTextureLoad_Multisampled2DI32) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp isampler2DMS t;
+uniform highp isampler2DMS f_t;
 void main() {
-  ivec2 v = ivec2(ivec2(1, 2));
-  ivec4 x = texelFetch(t, v, int(3));
+  ivec4 x = texelFetch(f_t, ivec2(1, 2), 3);
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureLoad_Storage2D) {
-    auto* t = b.Var(ty.ptr(
-        handle,
-        ty.Get<core::type::StorageTexture>(
-            core::type::TextureDimension::k2d, core::TexelFormat::kRg32Float, core::Access::kRead,
-            core::type::StorageTexture::SubtypeFor(core::TexelFormat::kRg32Float, ty))));
+    auto* t = b.Var(
+        ty.ptr(handle, ty.storage_texture(core::type::TextureDimension::k2d,
+                                          core::TexelFormat::kRg32Float, core::Access::kRead)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
@@ -1306,19 +1286,17 @@ TEST_F(GlslWriterTest, BuiltinTextureLoad_Storage2D) {
 precision highp float;
 precision highp int;
 
-layout(binding = 0, rg32f) uniform highp readonly image2D v;
+layout(binding = 0, rg32f) uniform highp readonly image2D f_v;
 void main() {
-  vec4 x = imageLoad(v, ivec2(ivec2(1, 2)));
+  vec4 x = imageLoad(f_v, ivec2(1, 2));
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureStore1D) {
-    auto* t = b.Var(ty.ptr(
-        handle,
-        ty.Get<core::type::StorageTexture>(
-            core::type::TextureDimension::k1d, core::TexelFormat::kR32Float, core::Access::kWrite,
-            core::type::StorageTexture::SubtypeFor(core::TexelFormat::kR32Float, ty))));
+    auto* t = b.Var(
+        ty.ptr(handle, ty.storage_texture(core::type::TextureDimension::k1d,
+                                          core::TexelFormat::kR32Float, core::Access::kWrite)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
@@ -1337,19 +1315,17 @@ TEST_F(GlslWriterTest, BuiltinTextureStore1D) {
 precision highp float;
 precision highp int;
 
-layout(binding = 0, r32f) uniform highp writeonly image2D v;
+layout(binding = 0, r32f) uniform highp writeonly image2D f_v;
 void main() {
-  imageStore(v, ivec2(1, 0), vec4(0.5f, 0.0f, 0.0f, 1.0f));
+  imageStore(f_v, ivec2(1, 0), vec4(0.5f, 0.0f, 0.0f, 1.0f));
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureStore3D) {
-    auto* t = b.Var(ty.ptr(
-        handle,
-        ty.Get<core::type::StorageTexture>(
-            core::type::TextureDimension::k3d, core::TexelFormat::kR32Float, core::Access::kWrite,
-            core::type::StorageTexture::SubtypeFor(core::TexelFormat::kR32Float, ty))));
+    auto* t = b.Var(
+        ty.ptr(handle, ty.storage_texture(core::type::TextureDimension::k3d,
+                                          core::TexelFormat::kR32Float, core::Access::kWrite)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
@@ -1365,19 +1341,17 @@ TEST_F(GlslWriterTest, BuiltinTextureStore3D) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-layout(binding = 0, r32f) uniform highp writeonly image3D v;
+layout(binding = 0, r32f) uniform highp writeonly image3D f_v;
 void main() {
-  imageStore(v, ivec3(1, 2, 3), vec4(0.5f, 0.0f, 0.0f, 1.0f));
+  imageStore(f_v, ivec3(1, 2, 3), vec4(0.5f, 0.0f, 0.0f, 1.0f));
 }
 )");
 }
 
 TEST_F(GlslWriterTest, BuiltinTextureStoreArray) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::StorageTexture>(
-                    core::type::TextureDimension::k2dArray, core::TexelFormat::kRgba32Float,
-                    core::Access::kWrite,
-                    core::type::StorageTexture::SubtypeFor(core::TexelFormat::kR32Float, ty))));
+    auto* t = b.Var(
+        ty.ptr(handle, ty.storage_texture(core::type::TextureDimension::k2dArray,
+                                          core::TexelFormat::kRgba32Float, core::Access::kWrite)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
@@ -1393,9 +1367,9 @@ TEST_F(GlslWriterTest, BuiltinTextureStoreArray) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-layout(binding = 0, rgba32f) uniform highp writeonly image2DArray v;
+layout(binding = 0, rgba32f) uniform highp writeonly image2DArray f_v;
 void main() {
-  imageStore(v, ivec3(ivec2(1, 2), int(3u)), vec4(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f));
+  imageStore(f_v, ivec3(ivec2(1, 2), int(3u)), vec4(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f));
 }
 )");
 }
@@ -1464,7 +1438,7 @@ TEST_F(GlslWriterTest, BuiltinArrayLength) {
 precision highp int;
 
 layout(binding = 0, std430)
-buffer SB_1_ssbo {
+buffer f_SB_ssbo {
   uint b[];
 } v;
 void main() {
@@ -1571,15 +1545,15 @@ TEST_F(GlslWriterTest, Modf_Scalar) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 
 struct modf_result_f32 {
-  float fract;
+  float member_0;
   float whole;
 };
 
 float foo(float value) {
   modf_result_f32 v = modf_result_f32(0.0f, 0.0f);
-  v.fract = modf(value, v.whole);
+  v.member_0 = modf(value, v.whole);
   modf_result_f32 v_1 = v;
-  return (v_1.fract + v_1.whole);
+  return (v_1.member_0 + v_1.whole);
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -1603,15 +1577,15 @@ TEST_F(GlslWriterTest, Modf_Vector) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 
 struct modf_result_vec4_f32 {
-  vec4 fract;
+  vec4 member_0;
   vec4 whole;
 };
 
 vec4 foo(vec4 value) {
   modf_result_vec4_f32 v = modf_result_vec4_f32(vec4(0.0f), vec4(0.0f));
-  v.fract = modf(value, v.whole);
+  v.member_0 = modf(value, v.whole);
   modf_result_vec4_f32 v_1 = v;
-  return (v_1.fract + v_1.whole);
+  return (v_1.member_0 + v_1.whole);
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -1635,15 +1609,15 @@ TEST_F(GlslWriterTest, Frexp_Scalar) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 
 struct frexp_result_f32 {
-  float fract;
-  int exp;
+  float member_0;
+  int member_1;
 };
 
 float foo(float value) {
   frexp_result_f32 v = frexp_result_f32(0.0f, 0);
-  v.fract = frexp(value, v.exp);
+  v.member_0 = frexp(value, v.member_1);
   frexp_result_f32 v_1 = v;
-  return (v_1.fract + float(v_1.exp));
+  return (v_1.member_0 + float(v_1.member_1));
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -1667,15 +1641,15 @@ TEST_F(GlslWriterTest, Frexp_Vector) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 
 struct frexp_result_vec4_f32 {
-  vec4 fract;
-  ivec4 exp;
+  vec4 member_0;
+  ivec4 member_1;
 };
 
 vec4 foo(vec4 value) {
   frexp_result_vec4_f32 v = frexp_result_vec4_f32(vec4(0.0f), ivec4(0));
-  v.fract = frexp(value, v.exp);
+  v.member_0 = frexp(value, v.member_1);
   frexp_result_vec4_f32 v_1 = v;
-  return (v_1.fract + vec4(v_1.exp));
+  return (v_1.member_0 + vec4(v_1.member_1));
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -1747,8 +1721,7 @@ TEST_F(GlslWriterTest, BuiltinTextureGatherCompare_Depth2d) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -1770,9 +1743,9 @@ TEST_F(GlslWriterTest, BuiltinTextureGatherCompare_Depth2d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
-  vec4 x = textureGather(t_s, vec2(1.0f, 2.0f), 3.0f);
+  vec4 x = textureGather(f_t_s, vec2(1.0f, 2.0f), 3.0f);
 }
 )");
 }
@@ -1785,8 +1758,7 @@ TEST_F(GlslWriterTest, BuiltinTextureGatherCompare_Depth2dOffset) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -1809,10 +1781,10 @@ TEST_F(GlslWriterTest, BuiltinTextureGatherCompare_Depth2dOffset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureGatherOffset(t_s, v, 3.0f, ivec2(4, 5));
+  vec4 x = textureGatherOffset(f_t_s, v, 3.0f, ivec2(4, 5));
 }
 )");
 }
@@ -1825,8 +1797,7 @@ TEST_F(GlslWriterTest, BuiltinTextureGatherCompare_DepthCubeArray) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -1851,10 +1822,10 @@ TEST_F(GlslWriterTest, BuiltinTextureGatherCompare_DepthCubeArray) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArrayShadow t_s;
+uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 2.5f);
-  vec4 x = textureGather(t_s, vec4(v, float(6u)), 3.0f);
+  vec4 x = textureGather(f_t_s, vec4(v, float(6u)), 3.0f);
 }
 )");
 }
@@ -1867,8 +1838,7 @@ TEST_F(GlslWriterTest, BuiltinTextureGatherCompare_Depth2dArrayOffset) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -1892,9 +1862,9 @@ TEST_F(GlslWriterTest, BuiltinTextureGatherCompare_Depth2dArrayOffset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec4 x = textureGatherOffset(t_s, vec3(vec2(1.0f, 2.0f), float(6)), 3.0f, ivec2(4, 5));
+  vec4 x = textureGatherOffset(f_t_s, vec3(vec2(1.0f, 2.0f), float(6)), 3.0f, ivec2(4, 5));
 }
 )");
 }
@@ -1903,12 +1873,11 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_Alpha) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.i32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.i32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -1928,10 +1897,10 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_Alpha) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp isampler2D t_s;
+uniform highp isampler2D f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  ivec4 x = textureGather(t_s, v, int(3u));
+  ivec4 x = textureGather(f_t_s, v, int(3u));
 }
 )");
 }
@@ -1939,12 +1908,11 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_RedOffset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.i32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.i32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -1965,10 +1933,10 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_RedOffset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp isampler2D t_s;
+uniform highp isampler2D f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  ivec4 x = textureGatherOffset(t_s, v, ivec2(1, 3), int(0u));
+  ivec4 x = textureGatherOffset(f_t_s, v, ivec2(1, 3), int(0u));
 }
 )");
 }
@@ -1976,12 +1944,11 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_GreenArray) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.i32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.i32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2003,11 +1970,11 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_GreenArray) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp isampler2DArray t_s;
+uniform highp isampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec3 v_1 = vec3(v, float(1u));
-  ivec4 x = textureGather(t_s, v_1, int(1u));
+  ivec4 x = textureGather(f_t_s, v_1, int(1u));
 }
 )");
 }
@@ -2016,12 +1983,11 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_BlueArrayOffset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.i32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.i32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2044,11 +2010,11 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_BlueArrayOffset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp isampler2DArray t_s;
+uniform highp isampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec3 v_1 = vec3(v, float(1));
-  ivec4 x = textureGatherOffset(t_s, v_1, ivec2(1, 2), int(2u));
+  ivec4 x = textureGatherOffset(f_t_s, v_1, ivec2(1, 2), int(2u));
 }
 )");
 }
@@ -2061,8 +2027,7 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_Depth) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2082,9 +2047,9 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_Depth) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
-  vec4 x = textureGather(t_s, vec2(1.0f, 2.0f), 0.0f);
+  vec4 x = textureGather(f_t_s, vec2(1.0f, 2.0f), 0.0f);
 }
 )");
 }
@@ -2096,8 +2061,7 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_DepthOffset) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2118,9 +2082,9 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_DepthOffset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
-  vec4 x = textureGatherOffset(t_s, vec2(1.0f, 2.0f), 0.0f, ivec2(3, 4));
+  vec4 x = textureGatherOffset(f_t_s, vec2(1.0f, 2.0f), 0.0f, ivec2(3, 4));
 }
 )");
 }
@@ -2132,8 +2096,7 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_DepthArray) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2154,10 +2117,10 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_DepthArray) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureGather(t_s, vec3(v, float(4)), 0.0f);
+  vec4 x = textureGather(f_t_s, vec3(v, float(4)), 0.0f);
 }
 )");
 }
@@ -2169,8 +2132,7 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_DepthArrayOffset) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2193,10 +2155,10 @@ TEST_F(GlslWriterTest, BuiltinTextureGather_DepthArrayOffset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureGatherOffset(t_s, vec3(v, float(4u)), 0.0f, ivec2(4, 5));
+  vec4 x = textureGatherOffset(f_t_s, vec3(v, float(4u)), 0.0f, ivec2(4, 5));
 }
 )");
 }
@@ -2205,12 +2167,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_1d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k1d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k1d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2228,9 +2189,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_1d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D t_s;
+uniform highp sampler2D f_t_s;
 void main() {
-  vec4 x = texture(t_s, vec2(1.0f, 0.5f));
+  vec4 x = texture(f_t_s, vec2(1.0f, 0.5f));
 }
 )");
 }
@@ -2239,12 +2200,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2262,9 +2222,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_2d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D t_s;
+uniform highp sampler2D f_t_s;
 void main() {
-  vec4 x = texture(t_s, vec2(1.0f, 2.0f));
+  vec4 x = texture(f_t_s, vec2(1.0f, 2.0f));
 }
 )");
 }
@@ -2273,12 +2233,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2297,9 +2256,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_2d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D t_s;
+uniform highp sampler2D f_t_s;
 void main() {
-  vec4 x = textureOffset(t_s, vec2(1.0f, 2.0f), ivec2(4, 5));
+  vec4 x = textureOffset(f_t_s, vec2(1.0f, 2.0f), ivec2(4, 5));
 }
 )");
 }
@@ -2308,12 +2267,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2332,10 +2290,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_2d_Array) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray t_s;
+uniform highp sampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = texture(t_s, vec3(v, float(4u)));
+  vec4 x = texture(f_t_s, vec3(v, float(4u)));
 }
 )");
 }
@@ -2344,12 +2302,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2370,10 +2327,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_2d_Array_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray t_s;
+uniform highp sampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureOffset(t_s, vec3(v, float(4u)), ivec2(4, 5));
+  vec4 x = textureOffset(f_t_s, vec3(v, float(4u)), ivec2(4, 5));
 }
 )");
 }
@@ -2382,12 +2339,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_3d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2405,9 +2361,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_3d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler3D t_s;
+uniform highp sampler3D f_t_s;
 void main() {
-  vec4 x = texture(t_s, vec3(1.0f, 2.0f, 3.0f));
+  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f));
 }
 )");
 }
@@ -2416,12 +2372,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_3d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2440,9 +2395,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_3d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler3D t_s;
+uniform highp sampler3D f_t_s;
 void main() {
-  vec4 x = textureOffset(t_s, vec3(1.0f, 2.0f, 3.0f), ivec3(4, 5, 6));
+  vec4 x = textureOffset(f_t_s, vec3(1.0f, 2.0f, 3.0f), ivec3(4, 5, 6));
 }
 )");
 }
@@ -2451,12 +2406,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCube, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCube, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2474,9 +2428,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Cube) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp samplerCube t_s;
+uniform highp samplerCube f_t_s;
 void main() {
-  vec4 x = texture(t_s, vec3(1.0f, 2.0f, 3.0f));
+  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f));
 }
 )");
 }
@@ -2485,12 +2439,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCubeArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2512,10 +2465,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Cube_Array) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArray t_s;
+uniform highp samplerCubeArray f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = texture(t_s, vec4(v, float(4u)));
+  vec4 x = texture(f_t_s, vec4(v, float(4u)));
 }
 )");
 }
@@ -2528,8 +2481,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Depth2d) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2547,9 +2499,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Depth2d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = texture(t_s, vec3(vec2(1.0f, 2.0f), 0.0f));
+  float x = texture(f_t_s, vec3(vec2(1.0f, 2.0f), 0.0f));
 }
 )");
 }
@@ -2562,8 +2514,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Depth2d_Offset) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2582,9 +2533,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Depth2d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = textureOffset(t_s, vec3(vec2(1.0f, 2.0f), 0.0f), ivec2(4, 5));
+  float x = textureOffset(f_t_s, vec3(vec2(1.0f, 2.0f), 0.0f), ivec2(4, 5));
 }
 )");
 }
@@ -2597,8 +2548,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Depth2d_Array) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2617,10 +2567,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Depth2d_Array) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  float x = texture(t_s, vec4(v, float(4u), 0.0f));
+  float x = texture(f_t_s, vec4(v, float(4u), 0.0f));
 }
 )");
 }
@@ -2633,8 +2583,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Depth2d_Array_Offset) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2650,16 +2599,16 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Depth2d_Array_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate({}, tint::ast::PipelineStage::kFragment)) << err_ << output_.glsl;
+    ASSERT_TRUE(Generate({}, core::ir::Function::PipelineStage::kFragment)) << err_ << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec4 v_1 = vec4(v, float(4u), 0.0f);
   vec2 v_2 = dFdx(v);
-  float x = textureGradOffset(t_s, v_1, v_2, dFdy(v), ivec2(4, 5));
+  float x = textureGradOffset(f_t_s, v_1, v_2, dFdy(v), ivec2(4, 5));
 }
 )");
 }
@@ -2672,8 +2621,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_DepthCube_Array) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2695,10 +2643,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_DepthCube_Array) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArrayShadow t_s;
+uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  float x = texture(t_s, vec4(v, float(4u)), 0.0f);
+  float x = texture(f_t_s, vec4(v, float(4u)), 0.0f);
 }
 )");
 }
@@ -2707,12 +2655,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2730,10 +2677,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D t_s;
+uniform highp sampler2D f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = texture(t_s, v, clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  vec4 x = texture(f_t_s, vec2(1.0f, 2.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2742,12 +2688,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2767,10 +2712,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D t_s;
+uniform highp sampler2D f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureOffset(t_s, v, ivec2(4, 5), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  vec4 x = textureOffset(f_t_s, vec2(1.0f, 2.0f), ivec2(4, 5), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2779,12 +2723,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2804,11 +2747,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d_Array) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray t_s;
+uniform highp sampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  float v_1 = clamp(3.0f, -16.0f, 15.9899997711181640625f);
-  vec4 x = texture(t_s, vec3(v, float(4u)), v_1);
+  vec4 x = texture(f_t_s, vec3(v, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2817,12 +2759,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2843,11 +2784,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d_Array_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray t_s;
+uniform highp sampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  float v_1 = clamp(3.0f, -16.0f, 15.9899997711181640625f);
-  vec4 x = textureOffset(t_s, vec3(v, float(4u)), ivec2(4, 5), v_1);
+  vec4 x = textureOffset(f_t_s, vec3(v, float(4u)), ivec2(4, 5), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2856,12 +2796,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_3d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2879,10 +2818,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_3d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler3D t_s;
+uniform highp sampler3D f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = texture(t_s, v, clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2891,12 +2829,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_3d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2916,10 +2853,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_3d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler3D t_s;
+uniform highp sampler3D f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = textureOffset(t_s, v, ivec3(4, 5, 6), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  vec4 x = textureOffset(f_t_s, vec3(1.0f, 2.0f, 3.0f), ivec3(4, 5, 6), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2928,12 +2864,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCube, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCube, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2951,10 +2886,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_Cube) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp samplerCube t_s;
+uniform highp samplerCube f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = texture(t_s, v, clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2963,12 +2897,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCubeArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -2991,11 +2924,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_Cube_Array) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArray t_s;
+uniform highp samplerCubeArray f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  float v_1 = clamp(3.0f, -16.0f, 15.9899997711181640625f);
-  vec4 x = texture(t_s, vec4(v, float(4u)), v_1);
+  vec4 x = texture(f_t_s, vec4(v, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -3004,12 +2936,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3027,10 +2958,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_2d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D t_s;
+uniform highp sampler2D f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureLod(t_s, v, float(3.0f));
+  vec4 x = textureLod(f_t_s, vec2(1.0f, 2.0f), 3.0f);
 }
 )");
 }
@@ -3039,12 +2969,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3064,10 +2993,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_2d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D t_s;
+uniform highp sampler2D f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureLodOffset(t_s, v, float(3.0f), ivec2(4, 5));
+  vec4 x = textureLodOffset(f_t_s, vec2(1.0f, 2.0f), 3.0f, ivec2(4, 5));
 }
 )");
 }
@@ -3076,12 +3004,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3101,11 +3028,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_2d_Array) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray t_s;
+uniform highp sampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  vec3 v_1 = vec3(v, float(4u));
-  vec4 x = textureLod(t_s, v_1, float(3.0f));
+  vec4 x = textureLod(f_t_s, vec3(v, float(4u)), 3.0f);
 }
 )");
 }
@@ -3114,12 +3040,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3140,11 +3065,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_2d_Array_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray t_s;
+uniform highp sampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  vec3 v_1 = vec3(v, float(4u));
-  vec4 x = textureLodOffset(t_s, v_1, float(3.0f), ivec2(4, 5));
+  vec4 x = textureLodOffset(f_t_s, vec3(v, float(4u)), 3.0f, ivec2(4, 5));
 }
 )");
 }
@@ -3153,12 +3077,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_3d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3176,10 +3099,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_3d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler3D t_s;
+uniform highp sampler3D f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = textureLod(t_s, v, float(3.0f));
+  vec4 x = textureLod(f_t_s, vec3(1.0f, 2.0f, 3.0f), 3.0f);
 }
 )");
 }
@@ -3188,12 +3110,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_3d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3213,10 +3134,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_3d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler3D t_s;
+uniform highp sampler3D f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = textureLodOffset(t_s, v, float(3.0f), ivec3(4, 5, 6));
+  vec4 x = textureLodOffset(f_t_s, vec3(1.0f, 2.0f, 3.0f), 3.0f, ivec3(4, 5, 6));
 }
 )");
 }
@@ -3225,12 +3145,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCube, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCube, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3248,10 +3167,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Cube) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp samplerCube t_s;
+uniform highp samplerCube f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = textureLod(t_s, v, float(3.0f));
+  vec4 x = textureLod(f_t_s, vec3(1.0f, 2.0f, 3.0f), 3.0f);
 }
 )");
 }
@@ -3260,12 +3178,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCubeArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3288,11 +3205,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Cube_Array) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArray t_s;
+uniform highp samplerCubeArray f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 v_1 = vec4(v, float(4u));
-  vec4 x = textureLod(t_s, v_1, float(3.0f));
+  vec4 x = textureLod(f_t_s, vec4(v, float(4u)), 3.0f);
 }
 )");
 }
@@ -3305,8 +3221,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Depth2d) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3324,10 +3239,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Depth2d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
   vec3 v = vec3(vec2(1.0f, 2.0f), 0.0f);
-  float x = textureLod(t_s, v, float(3));
+  float x = textureLod(f_t_s, v, float(3));
 }
 )");
 }
@@ -3340,8 +3255,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Offset) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3360,10 +3274,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
   vec3 v = vec3(vec2(1.0f, 2.0f), 0.0f);
-  float x = textureLodOffset(t_s, v, float(3), ivec2(4, 5));
+  float x = textureLodOffset(f_t_s, v, float(3), ivec2(4, 5));
 }
 )");
 }
@@ -3376,8 +3290,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Array) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3400,11 +3313,11 @@ precision highp float;
 precision highp int;
 #extension GL_EXT_texture_shadow_lod: require
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec4 v_1 = vec4(v, float(4u), 0.0f);
-  float x = textureLod(t_s, v_1, float(3u));
+  float x = textureLod(f_t_s, v_1, float(3u));
 }
 )");
 }
@@ -3417,8 +3330,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Array_Offset) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3440,11 +3352,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Array_Offset) {
 precision highp int;
 #extension GL_EXT_texture_shadow_lod: require
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec4 v_1 = vec4(v, float(4u), 0.0f);
-  float x = textureLodOffset(t_s, v_1, float(3), ivec2(4, 5));
+  float x = textureLodOffset(f_t_s, v_1, float(3), ivec2(4, 5));
 }
 )");
 }
@@ -3457,8 +3369,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleLevel_DepthCube_Array) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3481,11 +3392,11 @@ precision highp float;
 precision highp int;
 #extension GL_EXT_texture_shadow_lod: require
 
-uniform highp samplerCubeArrayShadow t_s;
+uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
   vec4 v_1 = vec4(v, float(4u));
-  float x = textureLod(t_s, v_1, 0.0f, float(3u));
+  float x = textureLod(f_t_s, v_1, 0.0f, float(3u));
 }
 )");
 }
@@ -3494,12 +3405,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3519,11 +3429,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_2d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D t_s;
+uniform highp sampler2D f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec2 v_1 = vec2(3.0f, 4.0f);
-  vec4 x = textureGrad(t_s, v, v_1, vec2(5.0f, 6.0f));
+  vec4 x = textureGrad(f_t_s, v, v_1, vec2(5.0f, 6.0f));
 }
 )");
 }
@@ -3532,12 +3442,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3559,11 +3468,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_2d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2D t_s;
+uniform highp sampler2D f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec2 v_1 = vec2(3.0f, 4.0f);
-  vec4 x = textureGradOffset(t_s, v, v_1, vec2(5.0f, 6.0f), ivec2(4, 5));
+  vec4 x = textureGradOffset(f_t_s, v, v_1, vec2(5.0f, 6.0f), ivec2(4, 5));
 }
 )");
 }
@@ -3572,12 +3481,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3599,12 +3507,12 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_2d_Array) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray t_s;
+uniform highp sampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec2 v_1 = vec2(3.0f, 4.0f);
   vec2 v_2 = vec2(5.0f, 6.0f);
-  vec4 x = textureGrad(t_s, vec3(v, float(4u)), v_1, v_2);
+  vec4 x = textureGrad(f_t_s, vec3(v, float(4u)), v_1, v_2);
 }
 )");
 }
@@ -3613,12 +3521,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3641,12 +3548,12 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_2d_Array_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArray t_s;
+uniform highp sampler2DArray f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec2 v_1 = vec2(3.0f, 4.0f);
   vec2 v_2 = vec2(5.0f, 6.0f);
-  vec4 x = textureGradOffset(t_s, vec3(v, float(4u)), v_1, v_2, ivec2(4, 5));
+  vec4 x = textureGradOffset(f_t_s, vec3(v, float(4u)), v_1, v_2, ivec2(4, 5));
 }
 )");
 }
@@ -3655,12 +3562,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_3d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3680,11 +3586,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_3d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler3D t_s;
+uniform highp sampler3D f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
   vec3 v_1 = vec3(3.0f, 4.0f, 5.0f);
-  vec4 x = textureGrad(t_s, v, v_1, vec3(6.0f, 7.0f, 8.0f));
+  vec4 x = textureGrad(f_t_s, v, v_1, vec3(6.0f, 7.0f, 8.0f));
 }
 )");
 }
@@ -3693,12 +3599,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_3d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3720,11 +3625,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_3d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler3D t_s;
+uniform highp sampler3D f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
   vec3 v_1 = vec3(3.0f, 4.0f, 5.0f);
-  vec4 x = textureGradOffset(t_s, v, v_1, vec3(6.0f, 7.0f, 8.0f), ivec3(4, 5, 6));
+  vec4 x = textureGradOffset(f_t_s, v, v_1, vec3(6.0f, 7.0f, 8.0f), ivec3(4, 5, 6));
 }
 )");
 }
@@ -3733,12 +3638,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCube, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCube, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3758,11 +3662,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_Cube) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp samplerCube t_s;
+uniform highp samplerCube f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
   vec3 v_1 = vec3(3.0f, 4.0f, 5.0f);
-  vec4 x = textureGrad(t_s, v, v_1, vec3(6.0f, 7.0f, 8.0f));
+  vec4 x = textureGrad(f_t_s, v, v_1, vec3(6.0f, 7.0f, 8.0f));
 }
 )");
 }
@@ -3771,12 +3675,11 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCubeArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3801,12 +3704,12 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleGrad_Cube_Array) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArray t_s;
+uniform highp samplerCubeArray f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
   vec3 v_1 = vec3(3.0f, 4.0f, 5.0f);
   vec3 v_2 = vec3(6.0f, 7.0f, 8.0f);
-  vec4 x = textureGrad(t_s, vec4(v, float(4u)), v_1, v_2);
+  vec4 x = textureGrad(f_t_s, vec4(v, float(4u)), v_1, v_2);
 }
 )");
 }
@@ -3819,8 +3722,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_2d) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3838,9 +3740,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_2d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = texture(t_s, vec3(vec2(1.0f, 2.0f), 3.0f));
+  float x = texture(f_t_s, vec3(vec2(1.0f, 2.0f), 3.0f));
 }
 )");
 }
@@ -3853,8 +3755,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_2d_Offset) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3873,9 +3774,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_2d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = textureOffset(t_s, vec3(vec2(1.0f, 2.0f), 3.0f), ivec2(4, 5));
+  float x = textureOffset(f_t_s, vec3(vec2(1.0f, 2.0f), 3.0f), ivec2(4, 5));
 }
 )");
 }
@@ -3888,8 +3789,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_2d_Array) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3909,10 +3809,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_2d_Array) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  float x = texture(t_s, vec4(v, float(4u), 3.0f));
+  float x = texture(f_t_s, vec4(v, float(4u), 3.0f));
 }
 )");
 }
@@ -3925,8 +3825,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_2d_Array_Offset) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3943,16 +3842,16 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_2d_Array_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate({}, ast::PipelineStage::kFragment)) << err_ << output_.glsl;
+    ASSERT_TRUE(Generate({}, core::ir::Function::PipelineStage::kFragment)) << err_ << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
   vec4 v_1 = vec4(v, float(4u), 3.0f);
   vec2 v_2 = dFdx(v);
-  float x = textureGradOffset(t_s, v_1, v_2, dFdy(v), ivec2(4, 5));
+  float x = textureGradOffset(f_t_s, v_1, v_2, dFdy(v), ivec2(4, 5));
 }
 )");
 }
@@ -3965,8 +3864,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_Cube) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCube)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -3984,9 +3882,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_Cube) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp samplerCubeShadow t_s;
+uniform highp samplerCubeShadow f_t_s;
 void main() {
-  float x = texture(t_s, vec4(vec3(1.0f, 2.0f, 3.0f), 3.0f));
+  float x = texture(f_t_s, vec4(vec3(1.0f, 2.0f, 3.0f), 3.0f));
 }
 )");
 }
@@ -3999,8 +3897,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_Cube_Array) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -4023,10 +3920,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_Cube_Array) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArrayShadow t_s;
+uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  float x = texture(t_s, vec4(v, float(4u)), 3.0f);
+  float x = texture(f_t_s, vec4(v, float(4u)), 3.0f);
 }
 )");
 }
@@ -4039,8 +3936,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_2d) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -4058,9 +3954,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_2d) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = texture(t_s, vec3(vec2(1.0f, 2.0f), 3.0f));
+  float x = texture(f_t_s, vec3(vec2(1.0f, 2.0f), 3.0f));
 }
 )");
 }
@@ -4073,8 +3969,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Offset) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -4094,9 +3989,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Offset) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DShadow t_s;
+uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = textureOffset(t_s, vec3(vec2(1.0f, 2.0f), 3.0f), ivec2(4, 5));
+  float x = textureOffset(f_t_s, vec3(vec2(1.0f, 2.0f), 3.0f), ivec2(4, 5));
 }
 )");
 }
@@ -4109,8 +4004,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -4130,10 +4024,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  float x = texture(t_s, vec4(v, float(4u), 3.0f));
+  float x = texture(f_t_s, vec4(v, float(4u), 3.0f));
 }
 )");
 }
@@ -4146,8 +4040,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array_Offset) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -4171,10 +4064,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array_Offset) {
 precision highp float;
 precision highp int;
 
-uniform highp sampler2DArrayShadow t_s;
+uniform highp sampler2DArrayShadow f_t_s;
 void main() {
   vec2 v = vec2(1.0f, 2.0f);
-  float x = textureOffset(t_s, vec4(v, float(4u), 3.0f), ivec2(4, 5));
+  float x = textureGradOffset(f_t_s, vec4(v, float(4u), 3.0f), vec2(0.0f), vec2(0.0f), ivec2(4, 5));
 }
 )");
 }
@@ -4187,8 +4080,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_Cube) {
             ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCube)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -4206,9 +4098,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_Cube) {
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
-uniform highp samplerCubeShadow t_s;
+uniform highp samplerCubeShadow f_t_s;
 void main() {
-  float x = texture(t_s, vec4(vec3(1.0f, 2.0f, 3.0f), 3.0f));
+  float x = texture(f_t_s, vec4(vec3(1.0f, 2.0f, 3.0f), 3.0f));
 }
 )");
 }
@@ -4221,8 +4113,7 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_Cube_Array) {
             handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
@@ -4245,10 +4136,10 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompareLevel_Cube_Array) {
 precision highp float;
 precision highp int;
 
-uniform highp samplerCubeArrayShadow t_s;
+uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
   vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  float x = texture(t_s, vec4(v, float(4u)), 3.0f);
+  float x = texture(f_t_s, vec4(v, float(4u)), 3.0f);
 }
 )");
 }

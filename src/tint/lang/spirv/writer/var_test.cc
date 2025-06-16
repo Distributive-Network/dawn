@@ -304,7 +304,6 @@ TEST_F(SpirvWriterTest, StorageVar_WithVulkan) {
 
 TEST_F(SpirvWriterTest, StorageVar_Workgroup_WithVulkan) {
     auto* v = b.Var("v", ty.ptr<workgroup, i32, read_write>());
-    v->SetBindingPoint(0, 0);
     mod.root_block->Append(v);
 
     auto* func = b.ComputeFunction("foo");
@@ -334,8 +333,8 @@ TEST_F(SpirvWriterTest, StorageVar_Workgroup_WithVulkan) {
                OpName %foo_local_invocation_index_Input "foo_local_invocation_index_Input"  ; id %4
                OpName %foo_inner "foo_inner"                                                ; id %7
                OpName %tint_local_index "tint_local_index"                                  ; id %9
-               OpName %load "load"                                                          ; id %21
-               OpName %add "add"                                                            ; id %22
+               OpName %load "load"                                                          ; id %20
+               OpName %add "add"                                                            ; id %21
                OpName %foo "foo"                                                            ; id %24
 
                ; Annotations
@@ -350,19 +349,19 @@ TEST_F(SpirvWriterTest, StorageVar_Workgroup_WithVulkan) {
 %foo_local_invocation_index_Input = OpVariable %_ptr_Input_uint Input   ; BuiltIn LocalInvocationIndex
        %void = OpTypeVoid
          %10 = OpTypeFunction %void %uint
-     %uint_0 = OpConstant %uint 0
+     %uint_1 = OpConstant %uint 1
        %bool = OpTypeBool
-      %int_0 = OpConstant %int 0
      %uint_2 = OpConstant %uint 2
  %uint_24840 = OpConstant %uint 24840
       %int_1 = OpConstant %int 1
+      %int_0 = OpConstant %int 0
          %25 = OpTypeFunction %void
 
                ; Function foo_inner
   %foo_inner = OpFunction %void None %10
 %tint_local_index = OpFunctionParameter %uint
          %11 = OpLabel
-         %12 = OpIEqual %bool %tint_local_index %uint_0
+         %12 = OpULessThan %bool %tint_local_index %uint_1
                OpSelectionMerge %15 None
                OpBranchConditional %12 %16 %15
          %16 = OpLabel
@@ -446,8 +445,8 @@ TEST_F(SpirvWriterTest, UniformVar_Load) {
 )");
 }
 
-TEST_F(SpirvWriterTest, PushConstantVar) {
-    auto* v = b.Var("v", ty.ptr<push_constant, i32>());
+TEST_F(SpirvWriterTest, ImmediateVar) {
+    auto* v = b.Var("v", ty.ptr<immediate, i32>());
     mod.root_block->Append(v);
 
     ASSERT_TRUE(Generate()) << Error() << output_;
@@ -461,8 +460,8 @@ TEST_F(SpirvWriterTest, PushConstantVar) {
 )");
 }
 
-TEST_F(SpirvWriterTest, PushConstantVar_Load) {
-    auto* v = b.Var("v", ty.ptr<push_constant, i32>());
+TEST_F(SpirvWriterTest, ImmedaiteVar_Load) {
+    auto* v = b.Var("v", ty.ptr<immediate, i32>());
     mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.i32());
@@ -514,10 +513,9 @@ TEST_F(SpirvWriterTest, SamplerVar_Load) {
 }
 
 TEST_F(SpirvWriterTest, TextureVar) {
-    auto* v = b.Var(
-        "v", ty.ptr(core::AddressSpace::kHandle,
-                    ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2d, ty.f32()),
-                    core::Access::kRead));
+    auto* v = b.Var("v", ty.ptr(core::AddressSpace::kHandle,
+                                ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()),
+                                core::Access::kRead));
     v->SetBindingPoint(0, 0);
     mod.root_block->Append(v);
 
@@ -534,10 +532,9 @@ TEST_F(SpirvWriterTest, TextureVar) {
 }
 
 TEST_F(SpirvWriterTest, TextureVar_Load) {
-    auto* v = b.Var(
-        "v", ty.ptr(core::AddressSpace::kHandle,
-                    ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2d, ty.f32()),
-                    core::Access::kRead));
+    auto* v = b.Var("v", ty.ptr(core::AddressSpace::kHandle,
+                                ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()),
+                                core::Access::kRead));
     v->SetBindingPoint(0, 0);
     mod.root_block->Append(v);
 
@@ -552,12 +549,75 @@ TEST_F(SpirvWriterTest, TextureVar_Load) {
     EXPECT_INST("%load = OpLoad %3 %v");
 }
 
+TEST_F(SpirvWriterTest, TextureVar_TextureParamTextureLoad_NoDva) {
+    auto* tex =
+        b.Var("tex", handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()),
+              core::Access::kRead);
+    tex->SetBindingPoint(0, 0);
+    mod.root_block->Append(tex);
+
+    auto* t = b.FunctionParam("texparam",
+                              ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()));
+
+    auto* fn = b.Function("f", ty.void_());
+    fn->SetParams({t});
+    b.Append(fn->Block(), [&] {
+        b.Let("p", b.Call(ty.vec4<f32>(), core::BuiltinFn::kTextureLoad, t,
+                          b.Splat(ty.vec2<u32>(), 0_u), 0_u));
+        b.Return(fn);
+    });
+
+    auto* fn2 = b.Function("g", ty.void_());
+    b.Append(fn2->Block(), [&] {
+        auto* t2 = b.Load(tex);
+        b.Call(ty.void_(), fn, t2);
+        b.Return(fn2);
+    });
+
+    Options opts{};
+    opts.dva_transform_handle = false;
+
+    ASSERT_TRUE(Generate(opts)) << Error() << output_;
+    EXPECT_INST("OpFunctionParameter");
+}
+
+TEST_F(SpirvWriterTest, TextureVar_TextureParamTextureLoad_Dva) {
+    auto* tex =
+        b.Var("tex", handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()),
+              core::Access::kRead);
+    tex->SetBindingPoint(0, 0);
+    mod.root_block->Append(tex);
+
+    auto* t = b.FunctionParam("texparam",
+                              ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()));
+
+    auto* fn = b.Function("f", ty.void_());
+    fn->SetParams({t});
+    b.Append(fn->Block(), [&] {
+        b.Let("p", b.Call(ty.vec4<f32>(), core::BuiltinFn::kTextureLoad, t,
+                          b.Splat(ty.vec2<u32>(), 0_u), 0_u));
+        b.Return(fn);
+    });
+
+    auto* fn2 = b.Function("g", ty.void_());
+    b.Append(fn2->Block(), [&] {
+        auto* t2 = b.Load(tex);
+        b.Call(ty.void_(), fn, t2);
+        b.Return(fn2);
+    });
+
+    Options opts{};
+    opts.dva_transform_handle = true;
+
+    ASSERT_TRUE(Generate(opts)) << Error() << output_;
+    // Consider a EXPECT_NOT_INST macro.
+    ASSERT_TRUE(output_.find("OpFunctionParameter") == std::string::npos) << output_;
+}
+
 TEST_F(SpirvWriterTest, ReadOnlyStorageTextureVar) {
     auto format = core::TexelFormat::kRgba8Unorm;
     auto* v = b.Var("v", ty.ptr(core::AddressSpace::kHandle,
-                                ty.Get<core::type::StorageTexture>(
-                                    core::type::TextureDimension::k2d, format, read,
-                                    core::type::StorageTexture::SubtypeFor(format, ty)),
+                                ty.storage_texture(core::type::TextureDimension::k2d, format, read),
                                 core::Access::kRead));
     v->SetBindingPoint(0, 0);
     mod.root_block->Append(v);
@@ -577,11 +637,10 @@ TEST_F(SpirvWriterTest, ReadOnlyStorageTextureVar) {
 
 TEST_F(SpirvWriterTest, ReadWriteStorageTextureVar) {
     auto format = core::TexelFormat::kRgba8Unorm;
-    auto* v = b.Var("v", ty.ptr(core::AddressSpace::kHandle,
-                                ty.Get<core::type::StorageTexture>(
-                                    core::type::TextureDimension::k2d, format, read_write,
-                                    core::type::StorageTexture::SubtypeFor(format, ty)),
-                                core::Access::kRead));
+    auto* v =
+        b.Var("v", ty.ptr(core::AddressSpace::kHandle,
+                          ty.storage_texture(core::type::TextureDimension::k2d, format, read_write),
+                          core::Access::kRead));
     v->SetBindingPoint(0, 0);
     mod.root_block->Append(v);
 
@@ -600,11 +659,10 @@ TEST_F(SpirvWriterTest, ReadWriteStorageTextureVar) {
 
 TEST_F(SpirvWriterTest, WriteOnlyStorageTextureVar) {
     auto format = core::TexelFormat::kRgba8Unorm;
-    auto* v = b.Var("v", ty.ptr(core::AddressSpace::kHandle,
-                                ty.Get<core::type::StorageTexture>(
-                                    core::type::TextureDimension::k2d, format, write,
-                                    core::type::StorageTexture::SubtypeFor(format, ty)),
-                                core::Access::kRead));
+    auto* v =
+        b.Var("v", ty.ptr(core::AddressSpace::kHandle,
+                          ty.storage_texture(core::type::TextureDimension::k2d, format, write),
+                          core::Access::kRead));
     v->SetBindingPoint(0, 0);
     mod.root_block->Append(v);
 

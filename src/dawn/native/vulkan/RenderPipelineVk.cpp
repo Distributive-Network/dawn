@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "dawn/native/CreatePipelineAsyncEvent.h"
+#include "dawn/native/ImmediateConstantsLayout.h"
 #include "dawn/native/vulkan/DeviceVk.h"
 #include "dawn/native/vulkan/FencedDeleter.h"
 #include "dawn/native/vulkan/PipelineCacheVk.h"
@@ -54,7 +55,6 @@ VkVertexInputRate VulkanInputRate(wgpu::VertexStepMode stepMode) {
             return VK_VERTEX_INPUT_RATE_VERTEX;
         case wgpu::VertexStepMode::Instance:
             return VK_VERTEX_INPUT_RATE_INSTANCE;
-        case wgpu::VertexStepMode::VertexBufferNotUsed:
         case wgpu::VertexStepMode::Undefined:
             break;
     }
@@ -353,25 +353,37 @@ MaybeError RenderPipeline::InitializeImpl() {
     Device* device = ToBackend(GetDevice());
     PipelineLayout* layout = ToBackend(GetLayout());
 
-    // Vulkan devices need cache UUID field to be serialized into pipeline cache keys.
-    StreamIn(&mCacheKey, device->GetDeviceInfo().properties.pipelineCacheUUID);
+    // The cache key is only used for storing VkPipelineCache objects in BlobStore. That's not
+    // done with the monolithic pipeline cache so it's unnecessary work and memory usage.
+    bool buildCacheKey =
+        !device->GetTogglesState().IsEnabled(Toggle::VulkanMonolithicPipelineCache);
+    if (buildCacheKey) {
+        // Vulkan devices need cache UUID field to be serialized into pipeline cache keys.
+        StreamIn(&mCacheKey, device->GetDeviceInfo().properties.pipelineCacheUUID);
+    }
+
+    // Gather list of internal immediate constants used by this pipeline
+    if (UsesFragDepth() && !HasUnclippedDepth()) {
+        mImmediateMask |= GetImmediateConstantBlockBits(
+            offsetof(RenderImmediateConstants, clampFragDepth), sizeof(ClampFragDepthArgs));
+    }
 
     // There are at most 2 shader stages in render pipeline, i.e. vertex and fragment
     std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages;
-    std::array<std::string, 2> shaderStageEntryPoints;
     uint32_t stageCount = 0;
 
     auto AddShaderStage = [&](SingleShaderStage stage, VkShaderStageFlagBits vkStage,
-                              bool clampFragDepth, bool emitPointSize) -> MaybeError {
+                              bool emitPointSize) -> MaybeError {
         const ProgrammableStage& programmableStage = GetStage(stage);
         ShaderModule::ModuleAndSpirv moduleAndSpirv;
         DAWN_TRY_ASSIGN(moduleAndSpirv, ToBackend(programmableStage.module)
                                             ->GetHandleAndSpirv(stage, programmableStage, layout,
-                                                                clampFragDepth, emitPointSize,
-                                                                /* fullSubgroups */ {}));
+                                                                emitPointSize, GetImmediateMask()));
         mHasInputAttachment = mHasInputAttachment || moduleAndSpirv.hasInputAttachment;
-        // Record cache key for each shader since it will become inaccessible later on.
-        StreamIn(&mCacheKey, stream::Iterable(moduleAndSpirv.spirv, moduleAndSpirv.wordCount));
+        if (buildCacheKey) {
+            // Record cache key for each shader since it will become inaccessible later on.
+            StreamIn(&mCacheKey, moduleAndSpirv.spirv);
+        }
 
         VkPipelineShaderStageCreateInfo* shaderStage = &shaderStages[stageCount];
         shaderStage->module = moduleAndSpirv.module;
@@ -380,8 +392,8 @@ MaybeError RenderPipeline::InitializeImpl() {
         shaderStage->flags = 0;
         shaderStage->pSpecializationInfo = nullptr;
         shaderStage->stage = vkStage;
-        shaderStageEntryPoints[stageCount] = moduleAndSpirv.remappedEntryPoint;
-        shaderStage->pName = shaderStageEntryPoints[stageCount].c_str();
+        // string_view returned by GetIsolatedEntryPointName() points to a null-terminated string.
+        shaderStage->pName = device->GetIsolatedEntryPointName().data();
 
         stageCount++;
         return {};
@@ -389,14 +401,12 @@ MaybeError RenderPipeline::InitializeImpl() {
 
     // Add the vertex stage that's always present.
     DAWN_TRY(AddShaderStage(SingleShaderStage::Vertex, VK_SHADER_STAGE_VERTEX_BIT,
-                            /*clampFragDepth*/ false,
                             GetPrimitiveTopology() == wgpu::PrimitiveTopology::PointList));
 
     // Add the fragment stage if present.
     if (GetStageMask() & wgpu::ShaderStage::Fragment) {
-        bool clampFragDepth = UsesFragDepth() && !HasUnclippedDepth();
         DAWN_TRY(AddShaderStage(SingleShaderStage::Fragment, VK_SHADER_STAGE_FRAGMENT_BIT,
-                                clampFragDepth, /*emitPointSize*/ false));
+                                /*emitPointSize*/ false));
     }
 
     PipelineVertexInputStateCreateInfoTemporaryAllocations tempAllocations;
@@ -408,7 +418,8 @@ MaybeError RenderPipeline::InitializeImpl() {
     inputAssembly.pNext = nullptr;
     inputAssembly.flags = 0;
     inputAssembly.topology = VulkanPrimitiveTopology(GetPrimitiveTopology());
-    inputAssembly.primitiveRestartEnable = ShouldEnablePrimitiveRestart(GetPrimitiveTopology());
+    inputAssembly.primitiveRestartEnable =
+        ShouldEnablePrimitiveRestart(GetPrimitiveTopology()) ? VK_TRUE : VK_FALSE;
 
     // A placeholder viewport/scissor info. The validation layers force use to provide at least
     // one scissor and one viewport here, even if we choose to make them dynamic.
@@ -437,12 +448,12 @@ MaybeError RenderPipeline::InitializeImpl() {
     rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterization.pNext = nullptr;
     rasterization.flags = 0;
-    rasterization.depthClampEnable = HasUnclippedDepth();
+    rasterization.depthClampEnable = HasUnclippedDepth() ? VK_TRUE : VK_FALSE;
     rasterization.rasterizerDiscardEnable = VK_FALSE;
     rasterization.polygonMode = VK_POLYGON_MODE_FILL;
     rasterization.cullMode = VulkanCullMode(GetCullMode());
     rasterization.frontFace = VulkanFrontFace(GetFrontFace());
-    rasterization.depthBiasEnable = IsDepthBiasEnabled();
+    rasterization.depthBiasEnable = IsDepthBiasEnabled() ? VK_TRUE : VK_FALSE;
     rasterization.depthBiasConstantFactor = GetDepthBias();
     rasterization.depthBiasClamp = GetDepthBiasClamp();
     rasterization.depthBiasSlopeFactor = GetDepthBiasSlopeScale();
@@ -461,7 +472,7 @@ MaybeError RenderPipeline::InitializeImpl() {
     DAWN_ASSERT(multisample.rasterizationSamples <= 32);
     VkSampleMask sampleMask = GetSampleMask();
     multisample.pSampleMask = &sampleMask;
-    multisample.alphaToCoverageEnable = IsAlphaToCoverageEnabled();
+    multisample.alphaToCoverageEnable = IsAlphaToCoverageEnabled() ? VK_TRUE : VK_FALSE;
     multisample.alphaToOneEnable = VK_FALSE;
 
     VkPipelineDepthStencilStateCreateInfo depthStencilState = ComputeDepthStencilDesc();
@@ -488,7 +499,7 @@ MaybeError RenderPipeline::InitializeImpl() {
             GetStage(SingleShaderStage::Fragment).metadata->fragmentOutputMask;
         auto highestColorAttachmentIndexPlusOne =
             GetHighestBitIndexPlusOne(GetColorAttachmentsMask());
-        for (auto i : IterateBitSet(GetColorAttachmentsMask())) {
+        for (auto i : GetColorAttachmentsMask()) {
             const ColorTargetState* target = GetColorTargetState(i);
             colorBlendAttachments[i] = ComputeColorDesc(target, fragmentOutputMask[i]);
         }
@@ -535,7 +546,7 @@ MaybeError RenderPipeline::InitializeImpl() {
         ColorAttachmentMask expandResolveMask =
             GetAttachmentState()->GetExpandResolveInfo().attachmentsToExpandResolve;
 
-        for (auto i : IterateBitSet(GetColorAttachmentsMask())) {
+        for (auto i : GetColorAttachmentsMask()) {
             wgpu::LoadOp colorLoadOp = wgpu::LoadOp::Load;
             bool hasResolveTarget = resolveMask.test(i);
 
@@ -555,12 +566,12 @@ MaybeError RenderPipeline::InitializeImpl() {
 
         query.SetSampleCount(GetSampleCount());
 
-        StreamIn(&mCacheKey, query);
+        if (buildCacheKey) {
+            StreamIn(&mCacheKey, query);
+        }
         DAWN_TRY_ASSIGN(renderPassInfo, device->GetRenderPassCache()->GetRenderPass(query));
     }
-
-    // TODO(crbug.com/366291600): Add internal immediate data size when needed.
-    DAWN_TRY(InitializeBase(layout, kClampFragDepthArgsSize));
+    DAWN_TRY(PipelineVk::InitializeBase(layout, mImmediateMask));
 
     // The create info chains in a bunch of things created on the stack here or inside state
     // objects.
@@ -593,30 +604,28 @@ MaybeError RenderPipeline::InitializeImpl() {
     //   That also means mHasInputAttachment would be removed in future.
     createInfo.subpass = mHasInputAttachment ? 0 : renderPassInfo.mainSubpass;
 
-    // Record cache key information now since createInfo is not stored.
-    StreamIn(&mCacheKey, createInfo, layout->GetCacheKey());
+    if (buildCacheKey) {
+        // Record cache key information now since createInfo is not stored.
+        StreamIn(&mCacheKey, createInfo, layout->GetCacheKey());
+    }
 
     // Try to see if we have anything in the blob cache.
     platform::metrics::DawnHistogramTimer cacheTimer(GetDevice()->GetPlatform());
     Ref<PipelineCache> cache = ToBackend(GetDevice()->GetOrCreatePipelineCache(GetCacheKey()));
-    if (cache->CacheHit()) {
-        DAWN_TRY(CheckVkSuccess(
-            device->fn.CreateGraphicsPipelines(device->GetVkDevice(), cache->GetHandle(), 1,
-                                               &createInfo, nullptr, &*mHandle),
-            "CreateGraphicsPipelines"));
-        cacheTimer.RecordMicroseconds("Vulkan.CreateGraphicsPipelines.CacheHit");
-    } else {
-        cacheTimer.Reset();
-        DAWN_TRY(CheckVkSuccess(
-            device->fn.CreateGraphicsPipelines(device->GetVkDevice(), cache->GetHandle(), 1,
-                                               &createInfo, nullptr, &*mHandle),
-            "CreateGraphicsPipelines"));
-        cacheTimer.RecordMicroseconds("Vulkan.CreateGraphicsPipelines.CacheMiss");
-    }
+    DAWN_TRY(
+        CheckVkSuccess(device->fn.CreateGraphicsPipelines(device->GetVkDevice(), cache->GetHandle(),
+                                                          1, &createInfo, nullptr, &*mHandle),
+                       "CreateGraphicsPipelines"));
+    cacheTimer.RecordMicroseconds(cache->CacheHit() ? "Vulkan.CreateGraphicsPipelines.CacheHit"
+                                                    : "Vulkan.CreateGraphicsPipelines.CacheMiss");
 
     DAWN_TRY(cache->DidCompilePipeline());
 
     SetLabelImpl();
+
+    for (uint32_t i = 0; i < stageCount; ++i) {
+        device->fn.DestroyShaderModule(device->GetVkDevice(), shaderStages[i].module, nullptr);
+    }
 
     return {};
 }
@@ -629,7 +638,7 @@ VkPipelineVertexInputStateCreateInfo RenderPipeline::ComputeVertexInputDesc(
     PipelineVertexInputStateCreateInfoTemporaryAllocations* tempAllocations) {
     // Fill in the "binding info" that will be chained in the create info
     uint32_t bindingCount = 0;
-    for (VertexBufferSlot slot : IterateBitSet(GetVertexBuffersUsed())) {
+    for (VertexBufferSlot slot : GetVertexBuffersUsed()) {
         const VertexBufferInfo& bindingInfo = GetVertexBuffer(slot);
 
         VkVertexInputBindingDescription* bindingDesc = &tempAllocations->bindings[bindingCount];
@@ -642,7 +651,7 @@ VkPipelineVertexInputStateCreateInfo RenderPipeline::ComputeVertexInputDesc(
 
     // Fill in the "attribute info" that will be chained in the create info
     uint32_t attributeCount = 0;
-    for (VertexAttributeLocation loc : IterateBitSet(GetAttributeLocationsUsed())) {
+    for (VertexAttributeLocation loc : GetAttributeLocationsUsed()) {
         const VertexAttributeInfo& attributeInfo = GetAttribute(loc);
 
         VkVertexInputAttributeDescription* attributeDesc =
@@ -684,7 +693,7 @@ VkPipelineDepthStencilStateCreateInfo RenderPipeline::ComputeDepthStencilDesc() 
     depthStencilState.depthWriteEnable =
         descriptor->depthWriteEnabled == wgpu::OptionalBool::True ? VK_TRUE : VK_FALSE;
     depthStencilState.depthCompareOp = ToVulkanCompareOp(descriptor->depthCompare);
-    depthStencilState.depthBoundsTestEnable = false;
+    depthStencilState.depthBoundsTestEnable = VK_FALSE;
     depthStencilState.minDepthBounds = 0.0f;
     depthStencilState.maxDepthBounds = 1.0f;
 

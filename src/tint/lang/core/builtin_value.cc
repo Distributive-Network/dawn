@@ -42,9 +42,6 @@ namespace tint::core {
 /// @param str the string to parse
 /// @returns the parsed enum, or BuiltinValue::kUndefined if the string could not be parsed.
 BuiltinValue ParseBuiltinValue(std::string_view str) {
-    if (str == "__point_size") {
-        return BuiltinValue::kPointSize;
-    }
     if (str == "clip_distances") {
         return BuiltinValue::kClipDistances;
     }
@@ -78,6 +75,9 @@ BuiltinValue ParseBuiltinValue(std::string_view str) {
     if (str == "sample_mask") {
         return BuiltinValue::kSampleMask;
     }
+    if (str == "subgroup_id") {
+        return BuiltinValue::kSubgroupId;
+    }
     if (str == "subgroup_invocation_id") {
         return BuiltinValue::kSubgroupInvocationId;
     }
@@ -97,6 +97,8 @@ std::string_view ToString(BuiltinValue value) {
     switch (value) {
         case BuiltinValue::kUndefined:
             return "undefined";
+        case BuiltinValue::kCullDistance:
+            return "__cull_distance";
         case BuiltinValue::kPointSize:
             return "__point_size";
         case BuiltinValue::kClipDistances:
@@ -121,6 +123,8 @@ std::string_view ToString(BuiltinValue value) {
             return "sample_index";
         case BuiltinValue::kSampleMask:
             return "sample_mask";
+        case BuiltinValue::kSubgroupId:
+            return "subgroup_id";
         case BuiltinValue::kSubgroupInvocationId:
             return "subgroup_invocation_id";
         case BuiltinValue::kSubgroupSize:

@@ -40,7 +40,7 @@
 #include <cstdint>
 #include <string>
 
-#include "src/tint/utils/traits/traits.h"
+#include "src/tint/utils/rtti/traits.h"
 
 namespace tint::core {
 
@@ -53,31 +53,40 @@ enum class ParameterUsage : uint8_t {
     kBits,
     kCompareValue,
     kComponent,
+    kConstOffset,
     kCoords,
+    kCount,
     kDdx,
     kDdy,
     kDelta,
     kDepth,
     kDepthRef,
+    kDref,
     kE,
     kElements,
     kExp,
     kHeight,
+    kI,
     kId,
+    kImage,
+    kImageOperands,
     kInputAttachment,
     kInsert,
     kLevel,
     kLocation,
+    kLod,
     kMask,
     kNumLevels,
     kOffset,
     kOriginalValue,
     kRefz,
     kResult,
+    kSample,
     kSampleIndex,
     kSampler,
     kSamples,
     kSourceLaneIndex,
+    kTexel,
     kTexture,
     kValue,
     kW,
@@ -100,7 +109,8 @@ std::string_view ToString(ParameterUsage value);
 /// @param out the stream to write to
 /// @param value the ParameterUsage
 /// @returns @p out so calls can be chained
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, ParameterUsage value) {
     return out << ToString(value);
 }

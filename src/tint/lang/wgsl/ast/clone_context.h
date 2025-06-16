@@ -40,12 +40,12 @@
 #include "src/tint/utils/containers/vector.h"
 #include "src/tint/utils/diagnostic/diagnostic.h"
 #include "src/tint/utils/diagnostic/source.h"
+#include "src/tint/utils/generation_id.h"
 #include "src/tint/utils/ice/ice.h"
-#include "src/tint/utils/id/generation_id.h"
 #include "src/tint/utils/macros/compiler.h"
 #include "src/tint/utils/rtti/castable.h"
+#include "src/tint/utils/rtti/traits.h"
 #include "src/tint/utils/symbol/symbol.h"
-#include "src/tint/utils/traits/traits.h"
 
 // Forward declarations
 namespace tint::ast {
@@ -283,7 +283,7 @@ class CloneContext {
     ///        `T* (T*)`, where `T` derives from Node
     /// @returns this CloneContext so calls can be chained
     template <typename F>
-    traits::EnableIf<ParamTypeIsPtrOf<F, ast::Node>, CloneContext>& ReplaceAll(F&& replacer) {
+    std::enable_if_t<ParamTypeIsPtrOf<F, ast::Node>, CloneContext>& ReplaceAll(F&& replacer) {
         using TPtr = traits::ParameterType<F, 0>;
         using T = typename std::remove_pointer<TPtr>::type;
         for (auto& transform : transforms_) {
@@ -334,7 +334,8 @@ class CloneContext {
     /// references of the original object. A type mismatch will result in an
     /// assertion in debug builds, and undefined behavior in release builds.
     /// @returns this CloneContext so calls can be chained
-    template <typename WHAT, typename WITH, typename = traits::EnableIfIsType<WITH, ast::Node>>
+    template <typename WHAT, typename WITH>
+        requires(traits::IsTypeOrDerived<WITH, ast::Node>)
     CloneContext& Replace(const WHAT* what, const WITH* with) {
         TINT_ASSERT_GENERATION_IDS_EQUAL_IF_VALID(src_id, what);
         TINT_ASSERT_GENERATION_IDS_EQUAL_IF_VALID(dst, with);

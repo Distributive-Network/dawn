@@ -27,10 +27,7 @@
 
 #include "src/tint/lang/core/ir/transform/add_empty_entry_point.h"
 
-#include <utility>
-
 #include "src/tint/lang/core/ir/builder.h"
-#include "src/tint/lang/core/ir/constant.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/validator.h"
 
@@ -42,7 +39,7 @@ namespace {
 
 void Run(ir::Module& ir) {
     for (auto& func : ir.functions) {
-        if (func->Stage() != Function::PipelineStage::kUndefined) {
+        if (func->IsEntryPoint()) {
             return;
         }
     }

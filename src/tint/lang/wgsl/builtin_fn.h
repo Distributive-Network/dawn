@@ -40,7 +40,7 @@
 #include <cstdint>
 #include <string>
 
-#include "src/tint/utils/traits/traits.h"
+#include "src/tint/utils/rtti/traits.h"
 
 // \cond DO_NOT_DOCUMENT
 namespace tint::wgsl {
@@ -194,6 +194,10 @@ enum class BuiltinFn : uint8_t {
     kQuadSwapX,
     kQuadSwapY,
     kQuadSwapDiagonal,
+    kSubgroupMatrixLoad,
+    kSubgroupMatrixStore,
+    kSubgroupMatrixMultiply,
+    kSubgroupMatrixMultiplyAccumulate,
     kTintMaterialize,
     kNone,
 };
@@ -210,7 +214,8 @@ const char* str(BuiltinFn i);
 
 /// Emits the name of the builtin function type. The spelling, including case,
 /// matches the name in the WGSL spec.
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& o, BuiltinFn i) {
     return o << str(i);
 }
@@ -364,6 +369,10 @@ constexpr BuiltinFn kBuiltinFns[] = {
     BuiltinFn::kQuadSwapX,
     BuiltinFn::kQuadSwapY,
     BuiltinFn::kQuadSwapDiagonal,
+    BuiltinFn::kSubgroupMatrixLoad,
+    BuiltinFn::kSubgroupMatrixStore,
+    BuiltinFn::kSubgroupMatrixMultiply,
+    BuiltinFn::kSubgroupMatrixMultiplyAccumulate,
     BuiltinFn::kTintMaterialize,
 };
 
@@ -516,6 +525,10 @@ constexpr const char* kBuiltinFnStrings[] = {
     "quadSwapX",
     "quadSwapY",
     "quadSwapDiagonal",
+    "subgroupMatrixLoad",
+    "subgroupMatrixStore",
+    "subgroupMatrixMultiply",
+    "subgroupMatrixMultiplyAccumulate",
     "__tint_materialize",
 };
 
@@ -575,6 +588,11 @@ bool IsPacked4x8IntegerDotProductBuiltin(BuiltinFn f);
 /// @param f the builtin type
 /// @returns true if the given `f` is a subgroup builtin
 bool IsSubgroup(BuiltinFn f);
+
+/// Determines if the given `f` is a subgroup matrix builtin.
+/// @param f the builtin type
+/// @returns true if the given `f` is a subgroup matrix builtin
+bool IsSubgroupMatrix(BuiltinFn f);
 
 /// Determines if the given `f` is a quadSwap* builtin.
 /// @param f the builtin type

@@ -48,12 +48,13 @@ set(private_headers
     "AlignedAlloc.h"
     "Alloc.h"
     "Assert.h"
-    "BitSetIterator.h"
+    "BitSetRangeIterator.h"
     "Compiler.h"
     "Constants.h"
     "ContentLessObjectCache.h"
     "ContentLessObjectCacheable.h"
     "CoreFoundationRef.h"
+    "Defer.h"
     "DynamicLib.h"
     "egl_platform.h"
     "Enumerator.h"
@@ -68,6 +69,7 @@ set(private_headers
     "ityp_vector.h"
     "LinkedList.h"
     "Log.h"
+    "LRUCache.h"
     "MatchVariant.h"
     "Math.h"
     "Mutex.h"
@@ -85,6 +87,7 @@ set(private_headers
     "RefCounted.h"
     "RefCountedWithExternalCount.h"
     "Result.h"
+    "Sha3.h"
     "SerialMap.h"
     "SerialQueue.h"
     "SerialStorage.h"
@@ -92,6 +95,7 @@ set(private_headers
     "StackAllocated.h"
     "StringViewUtils.h"
     "SystemUtils.h"
+    "ThreadLocal.h"
     "TypedInteger.h"
     "TypeTraits.h"
     "UnderlyingType.h"
@@ -106,6 +110,7 @@ set(sources
     "${DAWN_GPU_INFO_AUTOGEN_SOURCES}"
     "AlignedAlloc.cpp"
     "Assert.cpp"
+    "Defer.cpp"
     "DynamicLib.cpp"
     "FutureUtils.cpp"
     "GPUInfo.cpp"
@@ -114,9 +119,11 @@ set(sources
     "Mutex.cpp"
     "RefCounted.cpp"
     "Result.cpp"
+    "Sha3.cpp"
     "SlabAllocator.cpp"
     "StringViewUtils.cpp"
     "SystemUtils.cpp"
+    "ThreadLocal.cpp"
     "WeakRefSupport.cpp"
 )
 
@@ -154,7 +161,7 @@ endif ()
 
 if (DAWN_ENABLE_VULKAN)
     list(APPEND conditional_private_depends
-        Vulkan-Headers)
+        Vulkan::Headers)
 endif ()
 
 list(APPEND conditional_private_depends
@@ -173,6 +180,8 @@ dawn_add_library(
         webgpu_cpp
     PRIVATE_DEPENDS
         absl::inlined_vector
+        absl::no_destructor
+        absl::overload
         dawn::partition_alloc
         dawn_shared_utils
         ${conditional_private_depends}

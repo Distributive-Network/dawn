@@ -35,6 +35,8 @@
 #include <webgpu/webgpu.h>
 
 #include "dawn/common/Assert.h"
+#include "dawn/common/Log.h"
+#include "JNIClasses.h"
 #include "JNIContext.h"
 
 // Converts Kotlin objects representing Dawn structures into native structures that can be passed
@@ -72,24 +74,6 @@ void CallGetter(JNIEnv* env, jmethodID getter, jobject obj, T** result) {
     *result = reinterpret_cast<T*>(env->CallObjectMethod(obj, getter));
 }
 
-// Special-case noop handling of the two callback info that are part of other structures.
-// TODO(352710628) support converting callback info.
-void ToNative(JNIContext* c, JNIEnv* env, jobject obj, WGPUDeviceLostCallbackInfo* info) {
-    *info = {};
-}
-
-void ToNative(JNIContext* c, JNIEnv* env, jobject obj, WGPUUncapturedErrorCallbackInfo* info) {
-    *info = {};
-}
-
-jobject ToKotlin(JNIEnv *env, const WGPUDeviceLostCallbackInfo* input) {
-    return nullptr;
-}
-
-jobject ToKotlin(JNIEnv *env, const WGPUUncapturedErrorCallbackInfo* input) {
-    return nullptr;
-}
-
 // Special-case [Nullable]StringView
 void ToNative(JNIContext* c, JNIEnv* env, jstring obj, WGPUStringView* s) {
     if (obj == nullptr) {
@@ -110,7 +94,7 @@ jobject ToKotlin(JNIEnv* env, const WGPUStringView* s) {
     return env->NewStringUTF(nullTerminated.c_str());
 }
 
-{%- for structure in by_category['structure'] if include_structure(structure) %}
+{%- for structure in by_category['structure'] + by_category['callback info'] if include_structure(structure) %}
 
     //* Native -> Kotlin converter.
     //* TODO(b/354411474): Filter the structures for which to add a ToKotlin conversion.
@@ -118,9 +102,9 @@ jobject ToKotlin(JNIEnv* env, const WGPUStringView* s) {
         if (!input) {
             return nullptr;
         }
-
+        JNIClasses* classes = JNIClasses::getInstance(env);
         //* Make a new Kotlin object to receive a copy of the structure.
-        jclass clz = env->FindClass("{{ jni_name(structure) }}");
+        jclass clz = classes->{{ structure.name.camelCase() }};
         //* JNI signature needs to be built using the same logic used in the Kotlin structure spec.
         jmethodID ctor = env->GetMethodID(clz, "<init>", "(
         {%- for member in kotlin_record_members(structure.members) %}
@@ -175,7 +159,8 @@ jobject ToKotlin(JNIEnv* env, const WGPUStringView* s) {
     {{ define_kotlin_record_structure(KotlinRecord, structure.members)}}
     {{ define_kotlin_to_struct_conversion("ConvertInternal", KotlinRecord, Struct, structure.members)}}
     void ToNative(JNIContext* c, JNIEnv* env, jobject obj, {{ as_cType(structure.name) }}* converted) {
-        jclass clz = env->FindClass("{{ jni_name(structure) }}");
+        JNIClasses* classes = JNIClasses::getInstance(env);
+        jclass clz = classes->{{ structure.name.camelCase() }};
 
         //* Use getters to fill in the Kotlin record that will get converted to our struct.
         {{KotlinRecord}} kotlinRecord;

@@ -66,7 +66,7 @@ class EncodingContext {
     void HandleError(std::unique_ptr<ErrorData> error);
 
     inline bool ConsumedError(MaybeError maybeError) {
-        if (DAWN_UNLIKELY(maybeError.IsError())) {
+        if (maybeError.IsError()) [[unlikely]] {
             HandleError(maybeError.AcquireError());
             return true;
         }
@@ -75,7 +75,7 @@ class EncodingContext {
 
     template <typename... Args>
     inline bool ConsumedError(MaybeError maybeError, const char* formatStr, const Args&... args) {
-        if (DAWN_UNLIKELY(maybeError.IsError())) {
+        if (maybeError.IsError()) [[unlikely]] {
             std::unique_ptr<ErrorData> error = maybeError.AcquireError();
             if (error->GetType() == InternalErrorType::Validation) {
                 std::string out;
@@ -94,10 +94,13 @@ class EncodingContext {
     }
 
     inline MaybeError ValidateCanEncodeOn(const ApiObjectBase* encoder) {
-        if (DAWN_UNLIKELY(encoder != mCurrentEncoder)) {
+        if (encoder != mCurrentEncoder) [[unlikely]] {
             switch (mStatus) {
-                case Status::Error:
+                case Status::ErrorAtCreation:
                     return DAWN_VALIDATION_ERROR("Recording in an error %s.", encoder);
+                case Status::ErrorInRecording:
+                    return DAWN_VALIDATION_ERROR("Recording in an already invalidated %s.",
+                                                 encoder);
                 case Status::Destroyed:
                     return DAWN_VALIDATION_ERROR("Recording in a destroyed %s.", encoder);
 
@@ -178,7 +181,16 @@ class EncodingContext {
     void PopDebugGroupLabel();
 
   private:
+    enum class Status {
+        Open,
+        Finished,
+        ErrorAtCreation,
+        ErrorInRecording,
+        Destroyed,
+    };
+
     void CommitCommands(CommandAllocator allocator);
+    void CloseWithStatus(Status status);
 
     raw_ptr<DeviceBase> mDevice;
 
@@ -209,12 +221,6 @@ class EncodingContext {
     // Contains pointers to strings allocated inside the command allocators.
     std::vector<std::string_view> mDebugGroupLabels;
 
-    enum class Status {
-        Open,
-        Finished,
-        Error,
-        Destroyed,
-    };
     Status mStatus;
     std::unique_ptr<ErrorData> mError;
 };

@@ -27,8 +27,6 @@
 
 #include "src/tint/lang/msl/writer/raise/raise.h"
 
-#include <utility>
-
 #include "src/tint/api/common/binding_point.h"
 #include "src/tint/lang/core/ir/transform/array_length_from_uniform.h"
 #include "src/tint/lang/core/ir/transform/binary_polyfill.h"
@@ -38,16 +36,20 @@
 #include "src/tint/lang/core/ir/transform/demote_to_helper.h"
 #include "src/tint/lang/core/ir/transform/multiplanar_external_texture.h"
 #include "src/tint/lang/core/ir/transform/preserve_padding.h"
+#include "src/tint/lang/core/ir/transform/prevent_infinite_loops.h"
 #include "src/tint/lang/core/ir/transform/remove_continue_in_switch.h"
 #include "src/tint/lang/core/ir/transform/remove_terminator_args.h"
 #include "src/tint/lang/core/ir/transform/rename_conflicts.h"
 #include "src/tint/lang/core/ir/transform/robustness.h"
 #include "src/tint/lang/core/ir/transform/value_to_let.h"
 #include "src/tint/lang/core/ir/transform/vectorize_scalar_matrix_constructors.h"
+#include "src/tint/lang/core/ir/transform/vertex_pulling.h"
 #include "src/tint/lang/core/ir/transform/zero_init_workgroup_memory.h"
 #include "src/tint/lang/msl/writer/common/option_helpers.h"
+#include "src/tint/lang/msl/writer/raise/argument_buffers.h"
 #include "src/tint/lang/msl/writer/raise/binary_polyfill.h"
 #include "src/tint/lang/msl/writer/raise/builtin_polyfill.h"
+#include "src/tint/lang/msl/writer/raise/module_constant.h"
 #include "src/tint/lang/msl/writer/raise/module_scope_vars.h"
 #include "src/tint/lang/msl/writer/raise/packed_vec3.h"
 #include "src/tint/lang/msl/writer/raise/shader_io.h"
@@ -67,12 +69,21 @@ Result<RaiseResult> Raise(core::ir::Module& module, const Options& options) {
 
     RaiseResult raise_result;
 
+    // VertexPulling must come before BindingRemapper and Robustness.
+    if (options.vertex_pulling_config) {
+        RUN_TRANSFORM(core::ir::transform::VertexPulling, module, *options.vertex_pulling_config);
+    }
+
     tint::transform::multiplanar::BindingsMap multiplanar_map{};
     RemapperData remapper_data{};
     ArrayLengthFromUniformOptions array_length_from_uniform_options{};
     PopulateBindingRelatedOptions(options, remapper_data, multiplanar_map,
                                   array_length_from_uniform_options);
     RUN_TRANSFORM(core::ir::transform::BindingRemapper, module, remapper_data);
+
+    if (!options.disable_robustness) {
+        RUN_TRANSFORM(core::ir::transform::PreventInfiniteLoops, module);
+    }
 
     {
         core::ir::transform::BinaryPolyfillConfig binary_polyfills{};
@@ -106,6 +117,7 @@ Result<RaiseResult> Raise(core::ir::Module& module, const Options& options) {
 
     if (!options.disable_robustness) {
         core::ir::transform::RobustnessConfig config{};
+        config.use_integer_range_analysis = options.enable_integer_range_analysis;
         RUN_TRANSFORM(core::ir::transform::Robustness, module, config);
     }
 
@@ -129,16 +141,28 @@ Result<RaiseResult> Raise(core::ir::Module& module, const Options& options) {
     RUN_TRANSFORM(core::ir::transform::RemoveContinueInSwitch, module);
 
     // DemoteToHelper must come before any transform that introduces non-core instructions.
-    RUN_TRANSFORM(core::ir::transform::DemoteToHelper, module);
+    if (!options.disable_demote_to_helper) {
+        RUN_TRANSFORM(core::ir::transform::DemoteToHelper, module);
+    }
 
     RUN_TRANSFORM(raise::ShaderIO, module,
                   raise::ShaderIOConfig{options.emit_vertex_point_size, options.fixed_sample_mask});
     RUN_TRANSFORM(raise::PackedVec3, module);
     RUN_TRANSFORM(raise::SimdBallot, module);
+
+    // ArgumentBuffers must come before ModuleScopeVars
+    if (options.use_argument_buffers) {
+        RUN_TRANSFORM(raise::ArgumentBuffers, module);
+    }
     RUN_TRANSFORM(raise::ModuleScopeVars, module);
+
     RUN_TRANSFORM(raise::UnaryPolyfill, module);
     RUN_TRANSFORM(raise::BinaryPolyfill, module);
     RUN_TRANSFORM(raise::BuiltinPolyfill, module);
+
+    if (options.enable_module_constant) {
+        RUN_TRANSFORM(raise::ModuleConstant, module);
+    }
 
     // These transforms need to be run last as various transforms introduce terminator arguments,
     // naming conflicts, and expressions that need to be explicitly not inlined.

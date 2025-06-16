@@ -44,6 +44,7 @@
 {% macro define_kotlin_to_struct_conversion(function_name, kotlin_name, struct_name, members) %}
     inline void {{function_name}}(JNIContext* c, const {{kotlin_name}}& inStruct, {{struct_name}}* outStruct) {
         JNIEnv* env = c->env;
+        JNIClasses* classes = JNIClasses::getInstance(env);
         *outStruct = {};
 
         {% for member in kotlin_record_members(members) %}
@@ -82,7 +83,7 @@
                         out = array;
 
                         {% if member.type.category in ['bitmask', 'enum'] %}
-                            jclass memberClass = env->FindClass("{{ jni_name(member.type) }}");
+                            jclass memberClass = classes->{{ member.type.name.camelCase() }};
                             jmethodID getValue = env->GetMethodID(memberClass, "getValue", "()I");
                             for (int idx = 0; idx != outLength; idx++) {
                                 jobject element = env->GetObjectArrayElement(in, idx);
@@ -90,7 +91,7 @@
                                         env->CallIntMethod(element, getValue));
                             }
                         {% elif member.type.category == 'object' %}
-                            jclass memberClass = env->FindClass("{{ jni_name(member.type) }}");
+                            jclass memberClass = classes->{{ member.type.name.camelCase() }};
                             jmethodID getHandle = env->GetMethodID(memberClass, "getHandle", "()J");
                             for (int idx = 0; idx != outLength; idx++) {
                                 jobject element = env->GetObjectArrayElement(in, idx);
@@ -108,14 +109,14 @@
                 //* From here members are single values.
                 {% elif member.type.category == 'object' %}
                     if (in != nullptr) {
-                        jclass memberClass = env->FindClass("{{ jni_name(member.type) }}");
+                        jclass memberClass = classes->{{ member.type.name.camelCase() }};
                         jmethodID getHandle = env->GetMethodID(memberClass, "getHandle", "()J");
                         out = reinterpret_cast<{{as_cType(member.type.name)}}>(
                                 env->CallLongMethod(in, getHandle));
                     } else {
                         out = nullptr;
                     }
-                {% elif member.type.category == 'structure' %}
+                {% elif member.type.category in ['callback info', 'structure'] %}
                     //* Mandatory structure.
                     ToNative(c, env, in, &out);
                 {% elif member.name.get() == "window" and member.type.name.get() == "void *" %}
@@ -125,20 +126,42 @@
                     out = reinterpret_cast<{{as_cType(member.type.name)}}>(static_cast<uintptr_t>(in));
                 {% elif member.type.category in ["native", "enum", "bitmask"] %}
                     out = static_cast<{{as_cType(member.type.name)}}>(in);
-                {% elif member.type.category == 'function pointer' %}
-                    //* Function pointers themselves require each argument converting.
+                {% elif member.type.category in ['callback function', 'function pointer'] %}
+                    //* Function pointers and callback functions require each argument converting.
                     //* A custom native callback is generated to wrap the Kotlin callback.
                     out = [](
                         {%- for callbackArg in member.type.arguments %}
-                            {{ as_annotated_cType(callbackArg) }}{{ ',' if not loop.last }}
-                        {%- endfor %}) {
-                        UserData* userData1 = static_cast<UserData *>(userdata);
-                        JNIEnv *env = userData1->env;
+                            {{- as_annotated_cType(callbackArg) }}{{ ', ' if not loop.last }}
+                        {%- endfor -%}
+                        {%- if member.type.category == 'function pointer' -%}
+                            //* We rely on the function pointer definitions (dawn.json) always
+                            //* including a parameter named 'userdata' as the final parameter.
+                            {%- set userdata = 'userdata' -%}
+                        {%- else %}
+                            //* Callback functions do not specify user data params in dawn.json.
+                            //* However, the C API always supplements two parameters with the names
+                            //* below.
+                            , void* userdata1, void* userdata2
+                            {%- set userdata = 'userdata1' -%}
+                        {%- endif %}) {
+                        //* User data is used to carry the JNI context (env) for use by the
+                        //* callback.
+                        UserData* userData1 = static_cast<UserData *>({{ userdata }});
+                        JNIEnv *env = NULL;
+                        JavaVM* jvm = userData1->jvm;
+                        //* Deal with difference in signatures between Oracle's jni.h and Android's.
+                        #ifdef _JAVASOFT_JNI_H_  //* Oracle's jni.h violates the JNI spec.
+                            jvm->AttachCurrentThread(reinterpret_cast<void**>(&env), NULL);
+                        #else
+                            jvm->AttachCurrentThread(&env, NULL);
+                        #endif
+
                         if (env->ExceptionCheck()) {
                             return;
                         }
+                        JNIClasses* classes = JNIClasses::getInstance(env);
 
-                        {%- for callbackArg in kotlin_record_members(member.type.arguments) -%}
+                        {% for callbackArg in kotlin_record_members(member.type.arguments) -%}
                             {{ convert_to_kotlin(callbackArg.name.camelCase(),
                                                  '_' + callbackArg.name.camelCase(),
                                                  'input->' + callbackArg.length.name.camelCase() if callbackArg.length.name,
@@ -147,7 +170,7 @@
 
                         //* Get the client (Kotlin) callback so we can call it.
                         jmethodID callbackMethod = env->GetMethodID(
-                                env->FindClass("{{ jni_name(member.type) }}"), "callback", "(
+                                classes->{{ member.type.name.camelCase() }}, "callback", "(
                             {%- for callbackArg in kotlin_record_members(member.type.arguments) -%}
                                 {{- jni_signature(callbackArg) -}}
                             {%- endfor %})V");
@@ -155,12 +178,12 @@
                         //* Call the callback with all converted parameters.
                         env->CallVoidMethod(userData1->callback, callbackMethod
                         {%- for callbackArg in kotlin_record_members(member.type.arguments) %}
-                             ,_{{ callbackArg.name.camelCase() }}
+                             {{- ', ' }}_{{ callbackArg.name.camelCase() }}
                         {%- endfor %});
                     };
                     //* TODO(b/330293719): free associated resources.
-                    outStruct->userdata = new UserData(
-                            {.env = env, .callback = env->NewGlobalRef(in)});
+                    outStruct->{{ userdata }} = new UserData(
+                            {.callback = env->NewGlobalRef(in), .jvm = c->jvm});
 
                 {% else %}
                     {{ unreachable_code() }}

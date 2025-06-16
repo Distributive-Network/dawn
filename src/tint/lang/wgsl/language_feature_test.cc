@@ -34,7 +34,7 @@
 //                       Do not modify this file directly
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "src/tint/lang/wgsl/features/language_feature.h"
+#include "src/tint/lang/wgsl/language_feature.h"
 
 #include <gtest/gtest.h>
 
@@ -67,6 +67,8 @@ static constexpr Case kValidCases[] = {
     {"pointer_composite_access", LanguageFeature::kPointerCompositeAccess},
     {"readonly_and_readwrite_storage_textures",
      LanguageFeature::kReadonlyAndReadwriteStorageTextures},
+    {"sized_binding_array", LanguageFeature::kSizedBindingArray},
+    {"texel_buffers", LanguageFeature::kTexelBuffers},
     {"unrestricted_pointer_parameters", LanguageFeature::kUnrestrictedPointerParameters},
 };
 
@@ -95,9 +97,15 @@ static constexpr Case kInvalidCases[] = {
     {"readonlF_and_readwrite_st9rage_textues", LanguageFeature::kUndefined},
     {"readonly_and_radwrite_storage_textures", LanguageFeature::kUndefined},
     {"readonly_and_readwrite_sOOrage_tVxRRures", LanguageFeature::kUndefined},
-    {"unrestrictd_pointer_payameters", LanguageFeature::kUndefined},
-    {"unrerrt77iGted_poillter_paramenners", LanguageFeature::kUndefined},
-    {"unrestricted4point00r_parameters", LanguageFeature::kUndefined},
+    {"sized_indiyg_array", LanguageFeature::kUndefined},
+    {"llGznnd_bin77ing_rrrray", LanguageFeature::kUndefined},
+    {"sized_bindin4_00rray", LanguageFeature::kUndefined},
+    {"teool_bffer", LanguageFeature::kUndefined},
+    {"exezz_uffers", LanguageFeature::kUndefined},
+    {"texel_bii11eps", LanguageFeature::kUndefined},
+    {"unrestricted_pointer_parametXXrs", LanguageFeature::kUndefined},
+    {"unrestri55tIId_pointer_paramnnt99rs", LanguageFeature::kUndefined},
+    {"unraastrSScted_pointerHHrparameteYs", LanguageFeature::kUndefined},
 };
 
 using LanguageFeatureParseTest = testing::TestWithParam<Case>;

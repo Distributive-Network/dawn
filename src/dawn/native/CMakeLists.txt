@@ -50,6 +50,7 @@ set(private_headers
     "BindGroupTracker.h"
     "BindingInfo.h"
     "BlitBufferToDepthStencil.h"
+    "BlitBufferToTexture.h"
     "BlitColorToColorWithDraw.h"
     "BlitDepthToDepth.h"
     "BlitTextureToBuffer.h"
@@ -92,6 +93,8 @@ set(private_headers
     "Features.h"
     "Format.h"
     "Forward.h"
+    "ImmediateConstantsLayout.h"
+    "ImmediateConstantsTracker.h"
     "IndirectDrawMetadata.h"
     "IndirectDrawValidationEncoder.h"
     "Instance.h"
@@ -147,8 +150,10 @@ set(private_headers
     "Toggles.h"
     "UsageValidationMode.h"
     "utils/WGPUHelpers.h"
+    "ValidationUtils.h"
     "VisitableMembers.h"
     "WaitAnySystemEvent.h"
+    "WaitListEvent.h"
     "webgpu_absl_format.h"
 )
 
@@ -164,6 +169,7 @@ set(sources
     "BindGroupLayoutInternal.cpp"
     "BindingInfo.cpp"
     "BlitBufferToDepthStencil.cpp"
+    "BlitBufferToTexture.cpp"
     "BlitColorToColorWithDraw.cpp"
     "BlitDepthToDepth.cpp"
     "BlitTextureToBuffer.cpp"
@@ -200,6 +206,8 @@ set(sources
     "ExternalTexture.cpp"
     "Features.cpp"
     "Format.cpp"
+    "ImmediateConstantsLayout.cpp"
+    "ImmediateConstantsTracker.cpp"
     "IndirectDrawMetadata.cpp"
     "IndirectDrawValidationEncoder.cpp"
     "Instance.cpp"
@@ -207,7 +215,6 @@ set(sources
     "Limits.cpp"
     "ObjectBase.cpp"
     "ObjectContentHasher.cpp"
-    "PassResourceUsage.cpp"
     "PassResourceUsageTracker.cpp"
     "PerStage.cpp"
     "PhysicalDevice.cpp"
@@ -246,6 +253,8 @@ set(sources
     "TintUtils.cpp"
     "Toggles.cpp"
     "utils/WGPUHelpers.cpp"
+    "ValidationUtils.cpp"
+    "WaitListEvent.cpp"
     "webgpu_absl_format.cpp"
 )
 
@@ -316,7 +325,6 @@ if (DAWN_ENABLE_D3D11 OR DAWN_ENABLE_D3D12)
         "d3d/SharedFenceD3D.h"
         "d3d/SharedTextureMemoryD3D.h"
         "d3d/SwapChainD3D.h"
-        "d3d/TextureD3D.h"
         "d3d/UtilsD3D.h"
     )
     list(APPEND sources
@@ -332,7 +340,6 @@ if (DAWN_ENABLE_D3D11 OR DAWN_ENABLE_D3D12)
         "d3d/SharedFenceD3D.cpp"
         "d3d/SharedTextureMemoryD3D.cpp"
         "d3d/SwapChainD3D.cpp"
-        "d3d/TextureD3D.cpp"
         "d3d/UtilsD3D.cpp"
     )
     list(APPEND conditional_private_platform_depends dxguid.lib)
@@ -534,11 +541,13 @@ if (DAWN_ENABLE_METAL)
         "Surface_metal.mm"
     )
     if (DAWN_TARGET_MACOS)
-        list(APPEND conditional_private_platform_depends "-framework Cocoa")
+        list(APPEND conditional_private_platform_depends
+            "-framework Cocoa"
+            "-framework IOKit"
+        )
     endif()
     list(APPEND conditional_private_platform_depends
         "-framework Foundation"
-        "-framework IOKit"
         "-framework IOSurface"
         "-framework QuartzCore"
         "-framework Metal"
@@ -554,6 +563,30 @@ if (DAWN_ENABLE_NULL)
     )
     list(APPEND sources
         "null/DeviceNull.cpp"
+    )
+endif()
+
+if (DAWN_ENABLE_WEBGPU_ON_WEBGPU)
+    list(APPEND headers
+        "${DAWN_INCLUDE_DIR}/dawn/native/WebGPUBackend.h"
+    )
+    list(APPEND private_headers
+        "webgpu/BackendWGPU.h"
+        "webgpu/BufferWGPU.h"
+        "webgpu/CommandBufferWGPU.h"
+        "webgpu/DeviceWGPU.h"
+        "webgpu/Forward.h"
+        "webgpu/PhysicalDeviceWGPU.h"
+        "webgpu/QueueWGPU.h"
+        "webgpu/WebGPUError.h"
+    )
+    list(APPEND sources
+        "webgpu/BackendWGPU.cpp"
+        "webgpu/BufferWGPU.cpp"
+        "webgpu/CommandBufferWGPU.cpp"
+        "webgpu/DeviceWGPU.cpp"
+        "webgpu/PhysicalDeviceWGPU.cpp"
+        "webgpu/QueueWGPU.cpp"
     )
 endif()
 
@@ -611,6 +644,8 @@ if (DAWN_ENABLE_OPENGL)
         "opengl/RenderPipelineGL.h"
         "opengl/SamplerGL.h"
         "opengl/ShaderModuleGL.h"
+        "opengl/SharedFenceEGL.h"
+        "opengl/SharedFenceGL.h"
         "opengl/SharedTextureMemoryEGL.h"
         "opengl/SharedTextureMemoryGL.h"
         "opengl/SwapChainEGL.h"
@@ -642,6 +677,8 @@ if (DAWN_ENABLE_OPENGL)
         "opengl/RenderPipelineGL.cpp"
         "opengl/SamplerGL.cpp"
         "opengl/ShaderModuleGL.cpp"
+        "opengl/SharedFenceEGL.cpp"
+        "opengl/SharedFenceGL.cpp"
         "opengl/SharedTextureMemoryEGL.cpp"
         "opengl/SharedTextureMemoryGL.cpp"
         "opengl/SwapChainEGL.cpp"
@@ -663,7 +700,7 @@ if (DAWN_ENABLE_VULKAN)
         "vulkan/BindGroupVk.h"
         "vulkan/BufferVk.h"
         "vulkan/CommandBufferVk.h"
-        "vulkan/CommandRecordingContext.h"
+        "vulkan/CommandRecordingContextVk.h"
         "vulkan/ComputePipelineVk.h"
         "vulkan/DescriptorSetAllocation.h"
         "vulkan/DescriptorSetAllocator.h"
@@ -671,6 +708,7 @@ if (DAWN_ENABLE_VULKAN)
         "vulkan/ExternalHandle.h"
         "vulkan/FencedDeleter.h"
         "vulkan/Forward.h"
+        "vulkan/FramebufferCache.h"
         "vulkan/PhysicalDeviceVk.h"
         "vulkan/PipelineVk.h"
         "vulkan/PipelineCacheVk.h"
@@ -708,9 +746,11 @@ if (DAWN_ENABLE_VULKAN)
         "vulkan/BufferVk.cpp"
         "vulkan/CommandBufferVk.cpp"
         "vulkan/ComputePipelineVk.cpp"
+        "vulkan/CommandRecordingContextVk.cpp"
         "vulkan/DescriptorSetAllocator.cpp"
         "vulkan/DeviceVk.cpp"
         "vulkan/FencedDeleter.cpp"
+        "vulkan/FramebufferCache.cpp"
         "vulkan/PhysicalDeviceVk.cpp"
         "vulkan/PipelineVk.cpp"
         "vulkan/PipelineCacheVk.cpp"
@@ -741,8 +781,8 @@ if (DAWN_ENABLE_VULKAN)
     )
 
     list(APPEND conditional_public_depends
-        Vulkan-Headers
-        VulkanUtilityHeaders
+        Vulkan::Headers
+        Vulkan::UtilityHeaders
     )
 
     if (ANDROID)
@@ -784,6 +824,9 @@ if (DAWN_ENABLE_METAL)
 endif()
 if (DAWN_ENABLE_NULL)
     list(APPEND dawn_component_srcs "null/NullBackend.cpp")
+endif()
+if (DAWN_ENABLE_WEBGPU_ON_WEBGPU)
+    list(APPEND dawn_component_srcs "webgpu/WebGPUBackend.cpp")
 endif()
 if (DAWN_ENABLE_OPENGL)
     list(APPEND dawn_component_srcs "opengl/OpenGLBackend.cpp")

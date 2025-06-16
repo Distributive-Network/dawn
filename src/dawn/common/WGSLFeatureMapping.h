@@ -34,6 +34,8 @@
     X(kPointerCompositeAccess, PointerCompositeAccess)                             \
     X(kReadonlyAndReadwriteStorageTextures, ReadonlyAndReadwriteStorageTextures)   \
     X(kUnrestrictedPointerParameters, UnrestrictedPointerParameters)               \
+    X(kSizedBindingArray, SizedBindingArray)                                       \
+    X(kTexelBuffers, TexelBuffers)                                                 \
     /* ----------------- entries below are only for testing  ------------------ */ \
     X(kChromiumTestingUnimplemented, ChromiumTestingUnimplemented)                 \
     X(kChromiumTestingUnsafeExperimental, ChromiumTestingUnsafeExperimental)       \

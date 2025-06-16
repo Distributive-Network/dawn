@@ -39,7 +39,7 @@
 
 #include <cstdint>
 
-#include "src/tint/utils/traits/traits.h"
+#include "src/tint/utils/rtti/traits.h"
 
 namespace tint::core::intrinsic {
 
@@ -77,7 +77,8 @@ const char* str(CtorConv i);
 /// @param o the stream to write to
 /// @param c the CtorConv
 /// @return the stream so calls can be chained
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& o, CtorConv c) {
     return o << str(c);
 }

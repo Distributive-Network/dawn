@@ -555,14 +555,10 @@ TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_UniformBuffer_Struct_Run
     Alias("t", ty.ptr<uniform>(Source{{90, 12}}, ty("S")));
 
     ASSERT_FALSE(r()->Resolve());
-    EXPECT_EQ(
-        r()->error(),
-        R"(12:34 error: 'uniform' storage requires that array elements are aligned to 16 bytes, but array element of type 'i32' has a stride of 4 bytes. Consider using a vector or struct as the element type instead.
-note: see layout of struct:
-/*           align(4) size(4) */ struct S {
-/* offset(0) align(4) size(4) */   m : array<i32>,
-/*                            */ };
-90:12 note: 'S' used in address space 'uniform' here)");
+    EXPECT_EQ(r()->error(),
+              R"(12:34 error: runtime-sized arrays can only be used in the <storage> address space
+56:78 note: while analyzing structure member S.m
+90:12 note: while instantiating ptr<uniform, S, read>)");
 }
 
 TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_UniformBufferBool) {
@@ -843,126 +839,104 @@ TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_UniformBufferStructF16Al
     ASSERT_TRUE(r()->Resolve()) << r()->error();
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_PushConstantBool) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> g : bool;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    GlobalVar(Source{{56, 78}}, "g", ty.bool_(Source{{12, 34}}), core::AddressSpace::kPushConstant);
+TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_ImmediateBool) {
+    // var<immediate> g : bool;
+    GlobalVar(Source{{56, 78}}, "g", ty.bool_(Source{{12, 34}}), core::AddressSpace::kImmediate);
 
     ASSERT_FALSE(r()->Resolve());
     EXPECT_EQ(
         r()->error(),
-        R"(12:34 error: type 'bool' cannot be used in address space 'push_constant' as it is non-host-shareable
+        R"(12:34 error: type 'bool' cannot be used in address space 'immediate' as it is non-host-shareable
 56:78 note: while instantiating 'var' g)");
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_PushConstantBool) {
-    // enable chromium_experimental_push_constant;
-    // type t = ptr<push_constant, bool>;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    Alias(Source{{56, 78}}, "t", ty.ptr<push_constant>(ty.bool_(Source{{12, 34}})));
+TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_ImmediateBool) {
+    // type t = ptr<immediate, bool>;
+    Alias(Source{{56, 78}}, "t", ty.ptr<immediate>(ty.bool_(Source{{12, 34}})));
 
     ASSERT_FALSE(r()->Resolve());
     EXPECT_EQ(
         r()->error(),
-        R"(12:34 error: type 'bool' cannot be used in address space 'push_constant' as it is non-host-shareable
-note: while instantiating ptr<push_constant, bool, read>)");
+        R"(12:34 error: type 'bool' cannot be used in address space 'immediate' as it is non-host-shareable
+note: while instantiating ptr<immediate, bool, read>)");
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_PushConstantF16) {
+TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_ImmediateF16) {
     // enable f16;
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> g : f16;
+    // var<immediate> g : f16;
     Enable(wgsl::Extension::kF16);
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    GlobalVar("g", ty.f16(Source{{56, 78}}), core::AddressSpace::kPushConstant);
+    GlobalVar("g", ty.f16(Source{{56, 78}}), core::AddressSpace::kImmediate);
 
     ASSERT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "error: using 'f16' in 'push_constant' address space is not implemented yet");
+              "error: using 'f16' in 'immediate' address space is not implemented yet");
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_PushConstantF16) {
+TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_ImmediateF16) {
     // enable f16;
-    // enable chromium_experimental_push_constant;
-    // type t = ptr<push_constant, f16>;
+    // type t = ptr<immediate, f16>;
     Enable(wgsl::Extension::kF16);
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    Alias("t", ty.ptr<push_constant>(ty.f16(Source{{56, 78}})));
+    Alias("t", ty.ptr<immediate>(ty.f16(Source{{56, 78}})));
 
     ASSERT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "error: using 'f16' in 'push_constant' address space is not implemented yet");
+              "error: using 'f16' in 'immediate' address space is not implemented yet");
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_PushConstantPointer) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> g : ptr<private, f32>;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
+TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_ImmediatePointer) {
+    // var<immediate> g : ptr<private, f32>;
     GlobalVar(Source{{56, 78}}, "g", ty.ptr<private_, f32>(Source{{12, 34}}),
-              core::AddressSpace::kPushConstant);
+              core::AddressSpace::kImmediate);
 
     ASSERT_FALSE(r()->Resolve());
     EXPECT_EQ(
         r()->error(),
-        R"(12:34 error: type 'ptr<private, f32, read_write>' cannot be used in address space 'push_constant' as it is non-host-shareable
+        R"(12:34 error: type 'ptr<private, f32, read_write>' cannot be used in address space 'immediate' as it is non-host-shareable
 56:78 note: while instantiating 'var' g)");
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_PushConstantIntScalar) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> g : i32;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    GlobalVar("g", ty.i32(), core::AddressSpace::kPushConstant);
+TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_ImmediateIntScalar) {
+    // var<immediate> g : i32;
+    GlobalVar("g", ty.i32(), core::AddressSpace::kImmediate);
 
     ASSERT_TRUE(r()->Resolve()) << r()->error();
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_PushConstantIntScalar) {
-    // enable chromium_experimental_push_constant;
-    // type t = ptr<push_constant, i32>;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    Alias("t", ty.ptr<push_constant, i32>());
+TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_ImmediateIntScalar) {
+    // type t = ptr<immediate, i32>;
+    Alias("t", ty.ptr<immediate, i32>());
 
     ASSERT_TRUE(r()->Resolve()) << r()->error();
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_PushConstantVectorF32) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> g : vec4<f32>;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    GlobalVar("g", ty.vec4<f32>(), core::AddressSpace::kPushConstant);
+TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_ImmediateVectorF32) {
+    // var<immediate> g : vec4<f32>;
+    GlobalVar("g", ty.vec4<f32>(), core::AddressSpace::kImmediate);
 
     ASSERT_TRUE(r()->Resolve()) << r()->error();
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_PushConstantVectorF32) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> g : vec4<f32>;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    Alias("t", ty.ptr<push_constant, vec4<f32>>());
+TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_ImmediateVectorF32) {
+    // var<immediate> g : vec4<f32>;
+    Alias("t", ty.ptr<immediate, vec4<f32>>());
 
     ASSERT_TRUE(r()->Resolve()) << r()->error();
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_PushConstantArrayF32) {
-    // enable chromium_experimental_push_constant;
+TEST_F(ResolverAddressSpaceValidationTest, GlobalVariable_ImmediateArrayF32) {
     // struct S { a : f32}
-    // var<push_constant> g : array<S, 3u>;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
+    // var<immediate> g : array<S, 3u>;
     Structure("S", Vector{Member("a", ty.f32())});
-    GlobalVar("g", ty.array(ty("S"), 3_u), core::AddressSpace::kPushConstant);
+    GlobalVar("g", ty.array(ty("S"), 3_u), core::AddressSpace::kImmediate);
 
     ASSERT_TRUE(r()->Resolve()) << r()->error();
 }
 
-TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_PushConstantArrayF32) {
-    // enable chromium_experimental_push_constant;
+TEST_F(ResolverAddressSpaceValidationTest, PointerAlias_ImmediateArrayF32) {
     // struct S { a : f32}
-    // type t = ptr<push_constant, array<S, 3u>>;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
+    // type t = ptr<immediate, array<S, 3u>>;
     Structure("S", Vector{Member("a", ty.f32())});
-    Alias("t", ty.ptr<push_constant>(ty.array(ty("S"), 3_u)));
+    Alias("t", ty.ptr<immediate>(ty.array(ty("S"), 3_u)));
 
     ASSERT_TRUE(r()->Resolve()) << r()->error();
 }

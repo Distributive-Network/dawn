@@ -29,21 +29,21 @@
 
 #include <utility>
 
-#include "src/tint/utils/containers/hashset.h"
+#include "src/tint/utils/containers/hashmap.h"
+#include "src/tint/utils/diagnostic/diagnostic.h"
 
 namespace tint::msl::writer {
 
-/// binding::BindingInfo to tint::BindingPoint map
-using InfoToPointMap = tint::Hashmap<binding::BindingInfo, tint::BindingPoint, 8>;
+using PointToPointMap = tint::Hashmap<tint::BindingPoint, tint::BindingPoint, 8>;
 
 Result<SuccessType> ValidateBindingOptions(const Options& options) {
     diag::List diagnostics;
 
-    tint::Hashmap<tint::BindingPoint, binding::BindingInfo, 8> seen_wgsl_bindings{};
+    PointToPointMap seen_wgsl_bindings{};
 
-    InfoToPointMap seen_msl_buffer_bindings{};
-    InfoToPointMap seen_msl_texture_bindings{};
-    InfoToPointMap seen_msl_sampler_bindings{};
+    PointToPointMap seen_msl_buffer_bindings{};
+    PointToPointMap seen_msl_texture_bindings{};
+    PointToPointMap seen_msl_sampler_bindings{};
 
     // Both wgsl_seen and spirv_seen check to see if the pair of [src, dst] are unique. If we have
     // multiple entries that map the same [src, dst] pair, that's fine. We treat it as valid as it's
@@ -51,7 +51,7 @@ Result<SuccessType> ValidateBindingOptions(const Options& options) {
     // match, then we report an error about a duplicate binding point.
 
     auto wgsl_seen = [&diagnostics, &seen_wgsl_bindings](const tint::BindingPoint& src,
-                                                         const binding::BindingInfo& dst) -> bool {
+                                                         const tint::BindingPoint& dst) -> bool {
         if (auto binding = seen_wgsl_bindings.Add(src, dst); binding.value != dst) {
             diagnostics.AddError(Source{}) << "found duplicate WGSL binding point: " << src;
             return true;
@@ -59,7 +59,7 @@ Result<SuccessType> ValidateBindingOptions(const Options& options) {
         return false;
     };
 
-    auto msl_seen = [&diagnostics](InfoToPointMap& map, const binding::BindingInfo& src,
+    auto msl_seen = [&diagnostics](PointToPointMap& map, const tint::BindingPoint& src,
                                    const tint::BindingPoint& dst) -> bool {
         if (auto binding = map.Add(src, dst); binding.value != dst) {
             diagnostics.AddError(Source{})
@@ -69,7 +69,7 @@ Result<SuccessType> ValidateBindingOptions(const Options& options) {
         return false;
     };
 
-    auto valid = [&wgsl_seen, &msl_seen](InfoToPointMap& map, const auto& hsh) -> bool {
+    auto valid = [&wgsl_seen, &msl_seen](PointToPointMap& map, const auto& hsh) -> bool {
         for (const auto& it : hsh) {
             const auto& src_binding = it.first;
             const auto& dst_binding = it.second;
@@ -88,27 +88,27 @@ Result<SuccessType> ValidateBindingOptions(const Options& options) {
     // Storage and uniform are both [[buffer()]]
     if (!valid(seen_msl_buffer_bindings, options.bindings.uniform)) {
         diagnostics.AddNote(Source{}) << "when processing uniform";
-        return Failure{std::move(diagnostics)};
+        return Failure{diagnostics.Str()};
     }
     if (!valid(seen_msl_buffer_bindings, options.bindings.storage)) {
         diagnostics.AddNote(Source{}) << "when processing storage";
-        return Failure{std::move(diagnostics)};
+        return Failure{diagnostics.Str()};
     }
 
     // Sampler is [[sampler()]]
     if (!valid(seen_msl_sampler_bindings, options.bindings.sampler)) {
         diagnostics.AddNote(Source{}) << "when processing sampler";
-        return Failure{std::move(diagnostics)};
+        return Failure{diagnostics.Str()};
     }
 
     // Texture and storage texture are [[texture()]]
     if (!valid(seen_msl_texture_bindings, options.bindings.texture)) {
         diagnostics.AddNote(Source{}) << "when processing texture";
-        return Failure{std::move(diagnostics)};
+        return Failure{diagnostics.Str()};
     }
     if (!valid(seen_msl_texture_bindings, options.bindings.storage_texture)) {
         diagnostics.AddNote(Source{}) << "when processing storage_texture";
-        return Failure{std::move(diagnostics)};
+        return Failure{diagnostics.Str()};
     }
 
     for (const auto& it : options.bindings.external_texture) {
@@ -120,22 +120,22 @@ Result<SuccessType> ValidateBindingOptions(const Options& options) {
         // Validate with the actual source regardless of what the remapper will do
         if (wgsl_seen(src_binding, plane0)) {
             diagnostics.AddNote(Source{}) << "when processing external_texture";
-            return Failure{std::move(diagnostics)};
+            return Failure{diagnostics.Str()};
         }
 
         // Plane0 & Plane1 are [[texture()]]
         if (msl_seen(seen_msl_texture_bindings, plane0, src_binding)) {
             diagnostics.AddNote(Source{}) << "when processing external_texture";
-            return Failure{std::move(diagnostics)};
+            return Failure{diagnostics.Str()};
         }
         if (msl_seen(seen_msl_texture_bindings, plane1, src_binding)) {
             diagnostics.AddNote(Source{}) << "when processing external_texture";
-            return Failure{std::move(diagnostics)};
+            return Failure{diagnostics.Str()};
         }
         // Metadata is [[buffer()]]
         if (msl_seen(seen_msl_buffer_bindings, metadata, src_binding)) {
             diagnostics.AddNote(Source{}) << "when processing external_texture";
-            return Failure{std::move(diagnostics)};
+            return Failure{diagnostics.Str()};
         }
     }
 
@@ -148,23 +148,21 @@ Result<SuccessType> ValidateBindingOptions(const Options& options) {
 //
 // When the data comes in we have a list of all WGSL origin (group,binding) pairs to MSL
 // (binding) in the `uniform`, `storage`, `texture`, and `sampler` arrays.
-void PopulateBindingRelatedOptions(
-    const Options& options,
-    RemapperData& remapper_data,
-    tint::transform::multiplanar::BindingsMap& multiplanar_map,
-    ArrayLengthFromUniformOptions& array_length_from_uniform_options) {
+void PopulateBindingRelatedOptions(const Options& options,
+                                   RemapperData& remapper_data,
+                                   tint::transform::multiplanar::BindingsMap& multiplanar_map,
+                                   ArrayLengthOptions& array_length_options) {
     auto create_remappings = [&remapper_data](const auto& hsh) {
         for (const auto& it : hsh) {
             const BindingPoint& src_binding_point = it.first;
-            const binding::BindingInfo& dst_binding_point = it.second;
+            const auto& dst_binding_point = it.second;
 
             // Bindings which go to the same slot in MSL do not need to be re-bound.
-            if (src_binding_point.group == 0 &&
-                src_binding_point.binding == dst_binding_point.binding) {
+            if (src_binding_point == dst_binding_point) {
                 continue;
             }
 
-            remapper_data.emplace(src_binding_point, BindingPoint{0, dst_binding_point.binding});
+            remapper_data.emplace(src_binding_point, dst_binding_point);
         }
     };
 
@@ -178,32 +176,27 @@ void PopulateBindingRelatedOptions(
     for (const auto& it : options.bindings.external_texture) {
         const BindingPoint& src_binding_point = it.first;
 
-        const binding::BindingInfo& plane0 = it.second.plane0;
-        const binding::BindingInfo& plane1 = it.second.plane1;
-        const binding::BindingInfo& metadata = it.second.metadata;
+        const auto& plane0 = it.second.plane0;
+        const auto& plane1 = it.second.plane1;
+        const auto& metadata = it.second.metadata;
 
-        const BindingPoint plane0_binding_point{0, plane0.binding};
-        const BindingPoint plane1_binding_point{0, plane1.binding};
-        const BindingPoint metadata_binding_point{0, metadata.binding};
-
-        // Use the re-bound MSL plane0 value for the lookup key. The group goes to `0` which is the
-        // value always used for re-bound data.
-        multiplanar_map.emplace(BindingPoint{0, plane0_binding_point.binding},
-                                tint::transform::multiplanar::BindingPoints{
-                                    plane1_binding_point, metadata_binding_point});
+        // Use the re-bound MSL plane0 value for the lookup key.
+        multiplanar_map.emplace(plane0,
+                                tint::transform::multiplanar::BindingPoints{plane1, metadata});
 
         // Bindings which go to the same slot in MSL do not need to be re-bound.
-        if (src_binding_point == plane0_binding_point) {
+        if (src_binding_point == plane0) {
             continue;
         }
 
-        remapper_data.emplace(src_binding_point, plane0_binding_point);
+        remapper_data.emplace(src_binding_point, plane0);
     }
 
-    // ArrayLengthFromUniformOptions bindpoints may need to be remapped
+    // ArrayLengthOptions bindpoints may need to be remapped
     {
         std::unordered_map<BindingPoint, uint32_t> bindpoint_to_size_index;
-        for (auto& [bindpoint, index] : options.array_length_from_uniform.bindpoint_to_size_index) {
+        for (auto& [bindpoint, index] :
+             options.array_length_from_constants.bindpoint_to_size_index) {
             auto it = remapper_data.find(bindpoint);
             if (it != remapper_data.end()) {
                 bindpoint_to_size_index.emplace(it->second, index);
@@ -212,10 +205,14 @@ void PopulateBindingRelatedOptions(
             }
         }
 
-        array_length_from_uniform_options.ubo_binding =
-            options.array_length_from_uniform.ubo_binding;
-        array_length_from_uniform_options.bindpoint_to_size_index =
-            std::move(bindpoint_to_size_index);
+        if (options.array_length_from_constants.buffer_sizes_offset) {
+            array_length_options.buffer_sizes_offset =
+                options.array_length_from_constants.buffer_sizes_offset;
+        } else {
+            array_length_options.ubo_binding = options.array_length_from_constants.ubo_binding;
+        }
+
+        array_length_options.bindpoint_to_size_index = std::move(bindpoint_to_size_index);
     }
 }
 

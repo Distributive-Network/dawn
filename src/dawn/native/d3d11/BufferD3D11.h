@@ -30,8 +30,10 @@
 
 #include <limits>
 #include <memory>
+#include <tuple>
 #include <utility>
 
+#include "absl/container/flat_hash_map.h"
 #include "dawn/common/ityp_array.h"
 #include "dawn/native/Buffer.h"
 #include "dawn/native/d3d/d3d_platform.h"
@@ -43,6 +45,11 @@ namespace dawn::native::d3d11 {
 class Device;
 class ScopedCommandRecordingContext;
 class ScopedSwapStateCommandRecordingContext;
+
+bool CanAddStorageUsageToBufferWithoutSideEffects(const Device* device,
+                                                  wgpu::BufferUsage storageUsage,
+                                                  wgpu::BufferUsage originalUsage,
+                                                  size_t bufferSize);
 
 class Buffer : public BufferBase {
   public:
@@ -145,7 +152,7 @@ class Buffer : public BufferBase {
            wgpu::BufferUsage internalMappableFlags);
     ~Buffer() override;
 
-    void DestroyImpl() override;
+    void DestroyImpl(DestroyReason reason) override;
 
     virtual MaybeError InitializeInternal() = 0;
 
@@ -170,10 +177,11 @@ class Buffer : public BufferBase {
                           const ScopedCommandRecordingContext* commandContext);
     MaybeError ClearInitialResource(const ScopedCommandRecordingContext* commandContext);
     MaybeError MapAsyncImpl(wgpu::MapMode mode, size_t offset, size_t size) override;
-    void UnmapImpl() override;
+    MaybeError FinalizeMapImpl(BufferState newState) override;
+    void UnmapImpl(BufferState oldState, BufferState newState) override;
     bool IsCPUWritableAtCreation() const override;
     MaybeError MapAtCreationImpl() override;
-    void* GetMappedPointer() override;
+    void* GetMappedPointerImpl() override;
 
     MaybeError InitializeToZero(const ScopedCommandRecordingContext* commandContext);
 
@@ -193,7 +201,9 @@ class Buffer : public BufferBase {
 // TODO(349848481): Consider making this the only Buffer class since it could cover all use cases.
 class GPUUsableBuffer final : public Buffer {
   public:
-    GPUUsableBuffer(DeviceBase* device, const UnpackedPtr<BufferDescriptor>& descriptor);
+    GPUUsableBuffer(DeviceBase* device,
+                    const UnpackedPtr<BufferDescriptor>& descriptor,
+                    D3D11_MAP mapWriteMode);
     ~GPUUsableBuffer() override;
 
     ResultOrError<ID3D11Buffer*> GetD3D11ConstantBuffer(
@@ -206,7 +216,7 @@ class GPUUsableBuffer final : public Buffer {
 
     ResultOrError<ComPtr<ID3D11ShaderResourceView>>
     UseAsSRV(const ScopedCommandRecordingContext* commandContext, uint64_t offset, uint64_t size);
-    ResultOrError<ComPtr<ID3D11UnorderedAccessView1>>
+    ResultOrError<ComPtr<ID3D11UnorderedAccessView>>
     UseAsUAV(const ScopedCommandRecordingContext* commandContext, uint64_t offset, uint64_t size);
 
     MaybeError PredicatedClear(const ScopedSwapStateCommandRecordingContext* commandContext,
@@ -223,7 +233,7 @@ class GPUUsableBuffer final : public Buffer {
     class Storage;
 
     // Dawn API
-    void DestroyImpl() override;
+    void DestroyImpl(DestroyReason reason) override;
     void SetLabelImpl() override;
 
     MaybeError InitializeInternal() override;
@@ -324,6 +334,13 @@ class GPUUsableBuffer final : public Buffer {
     // don't need both to exist.
     raw_ptr<Storage> mCPUWritableStorage;
     raw_ptr<Storage> mMappedStorage;
+
+    // TODO(dawn:381045722): Use LRU to limit number of cached entries.
+    using BufferViewKey = std::tuple<ID3D11Buffer*, uint64_t, uint64_t>;
+    absl::flat_hash_map<BufferViewKey, ComPtr<ID3D11ShaderResourceView>> mSRVCache;
+    absl::flat_hash_map<BufferViewKey, ComPtr<ID3D11UnorderedAccessView1>> mUAVCache;
+
+    const D3D11_MAP mD3DMapWriteMode = D3D11_MAP_WRITE;
 };
 
 static inline GPUUsableBuffer* ToGPUUsableBuffer(BufferBase* buffer) {

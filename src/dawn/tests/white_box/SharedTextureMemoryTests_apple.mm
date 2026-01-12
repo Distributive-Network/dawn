@@ -32,8 +32,13 @@
 
 #import <Metal/Metal.h>
 
+#include <thread>
+
 #include "dawn/common/CoreFoundationRef.h"
 #include "dawn/common/NSRef.h"
+#include "dawn/native/MetalBackend.h"
+#include "dawn/native/metal/Forward.h"
+#include "dawn/native/metal/SharedTextureMemoryMTL.h"
 #include "dawn/tests/white_box/SharedTextureMemoryTests.h"
 
 namespace dawn {
@@ -42,6 +47,47 @@ namespace {
 void AddIntegerValue(CFMutableDictionaryRef dictionary, const CFStringRef key, int32_t value) {
     auto number = AcquireCFRef(CFNumberCreate(nullptr, kCFNumberSInt32Type, &value));
     CFDictionaryAddValue(dictionary, key, number.Get());
+}
+
+wgpu::SharedTextureMemory CreateSharedTextureMemoryHelper(const wgpu::Device& device,
+                                                          bool allowStorageBinding = true) {
+    auto dict = AcquireCFRef(CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+    AddIntegerValue(dict.Get(), kIOSurfaceWidth, 16);
+    AddIntegerValue(dict.Get(), kIOSurfaceHeight, 16);
+    AddIntegerValue(dict.Get(), kIOSurfacePixelFormat, kCVPixelFormatType_32RGBA);
+    AddIntegerValue(dict.Get(), kIOSurfaceBytesPerElement, 4);
+
+    wgpu::SharedTextureMemoryIOSurfaceDescriptor ioSurfaceDesc;
+    ioSurfaceDesc.ioSurface = IOSurfaceCreate(dict.Get());
+    ioSurfaceDesc.allowStorageBinding = allowStorageBinding;
+
+    wgpu::SharedTextureMemoryDescriptor desc;
+    desc.nextInChain = &ioSurfaceDesc;
+
+    return device.ImportSharedTextureMemory(&desc);
+}
+
+void SubmitClearPass(const wgpu::Device& device,
+                     const wgpu::Queue& queue,
+                     const wgpu::Texture& texture) {
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::RenderPassColorAttachment attachment;
+    attachment.view = texture.CreateView();
+    attachment.loadOp = wgpu::LoadOp::Clear;
+    attachment.storeOp = wgpu::StoreOp::Store;
+    wgpu::RenderPassDescriptor renderPassDesc;
+    renderPassDesc.colorAttachmentCount = 1;
+    renderPassDesc.colorAttachments = &attachment;
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPassDesc);
+    pass.End();
+    wgpu::CommandBuffer commands = encoder.Finish();
+    queue.Submit(1, &commands);
+}
+
+void WaitForFuture(const wgpu::Device& device, wgpu::Future future) {
+    auto waitStatus = device.GetAdapter().GetInstance().WaitAny(future, UINT64_MAX);
+    EXPECT_EQ(waitStatus, wgpu::WaitStatus::Success);
 }
 
 class Backend : public SharedTextureMemoryTestBackend {
@@ -86,21 +132,7 @@ class Backend : public SharedTextureMemoryTestBackend {
     // Create one basic shared texture memory. It should support most operations.
     wgpu::SharedTextureMemory CreateSharedTextureMemory(const wgpu::Device& device,
                                                         int layerCount) override {
-        auto dict = AcquireCFRef(CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
-                                                           &kCFTypeDictionaryKeyCallBacks,
-                                                           &kCFTypeDictionaryValueCallBacks));
-        AddIntegerValue(dict.Get(), kIOSurfaceWidth, 16);
-        AddIntegerValue(dict.Get(), kIOSurfaceHeight, 16);
-        AddIntegerValue(dict.Get(), kIOSurfacePixelFormat, kCVPixelFormatType_32RGBA);
-        AddIntegerValue(dict.Get(), kIOSurfaceBytesPerElement, 4);
-
-        wgpu::SharedTextureMemoryIOSurfaceDescriptor ioSurfaceDesc;
-        ioSurfaceDesc.ioSurface = IOSurfaceCreate(dict.Get());
-
-        wgpu::SharedTextureMemoryDescriptor desc;
-        desc.nextInChain = &ioSurfaceDesc;
-
-        return device.ImportSharedTextureMemory(&desc);
+        return CreateSharedTextureMemoryHelper(device);
     }
 
     std::vector<std::vector<wgpu::SharedTextureMemory>> CreatePerDeviceSharedTextureMemories(
@@ -151,6 +183,7 @@ class Backend : public SharedTextureMemoryTestBackend {
 
                 wgpu::SharedTextureMemoryIOSurfaceDescriptor ioSurfaceDesc;
                 ioSurfaceDesc.ioSurface = IOSurfaceCreate(dict.Get());
+                ioSurfaceDesc.allowStorageBinding = true;
 
                 // Internally, the CV enums are defined as their fourcc values. Cast to that and use
                 // it as the label. The fourcc value is a four-character name that can be
@@ -276,6 +309,96 @@ TEST_P(SharedTextureMemoryTests, SharedFenceExportInfoInvalidChainedStruct) {
     exportInfo.nextInChain = &otherStruct;
 
     ASSERT_DEVICE_ERROR(fence.ExportInfo(&exportInfo));
+}
+
+TEST_P(SharedTextureMemoryTests, DisallowStorageBinding) {
+    wgpu::SharedTextureMemory memory =
+        CreateSharedTextureMemoryHelper(device, /*allowStorageBinding=*/false);
+
+    wgpu::SharedTextureMemoryProperties properties;
+    memory.GetProperties(&properties);
+
+    EXPECT_FALSE(properties.usage & wgpu::TextureUsage::StorageBinding);
+
+    const dawn::native::metal::SharedTextureMemory* memoryMtl =
+        dawn::native::metal::ToBackend(dawn::native::FromAPI(memory.Get()));
+
+    EXPECT_FALSE(memoryMtl->GetMtlTextureUsage() & MTLTextureUsageShaderWrite);
+    EXPECT_TRUE(memoryMtl->GetMtlPlaneTextures()[0]);
+    EXPECT_EQ(memoryMtl->GetMtlPlaneTextures()[0].Get().usage, memoryMtl->GetMtlTextureUsage());
+}
+
+// Test that a WGPUFuture is returned on EndAccess and can be waited on.
+TEST_P(SharedTextureMemoryTests, CommandsScheduledFuture) {
+    wgpu::SharedTextureMemory memory = CreateSharedTextureMemoryHelper(device);
+    wgpu::Texture texture = memory.CreateTexture();
+
+    wgpu::SharedTextureMemoryBeginAccessDescriptor beginDesc = {};
+    memory.BeginAccess(texture, &beginDesc);
+
+    SubmitClearPass(device, queue, texture);
+
+    wgpu::SharedTextureMemoryMetalEndAccessState metalEndState = {};
+    wgpu::SharedTextureMemoryEndAccessState endState = {};
+    endState.nextInChain = &metalEndState;
+    memory.EndAccess(texture, &endState);
+
+    WaitForFuture(device, metalEndState.commandsScheduledFuture);
+}
+
+// Test that a WGPUFuture is returned on EndAccess and can be waited on from another thread.
+TEST_P(SharedTextureMemoryTests, CommandsScheduledFutureThreadSafe) {
+    wgpu::SharedTextureMemory memory = CreateSharedTextureMemoryHelper(device);
+    wgpu::Texture texture = memory.CreateTexture();
+
+    wgpu::SharedTextureMemoryBeginAccessDescriptor beginDesc = {};
+    memory.BeginAccess(texture, &beginDesc);
+
+    SubmitClearPass(device, queue, texture);
+
+    wgpu::SharedTextureMemoryMetalEndAccessState metalEndState = {};
+    wgpu::SharedTextureMemoryEndAccessState endState = {};
+    endState.nextInChain = &metalEndState;
+    memory.EndAccess(texture, &endState);
+
+    std::thread thread([&]() { WaitForFuture(device, metalEndState.commandsScheduledFuture); });
+    thread.join();
+}
+
+// Test that a WGPUFuture is returned on EndAccess and can be waited on after the work is done.
+TEST_P(SharedTextureMemoryTests, CommandsScheduledFutureAfterWorkDone) {
+    wgpu::SharedTextureMemory memory = CreateSharedTextureMemoryHelper(device);
+    wgpu::Texture texture = memory.CreateTexture();
+
+    wgpu::SharedTextureMemoryBeginAccessDescriptor beginDesc = {};
+    memory.BeginAccess(texture, &beginDesc);
+
+    SubmitClearPass(device, queue, texture);
+
+    wgpu::SharedTextureMemoryMetalEndAccessState metalEndState = {};
+    wgpu::SharedTextureMemoryEndAccessState endState = {};
+    endState.nextInChain = &metalEndState;
+    memory.EndAccess(texture, &endState);
+
+    WaitForAllOperations();
+
+    WaitForFuture(device, metalEndState.commandsScheduledFuture);
+}
+
+// Test that a null WGPUFuture is returned on EndAccess if no work is done.
+TEST_P(SharedTextureMemoryTests, CommandsScheduledFutureNoWork) {
+    wgpu::SharedTextureMemory memory = CreateSharedTextureMemoryHelper(device);
+    wgpu::Texture texture = memory.CreateTexture();
+
+    wgpu::SharedTextureMemoryBeginAccessDescriptor beginDesc = {};
+    memory.BeginAccess(texture, &beginDesc);
+
+    wgpu::SharedTextureMemoryMetalEndAccessState metalEndState = {};
+    wgpu::SharedTextureMemoryEndAccessState endState = {};
+    endState.nextInChain = &metalEndState;
+    memory.EndAccess(texture, &endState);
+
+    EXPECT_EQ(metalEndState.commandsScheduledFuture.id, 0u);
 }
 
 DAWN_INSTANTIATE_PREFIXED_TEST_P(Metal,

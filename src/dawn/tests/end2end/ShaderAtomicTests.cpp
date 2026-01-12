@@ -36,9 +36,7 @@
 #include "dawn/utils/WGPUHelpers.h"
 
 // The motivation behind these tests is to investigate the failures in
-// webgpu:shader,execution,expression,call,builtin,atomics,atomic* CTS for mobile gpus. The CAS
-// emulation workaround is enough to avoid the issue on mali but still shows up as an issue on
-// adreno.
+// webgpu:shader,execution,expression,call,builtin,atomics,atomic* CTS for mobile gpus.
 
 namespace dawn {
 namespace {
@@ -103,12 +101,9 @@ class ShaderAtomicTests : public DawnTestWithParams<SubgroupsShaderTestsParams> 
 };
 
 TEST_P(ShaderAtomicTests, WorkgroupAtomicArray) {
-    // TODO(crbug.com/42241359): Work in progress to resolve these tests mobile devices.
-    DAWN_SUPPRESS_TEST_IF(gpu_info::IsQualcomm_PCIAdreno6xx(GetParam().adapterProperties.vendorID,
-                                                            GetParam().adapterProperties.deviceID));
-
     // Suppression for Mali gpus.
-    DAWN_SUPPRESS_TEST_IF(gpu_info::IsARM(GetParam().adapterProperties.vendorID));
+    DAWN_SUPPRESS_TEST_IF(IsARM());
+    DAWN_SUPPRESS_TEST_IF(IsWARP());
 
     // Test code only supports up to 256 workgroup size.
     DAWN_ASSERT(GetParam().mWorkgroupSizeParameter <= 256);
@@ -194,7 +189,7 @@ fn main(@builtin(local_invocation_index) local_invocation_index: u32,
 
 DAWN_INSTANTIATE_TEST_P(ShaderAtomicTests,
                         /*Supporting only modern graphics backends for now.*/
-                        {D3D12Backend(), MetalBackend(), VulkanBackend()},
+                        {D3D12Backend(), MetalBackend(), VulkanBackend(), WebGPUBackend()},
                         {true, false}, /*use shader array*/
                         {1,  2,  3,  4,  5,  6,   7,   8,   9,   13, 15,
                          16, 31, 32, 53, 64, 111, 128, 137, 173, 256}, /* workgroup size*/

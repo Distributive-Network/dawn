@@ -113,6 +113,8 @@ ResultOrError<D3D12DeviceInfo> GatherDeviceInfo(const PhysicalDevice& physicalDe
             D3D12_FEATURE_D3D12_OPTIONS13, &featureOptions13, sizeof(featureOptions13)))) {
         info.supportsTextureCopyBetweenDimensions =
             featureOptions13.TextureCopyBetweenDimensionsSupported;
+        info.supportsUnrestrictedBufferTextureCopyPitch =
+            featureOptions13.UnrestrictedBufferTextureCopyPitchSupported;
     }
 
     info.supportsRootSignatureVersion1_1 = false;
@@ -123,6 +125,12 @@ ResultOrError<D3D12DeviceInfo> GatherDeviceInfo(const PhysicalDevice& physicalDe
             sizeof(featureDataRootSignature)))) {
         info.supportsRootSignatureVersion1_1 =
             featureDataRootSignature.HighestVersion >= D3D_ROOT_SIGNATURE_VERSION_1_1;
+    }
+
+    D3D12_FEATURE_DATA_EXISTING_HEAPS existingHeapInfo = {};
+    if (SUCCEEDED(physicalDevice.GetDevice()->CheckFeatureSupport(
+            D3D12_FEATURE_EXISTING_HEAPS, &existingHeapInfo, sizeof(existingHeapInfo)))) {
+        info.supportsExistingHeap = existingHeapInfo.Supported;
     }
 
     D3D12_FEATURE_DATA_SHADER_MODEL knownShaderModels[] = {

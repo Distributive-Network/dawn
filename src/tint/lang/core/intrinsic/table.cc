@@ -102,7 +102,7 @@ static void PrintTypeList(StyledText& ss, VectorRef<const core::type::Type*> typ
 /// @param intrinsic_name the name of the intrinsic
 /// @param template_args the template argument types
 /// @param args the argument types
-/// @param earliest_eval_stage the the earliest evaluation stage that the call can be made
+/// @param earliest_eval_stage the earliest evaluation stage that the call can be made
 /// @param member_function `true` if the builtin should be a member function
 /// @param on_no_match an error callback when no intrinsic overloads matched the provided
 ///                    arguments.
@@ -243,12 +243,9 @@ Result<Overload, StyledText> MatchIntrinsic(Context& context,
     if (num_matched == 1) {
         match = std::move(candidates[match_idx]);
     } else {
-        auto result =
-            ResolveCandidate(context, std::move(candidates), intrinsic_name, template_args, args);
-        if (DAWN_UNLIKELY(result != Success)) {
-            return result.Failure();
-        }
-        match = result.Get();
+        TINT_CHECK_RESULT_UNWRAP(result, ResolveCandidate(context, std::move(candidates),
+                                                          intrinsic_name, template_args, args));
+        match = result;
     }
 
     // Build the return type
@@ -541,9 +538,9 @@ void PrintCandidate(StyledText& ss,
             bool matched = false;
             if (i < template_args.Length()) {
                 auto* matcher_indices = context.data[tmpl.matcher_indices];
-                matched = !matcher_indices ||
-                          context.Match(templates, overload, matcher_indices, earliest_eval_stage)
-                              .Type(template_args[i]);
+                matched = (matcher_indices == nullptr) ||
+                          (context.Match(templates, overload, matcher_indices, earliest_eval_stage)
+                               .Type(template_args[i]) != nullptr);
             }
 
             if (i > 0) {
@@ -567,8 +564,8 @@ void PrintCandidate(StyledText& ss,
 
         bool matched = false;
         if (i < args.Length()) {
-            matched = context.Match(templates, overload, matcher_indices, earliest_eval_stage)
-                          .Type(args[i]);
+            matched = (context.Match(templates, overload, matcher_indices, earliest_eval_stage)
+                           .Type(args[i]) != nullptr);
         }
         all_params_match = all_params_match && matched;
 
@@ -625,8 +622,8 @@ void PrintCandidate(StyledText& ss,
             if (tmpl.kind == TemplateInfo::Kind::kType) {
                 if (auto* ty = templates.Type(i)) {
                     matched =
-                        context.Match(templates, overload, matcher_indices, earliest_eval_stage)
-                            .Type(ty);
+                        (context.Match(templates, overload, matcher_indices, earliest_eval_stage)
+                             .Type(ty) != nullptr);
                 }
             } else {
                 matched = context.Match(templates, overload, matcher_indices, earliest_eval_stage)

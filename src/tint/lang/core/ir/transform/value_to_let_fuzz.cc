@@ -44,19 +44,15 @@ bool CanRun(Module& module) {
     return true;
 }
 
-void ValueToLetFuzzer(Module& module, ValueToLetConfig config) {
+Result<SuccessType> ValueToLetFuzzer(Module& module,
+                                     const fuzz::ir::Context&,
+                                     ValueToLetConfig config) {
     if (!CanRun(module)) {
-        return;
+        return Failure{"Cannot run module"};
     }
 
-    if (auto res = ValueToLet(module, config); res != Success) {
-        return;
-    }
-
-    Capabilities capabilities;
-    if (auto res = Validate(module, capabilities); res != Success) {
-        TINT_ICE() << "result of ValueToLet failed IR validation\n" << res.Failure();
-    }
+    TINT_CHECK_RESULT(ValueToLet(module, config));
+    return Success;
 }
 
 }  // namespace

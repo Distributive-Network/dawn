@@ -39,7 +39,7 @@
 namespace dawn::native::vulkan {
 
 // static
-Ref<PipelineCache> PipelineCache::Create(DeviceBase* device, const CacheKey& key) {
+Ref<PipelineCache> PipelineCache::Create(Device* device, const CacheKey& key) {
     Ref<PipelineCache> cache =
         AcquireRef(new PipelineCache(device, key, /*isMonolithicCache=*/false));
     cache->Initialize();
@@ -47,27 +47,25 @@ Ref<PipelineCache> PipelineCache::Create(DeviceBase* device, const CacheKey& key
 }
 
 // static
-Ref<PipelineCache> PipelineCache::CreateMonolithic(DeviceBase* device, const CacheKey& key) {
+Ref<PipelineCache> PipelineCache::CreateMonolithic(Device* device, const CacheKey& key) {
     Ref<PipelineCache> cache =
         AcquireRef(new PipelineCache(device, key, /*isMonolithicCache=*/true));
     cache->Initialize();
     return cache;
 }
 
-PipelineCache::PipelineCache(DeviceBase* device, const CacheKey& key, bool isMonolithicCache)
-    : PipelineCacheBase(device->GetBlobCache(), key, isMonolithicCache), mDevice(device) {}
+PipelineCache::PipelineCache(Device* device, const CacheKey& key, bool isMonolithicCache)
+    : PipelineCacheBase(device->GetBlobCache(), key, isMonolithicCache),
+      mDevice(device),
+      mInvalidResultWorkaround(
+          device->IsToggleEnabled(Toggle::VulkanIncompletePipelineCacheWorkaround)) {}
 
 PipelineCache::~PipelineCache() {
     if (mHandle == VK_NULL_HANDLE) {
         return;
     }
-    Device* device = ToBackend(GetDevice());
-    device->fn.DestroyPipelineCache(device->GetVkDevice(), mHandle, nullptr);
+    mDevice->fn.DestroyPipelineCache(mDevice->GetVkDevice(), mHandle, nullptr);
     mHandle = VK_NULL_HANDLE;
-}
-
-DeviceBase* PipelineCache::GetDevice() const {
-    return mDevice;
 }
 
 VkPipelineCache PipelineCache::GetHandle() const {
@@ -80,21 +78,34 @@ MaybeError PipelineCache::SerializeToBlobImpl(Blob* blob) {
         return {};
     }
 
+    if (mSkipSerialize) {
+        return {};
+    }
+
     size_t bufferSize;
-    Device* device = ToBackend(GetDevice());
     DAWN_TRY(CheckVkSuccess(
-        device->fn.GetPipelineCacheData(device->GetVkDevice(), mHandle, &bufferSize, nullptr),
+        mDevice->fn.GetPipelineCacheData(mDevice->GetVkDevice(), mHandle, &bufferSize, nullptr),
         "GetPipelineCacheData"));
 
     if (bufferSize == 0 || bufferSize == mStoredDataSize) {
-        // If current VkPipelineCache data size is same as `mCachedDataSize` assume nothing has
+        // If current VkPipelineCache data size is same as `mStoredDataSize` assume nothing has
         // changed vs what is stored in the BlobCache.
         return {};
     }
     *blob = CreateBlob(bufferSize);
-    DAWN_TRY(CheckVkSuccess(
-        device->fn.GetPipelineCacheData(device->GetVkDevice(), mHandle, &bufferSize, blob->Data()),
-        "GetPipelineCacheData"));
+    auto result = mDevice->fn.GetPipelineCacheData(mDevice->GetVkDevice(), mHandle, &bufferSize,
+                                                   blob->Data());
+
+    if (result == VK_INCOMPLETE && mInvalidResultWorkaround) {
+        // Most of the time VK_INCOMPLETE is returned on Pixel 10 is due to a driver bug. The
+        // serialized data both returned here and cached in the driver is likely corrupted. Don't
+        // store it to the blob cache and don't call vkGetPipelineCacheData() since it will return
+        // corrupted data in future calls.
+        mSkipSerialize = true;
+        return {};
+    }
+
+    DAWN_TRY(CheckVkSuccess(result, "GetPipelineCacheData"));
     mStoredDataSize = bufferSize;
 
     return {};
@@ -110,18 +121,17 @@ void PipelineCache::Initialize() {
     createInfo.initialDataSize = blob.Size();
     createInfo.pInitialData = blob.Data();
 
-    Device* device = ToBackend(GetDevice());
     mHandle = VK_NULL_HANDLE;
 
     // Attempts to create the pipeline cache but does not bubble the error, instead only logging.
     // This should be fine because the handle will be left as null and pipeline creation should
     // continue as if there was no cache.
     MaybeError maybeError = CheckVkSuccess(
-        device->fn.CreatePipelineCache(device->GetVkDevice(), &createInfo, nullptr, &*mHandle),
+        mDevice->fn.CreatePipelineCache(mDevice->GetVkDevice(), &createInfo, nullptr, &*mHandle),
         "CreatePipelineCache");
     if (maybeError.IsError()) {
         std::unique_ptr<ErrorData> error = maybeError.AcquireError();
-        GetDevice()->EmitLog(WGPULoggingType_Info, error->GetFormattedMessage().c_str());
+        mDevice->EmitLog(wgpu::LoggingType::Info, error->GetFormattedMessage().c_str());
         return;
     }
 

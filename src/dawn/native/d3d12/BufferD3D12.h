@@ -30,6 +30,7 @@
 
 #include <limits>
 #include <memory>
+#include <vector>
 
 #include "dawn/native/Buffer.h"
 #include "partition_alloc/pointers/raw_ptr.h"
@@ -70,6 +71,9 @@ class Buffer final : public BufferBase {
     MaybeError EnsureDataInitializedAsDestination(CommandRecordingContext* commandContext,
                                                   const CopyTextureToBufferCmd* copy);
 
+    MaybeError SynchronizeBufferBeforeMapping();
+    MaybeError SynchronizeBufferBeforeUseOnGPU();
+
     // Dawn API
     void SetLabelImpl() override;
 
@@ -82,11 +86,12 @@ class Buffer final : public BufferBase {
     MaybeError InitializeAsExternalBuffer(ComPtr<ID3D12Resource> d3dBuffer,
                                           const UnpackedPtr<BufferDescriptor>& descriptor);
     MaybeError MapAsyncImpl(wgpu::MapMode mode, size_t offset, size_t size) override;
-    void UnmapImpl() override;
-    void DestroyImpl() override;
+    MaybeError FinalizeMapImpl(BufferState newState) override;
+    void UnmapImpl(BufferState oldState, BufferState newState) override;
+    void DestroyImpl(DestroyReason reason) override;
     bool IsCPUWritableAtCreation() const override;
     MaybeError MapAtCreationImpl() override;
-    void* GetMappedPointer() override;
+    void* GetMappedPointerImpl() override;
 
     MaybeError MapInternal(bool isWrite, size_t start, size_t end, const char* contextInfo);
 

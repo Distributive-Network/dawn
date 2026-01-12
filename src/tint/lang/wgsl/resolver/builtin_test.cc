@@ -2161,7 +2161,8 @@ INSTANTIATE_TEST_SUITE_P(ResolverTest,
 namespace texture_builtin_tests {
 
 enum class Texture { kF32, kI32, kU32 };
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, Texture data) {
     if (data == Texture::kF32) {
         out << "f32";
@@ -2187,7 +2188,7 @@ inline std::ostream& operator<<(std::ostream& out, TextureTestParams data) {
 
 class ResolverBuiltinTest_TextureOperation : public ResolverTestWithParam<TextureTestParams> {
   public:
-    /// Gets an appropriate type for the coords parameter depending the the
+    /// Gets an appropriate type for the coords parameter depending the
     /// dimensionality of the texture being sampled.
     /// @param dim dimensionality of the texture being sampled
     /// @param scalar the scalar type
@@ -2215,7 +2216,7 @@ class ResolverBuiltinTest_TextureOperation : public ResolverTestWithParam<Textur
 
     void add_call_param(std::string name, ast::Type type, ExpressionList* call_params) {
         std::string type_name = type->identifier->symbol.Name();
-        if (tint::HasPrefix(type_name, "texture") || tint::HasPrefix(type_name, "sampler")) {
+        if (type_name.starts_with("texture") || type_name.starts_with("sampler")) {
             GlobalVar(name, type, Binding(0_a), Group(0_a));
         } else {
             GlobalVar(name, type, core::AddressSpace::kPrivate);

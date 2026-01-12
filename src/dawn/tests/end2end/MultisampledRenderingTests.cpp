@@ -51,6 +51,10 @@ class MultisampledRenderingTest : public DawnTest {
         DawnTest::SetUp();
 
         InitTexturesForTest();
+
+        // TODO(crbug.com/468061892): Fails on Windows 11/NVIDIA GTX 1660.
+        DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsNvidia() && IsD3D12() &&
+                              IsBackendValidationEnabled());
     }
 
     void InitTexturesForTest() {
@@ -170,11 +174,14 @@ class MultisampledRenderingTest : public DawnTest {
                                                    uint32_t mipLevelCount = 1,
                                                    uint32_t arrayLayerCount = 1,
                                                    bool transientAttachment = false,
-                                                   bool supportsTextureBinding = false) {
+                                                   bool supportsTextureBinding = false,
+                                                   bool supportsCopyDst = false,
+                                                   uint32_t width = kWidth,
+                                                   uint32_t height = kHeight) {
         wgpu::TextureDescriptor descriptor;
         descriptor.dimension = wgpu::TextureDimension::e2D;
-        descriptor.size.width = kWidth << (mipLevelCount - 1);
-        descriptor.size.height = kHeight << (mipLevelCount - 1);
+        descriptor.size.width = width << (mipLevelCount - 1);
+        descriptor.size.height = height << (mipLevelCount - 1);
         descriptor.size.depthOrArrayLayers = arrayLayerCount;
         descriptor.sampleCount = sampleCount;
         descriptor.format = format;
@@ -188,6 +195,10 @@ class MultisampledRenderingTest : public DawnTest {
 
         if (supportsTextureBinding) {
             descriptor.usage |= wgpu::TextureUsage::TextureBinding;
+        }
+
+        if (supportsCopyDst) {
+            descriptor.usage |= wgpu::TextureUsage::CopyDst;
         }
 
         return device.CreateTexture(&descriptor);
@@ -276,6 +287,8 @@ class MultisampledRenderingTest : public DawnTest {
     constexpr static uint32_t kFourthSampleMaskBit = 0x00000008;
 
     constexpr static wgpu::Color kClearColor = {0.0f, 0.0f, 0.0f, 0.0f};
+    constexpr static wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
+    constexpr static wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
 
     wgpu::Texture mMultisampledColorTexture;
     wgpu::TextureView mMultisampledColorView;
@@ -372,10 +385,13 @@ class MultisampledRenderingTest : public DawnTest {
 
 // Test using one multisampled color attachment with resolve target can render correctly.
 TEST_P(MultisampledRenderingTest, ResolveInto2DTexture) {
+    DAWN_SUPPRESS_TEST_IF(IsWARP());
+
+    // TODO(crbug.com/473899151): [Capture] multisampled.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
     constexpr bool kTestDepth = false;
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithOneOutputForTest(kTestDepth);
-
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
 
     // storeOp should not affect the result in the resolve target.
     for (wgpu::StoreOp storeOp : {wgpu::StoreOp::Store, wgpu::StoreOp::Discard}) {
@@ -405,9 +421,6 @@ TEST_P(MultisampledRenderingTest, MultisampledRenderingWithDepthTest) {
     constexpr bool kTestDepth = true;
     wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithOneOutputForTest(kTestDepth);
-
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
 
     // In first render pass we draw a green triangle with depth value == 0.2f.
     {
@@ -452,8 +465,6 @@ TEST_P(MultisampledRenderingTest, ResolveInAnotherRenderPass) {
     wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithOneOutputForTest(kTestDepth);
 
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-
     // In first render pass we draw a green triangle and do not set the resolve target.
     {
         utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
@@ -493,8 +504,6 @@ TEST_P(MultisampledRenderingTest, ResolveIntoMultipleResolveTargets) {
     wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithTwoOutputsForTest();
 
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
     constexpr bool kTestDepth = false;
 
     // Draw a red triangle to the first color attachment, and a blue triangle to the second color
@@ -526,14 +535,16 @@ TEST_P(MultisampledRenderingTest, ResolveOneOfMultipleTargets) {
     // TODO(dawn:1550) Workaround introduces a bug on Qualcomm GPUs, but is necessary for ARM GPUs.
     DAWN_TEST_UNSUPPORTED_IF(IsAndroid() && IsQualcomm() &&
                              HasToggleEnabled("resolve_multiple_attachments_in_separate_passes"));
+    DAWN_SUPPRESS_TEST_IF(IsWARP());
+
+    // TODO(crbug.com/473899151): [Capture] multisampled.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
 
     wgpu::TextureView multisampledColorView2 =
         CreateTextureForRenderAttachment(kColorFormat, kSampleCount).CreateView();
 
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithTwoOutputsForTest();
 
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
     constexpr bool kTestDepth = false;
 
     std::array<float, 8> kUniformData = {
@@ -586,7 +597,6 @@ TEST_P(MultisampledRenderingTest, ResolveIntoNonZeroLocation) {
 
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithNonZeroLocationOutputForTest();
 
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
     constexpr bool kTestDepth = false;
 
     // Draws a red triangle to the first color attachment, and a blue triangle to the second color
@@ -724,8 +734,6 @@ TEST_P(MultisampledRenderingTest, ResolveInto2DArrayTexture) {
     wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithTwoOutputsForTest();
 
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
     constexpr bool kTestDepth = false;
 
     // Draw a red triangle to the first color attachment, and a green triangle to the second color
@@ -813,6 +821,10 @@ TEST_P(MultisampledRenderingTest, ResolveIntoMultipleResolveTargetsWithSampleMas
     DAWN_TEST_UNSUPPORTED_IF(IsAndroid() && IsQualcomm() &&
                              HasToggleEnabled("resolve_multiple_attachments_in_separate_passes"));
 
+    // TODO(crbug.com/454796308): Produces incorrect output on Mac/Intel with
+    // the WebGPU on WebGPU on Metal backend.
+    DAWN_SUPPRESS_TEST_IF(IsMacOS() && IsIntel() && IsWebGPUOn(wgpu::BackendType::Metal));
+
     wgpu::TextureView multisampledColorView2 =
         CreateTextureForRenderAttachment(kColorFormat, kSampleCount).CreateView();
     wgpu::Texture resolveTexture2 = CreateTextureForRenderAttachment(kColorFormat, 1);
@@ -826,8 +838,6 @@ TEST_P(MultisampledRenderingTest, ResolveIntoMultipleResolveTargetsWithSampleMas
     wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithTwoOutputsForTest(kSampleMask);
 
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
     constexpr bool kTestDepth = false;
 
     // Draw a red triangle to the first color attachment, and a blue triangle to the second color
@@ -874,9 +884,6 @@ TEST_P(MultisampledRenderingTest, MultisampledRenderingWithDepthTestAndSampleMas
         CreateRenderPipelineWithOneOutputForTest(kTestDepth, kSampleMaskGreen);
     wgpu::RenderPipeline pipelineRed =
         CreateRenderPipelineWithOneOutputForTest(kTestDepth, kSampleMaskRed);
-
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
 
     // In first render pass we draw a green triangle with depth value == 0.2f.
     // We will only write to the second sample.
@@ -989,6 +996,10 @@ TEST_P(MultisampledRenderingTest, ResolveIntoMultipleResolveTargetsWithShaderOut
     DAWN_TEST_UNSUPPORTED_IF(IsAndroid() && IsQualcomm() &&
                              HasToggleEnabled("resolve_multiple_attachments_in_separate_passes"));
 
+    // TODO(crbug.com/454796308): Produces incorrect output on Mac/Intel with
+    // the WebGPU on WebGPU on Metal backend.
+    DAWN_SUPPRESS_TEST_IF(IsMacOS() && IsIntel() && IsWebGPUOn(wgpu::BackendType::Metal));
+
     wgpu::TextureView multisampledColorView2 =
         CreateTextureForRenderAttachment(kColorFormat, kSampleCount).CreateView();
     wgpu::Texture resolveTexture2 = CreateTextureForRenderAttachment(kColorFormat, 1);
@@ -1020,8 +1031,6 @@ TEST_P(MultisampledRenderingTest, ResolveIntoMultipleResolveTargetsWithShaderOut
         })";
 
     wgpu::RenderPipeline pipeline = CreateRenderPipelineForTest(fs, 2, false);
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
     constexpr bool kTestDepth = false;
 
     // Draw a red triangle to the first color attachment, and a blue triangle to the second color
@@ -1053,6 +1062,12 @@ TEST_P(MultisampledRenderingTest, ResolveIntoMultipleResolveTargetsWithShaderOut
 // Test using one multisampled color attachment with resolve target can render correctly
 // with alphaToCoverageEnabled.
 TEST_P(MultisampledRenderingTest, ResolveInto2DTextureWithAlphaToCoverage) {
+    // TODO(crbug.com/458113207): Flaky w/ WARP.
+    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsWARP());
+
+    // TODO(crbug.com/473899151): [Capture] multisampled.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
     constexpr bool kTestDepth = false;
     constexpr uint32_t kSampleMask = 0xFFFFFFFF;
     constexpr bool kAlphaToCoverageEnabled = true;
@@ -1102,6 +1117,12 @@ TEST_P(MultisampledRenderingTest, ResolveIntoMultipleResolveTargetsWithAlphaToCo
     // TODO(dawn:1550) Workaround introduces a bug on Qualcomm GPUs, but is necessary for ARM GPUs.
     DAWN_TEST_UNSUPPORTED_IF(IsAndroid() && IsQualcomm() &&
                              HasToggleEnabled("resolve_multiple_attachments_in_separate_passes"));
+
+    // TODO(crbug.com/473899151): [Capture] multisampled.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
+    // TODO(crbug.com/458113207): Flaky w/ WARP.
+    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsWARP());
 
     wgpu::TextureView multisampledColorView2 =
         CreateTextureForRenderAttachment(kColorFormat, kSampleCount).CreateView();
@@ -1229,6 +1250,12 @@ TEST_P(MultisampledRenderingTest, ResolveInto2DTextureWithAlphaToCoverageAndSamp
     // at the same time. See the issue: https://github.com/gpuweb/gpuweb/issues/959.
     DAWN_SUPPRESS_TEST_IF(IsMetal() && !IsApple());
 
+    // TODO(crbug.com/458113207): Flaky w/ WARP.
+    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsWARP());
+
+    // TODO(crbug.com/473899151): [Capture] multisampled.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
     constexpr bool kTestDepth = false;
     constexpr float kMSAACoverage = 0.50f;
     constexpr uint32_t kSampleMask = kFirstSampleMaskBit | kThirdSampleMaskBit;
@@ -1269,6 +1296,12 @@ TEST_P(MultisampledRenderingTest, ResolveInto2DTextureWithAlphaToCoverageAndSamp
 TEST_P(MultisampledRenderingTest, ResolveInto2DTextureWithAlphaToCoverageAndRasterizationMask) {
     // TODO(dawn:1550) Fails on ARM-based Android devices.
     DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsARM());
+
+    // TODO(crbug.com/458113207): Flaky w/ WARP.
+    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsWARP());
+
+    // TODO(crbug.com/473899151): [Capture] multisampled.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
 
     constexpr bool kTestDepth = false;
     constexpr float kMSAACoverage = 0.50f;
@@ -1359,25 +1392,13 @@ TEST_P(MultisampledRenderingTest, ResolveInto2DTextureWithScissor) {
     VerifyResolveTarget(kGreen, mResolveTexture, 0, 0, kMSAACoverage, kGreenX, kGreenY);
 }
 
-class MultisampledRenderingWithTransientAttachmentTest : public MultisampledRenderingTest {
-    void SetUp() override {
-        MultisampledRenderingTest::SetUp();
-
-        // Skip all tests if the transient attachments feature is not supported.
-        DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::TransientAttachments}));
-    }
-
-    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
-        std::vector<wgpu::FeatureName> requiredFeatures = {};
-        if (SupportsFeatures({wgpu::FeatureName::TransientAttachments})) {
-            requiredFeatures.push_back(wgpu::FeatureName::TransientAttachments);
-        }
-        return requiredFeatures;
-    }
-};
+class MultisampledRenderingWithTransientAttachmentTest : public MultisampledRenderingTest {};
 
 // Test using one multisampled color transient attachment with resolve target can render correctly.
 TEST_P(MultisampledRenderingWithTransientAttachmentTest, ResolveTransientAttachmentInto2DTexture) {
+    // TODO(crbug.com/473899151): [Capture] texture usage conflict.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
     constexpr bool kTestDepth = false;
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithOneOutputForTest(kTestDepth);
 
@@ -1543,8 +1564,6 @@ TEST_P(MultisampledRenderToSingleSampledTest, DrawWithDepthTest) {
         /*testDepth=*/true, /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false,
         /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/false);
 
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
     wgpu::DawnRenderPassColorAttachmentRenderToSingleSampled msaaRenderToSingleSampledDesc;
     msaaRenderToSingleSampledDesc.implicitSampleCount = kSampleCount;
 
@@ -1584,6 +1603,13 @@ TEST_P(MultisampledRenderToSingleSampledTest, DrawWithDepthTest) {
     VerifyResolveTarget(kGreen, singleSampledTexture);
 }
 
+struct Point {
+    uint32_t x;
+    uint32_t y;
+    wgpu::Color color;
+    float msaaCoverage = 1.0f;
+};
+
 class DawnLoadResolveTextureTest : public MultisampledRenderingTest {
   protected:
     void SetUp() override {
@@ -1610,12 +1636,255 @@ class DawnLoadResolveTextureTest : public MultisampledRenderingTest {
     bool HasResolveMultipleAttachmentInSeparatePassesToggle() {
         return HasToggleEnabled("resolve_multiple_attachments_in_separate_passes");
     }
+
+    void TestExpandAndResolveWithRect(const wgpu::RenderPassDescriptorResolveRect& rect,
+                                      const std::vector<Point>& points) {
+        DAWN_TEST_UNSUPPORTED_IF(
+            !SupportsFeatures({wgpu::FeatureName::DawnPartialLoadResolveTexture}));
+
+        const uint32_t resolveWidth = 8;
+        const uint32_t resolveHeight = 8;
+        auto multiSampledTexture =
+            CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
+                                             /*transientAttachment=*/false,
+                                             /*supportsTextureBinding=*/false,
+                                             /*supportsCopyDst=*/false,
+                                             /*width*/ resolveWidth,
+                                             /*height*/ resolveHeight);
+        auto multiSampledTextureView = multiSampledTexture.CreateView();
+
+        const uint32_t approxMsaaWidth = 7;
+        const uint32_t approxMsaaHeight = 7;
+        auto approxMultiSampledTexture =
+            CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
+                                             /*transientAttachment=*/false,
+                                             /*supportsTextureBinding=*/false,
+                                             /*supportsCopyDst=*/false,
+                                             /*width*/ approxMsaaWidth,
+                                             /*height*/ approxMsaaHeight);
+        auto approxMultiSampledTextureView = approxMultiSampledTexture.CreateView();
+
+        mResolveTexture =
+            CreateTextureForRenderAttachment(kColorFormat, 1, 1, 1, /*transientAttachment=*/false,
+                                             /*supportsTextureBinding=*/true,
+                                             /*supportsCopyDst=*/false,
+                                             /*width*/ resolveWidth,
+                                             /*height*/ resolveHeight);
+        auto singleSampledTextureView = mResolveTexture.CreateView();
+
+        wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
+        wgpu::RenderPipeline pipeline = CreateRenderPipelineWithOneOutputForTest(
+            /*testDepth=*/false, /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false,
+            /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/true);
+
+        wgpu::RenderPipeline redPipeline = CreateRenderPipelineWithOneOutputForTest(
+            /*testDepth=*/false, /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false,
+            /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/false);
+
+        // In first render pass we draw a red triangle. StoreOp=Discard to discard the MSAA
+        // texture's content.
+        {
+            utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+                {multiSampledTextureView}, {singleSampledTextureView}, wgpu::LoadOp::Clear,
+                wgpu::LoadOp::Clear,
+                /*hasDepthStencilAttachment=*/false);
+            renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
+            EncodeRenderPassForTest(commandEncoder, renderPass, redPipeline, kRed);
+        }
+        // In the second render pass, we draw a green triangle with LoadOp::ExpandResolveTexture. We
+        // also specify a scissor rect requiring the pixels in the right and bottom edges untouched
+        // during expanding and resolving.
+        {
+            utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+                {approxMultiSampledTextureView}, {singleSampledTextureView},
+                wgpu::LoadOp::ExpandResolveTexture, wgpu::LoadOp::Clear,
+                /*hasDepthStencilAttachment=*/false);
+            renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Store;
+            renderPass.nextInChain = &rect;
+            EncodeRenderPassForTest(commandEncoder, renderPass, pipeline, kGreen);
+        }
+
+        wgpu::CommandBuffer commandBuffer = commandEncoder.Finish();
+        queue.Submit(1, &commandBuffer);
+
+        VerifyPoints(points);
+    }
+
+    // Test that wgpu::LoadOp::Clear or wgpu::LoadOp::Load works with
+    // wgpu::RenderPassDescriptorResolveRect.
+    void TestLoadOrClearThenPartialResolve(
+        const wgpu::RenderPassDescriptorResolveRect& rect,
+        const std::vector<Point>& points,
+        wgpu::LoadOp loadOp,
+        const wgpu::Color& initialColor,
+        const std::optional<wgpu::Color>& userDrawColor = std::nullopt) {
+        DAWN_TEST_UNSUPPORTED_IF(
+            !SupportsFeatures({wgpu::FeatureName::DawnPartialLoadResolveTexture}));
+
+        constexpr uint32_t msaaWidth = 3;
+        constexpr uint32_t msaaHeight = 3;
+        constexpr uint32_t resolveWidth = 4;
+        constexpr uint32_t resolveHeight = 4;
+
+        auto multiSampledTexture =
+            CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
+                                             /*transientAttachment=*/false,
+                                             /*supportsTextureBinding=*/false,
+                                             /*supportsCopyDst=*/false,
+                                             /*width*/ msaaWidth,
+                                             /*height*/ msaaHeight);
+        auto multiSampledTextureView = multiSampledTexture.CreateView();
+
+        mResolveTexture =
+            CreateTextureForRenderAttachment(kColorFormat, 1, 1, 1, /*transientAttachment=*/false,
+                                             /*supportsTextureBinding=*/true,
+                                             /*supportsCopyDst=*/false,
+                                             /*width*/ resolveWidth,
+                                             /*height*/ resolveHeight);
+        auto singleSampledTextureView = mResolveTexture.CreateView();
+
+        wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
+
+        // Initial clear of MSAA texture if loading.
+        if (loadOp == wgpu::LoadOp::Load) {
+            utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+                {multiSampledTextureView}, {nullptr}, wgpu::LoadOp::Clear, wgpu::LoadOp::Clear,
+                /*testDepth=*/false);
+            renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Store;
+            renderPass.cColorAttachments[0].clearValue = initialColor;
+
+            wgpu::RenderPassEncoder renderPassEncoder = commandEncoder.BeginRenderPass(&renderPass);
+            renderPassEncoder.End();
+        }
+
+        // Create render pass with configurable wgpu::LoadOp and
+        // wgpu::RenderPassDescriptorResolveRect.
+        {
+            utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+                {multiSampledTextureView}, {singleSampledTextureView}, loadOp, wgpu::LoadOp::Clear,
+                /*testDepth=*/false);
+            renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Store;
+            // The clearValue takes effect only when the load operation is set to
+            // wgpu::LoadOp::Clear.
+            renderPass.cColorAttachments[0].clearValue = initialColor;
+            renderPass.nextInChain = &rect;
+            if (userDrawColor) {
+                wgpu::RenderPipeline pipeline = CreateRenderPipelineWithOneOutputForTest(
+                    /*testDepth=*/false, /*sampleMask=*/0xFFFFFFFF,
+                    /*alphaToCoverageEnabled=*/false,
+                    /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/false);
+                EncodeRenderPassForTest(commandEncoder, renderPass, pipeline, *userDrawColor);
+            } else {
+                wgpu::RenderPassEncoder renderPassEncoder =
+                    commandEncoder.BeginRenderPass(&renderPass);
+                renderPassEncoder.End();
+            }
+        }
+
+        wgpu::CommandBuffer commandBuffer = commandEncoder.Finish();
+        queue.Submit(1, &commandBuffer);
+
+        VerifyPoints(points);
+        // When no user drawing is performed (userDrawColor is not set) verify the entire MSAA
+        // texture has uniform color (initialColor).
+        if (!userDrawColor) {
+            VerifyAllMSAAPointsOfSameColor(initialColor, multiSampledTexture);
+        }
+    }
+
+    void VerifyPoints(const std::vector<Point>& points,
+                      const std::optional<wgpu::Texture>& resolveTexture = std::nullopt) {
+        const auto& texture = resolveTexture.value_or(mResolveTexture);
+        for (const Point& point : points) {
+            VerifyResolveTarget(point.color, texture, /*mipmapLevel=*/0, /*arrayLayer=*/0,
+                                /*msaaCoverage=*/point.msaaCoverage, /*x=*/point.x, /*y=*/point.y);
+        }
+    }
+
+    // Verify the points of an MSAA teture.
+    void VerifyMSAAPoints(const std::vector<Point>& points, const wgpu::Texture& msaaTexture) {
+        // Resolve the MSAA texture to single sampled texture.
+        auto singleSampledTexture =
+            CreateTextureForRenderAttachment(kColorFormat, 1, 1, 1,
+                                             /*transientAttachment=*/false,
+                                             /*supportsTextureBinding=*/true,
+                                             /*supportsCopyDst=*/false,
+                                             /*width*/ msaaTexture.GetWidth(),
+                                             /*height*/ msaaTexture.GetHeight());
+        auto singleSampledTextureView = singleSampledTexture.CreateView();
+        wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
+        {
+            utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+                {msaaTexture.CreateView()}, {singleSampledTextureView}, wgpu::LoadOp::Load,
+                wgpu::LoadOp::Clear,
+                /*testDepth=*/false);
+            renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
+
+            wgpu::RenderPassEncoder renderPassEncoder = commandEncoder.BeginRenderPass(&renderPass);
+            renderPassEncoder.End();
+        }
+
+        wgpu::CommandBuffer commandBuffer = commandEncoder.Finish();
+        queue.Submit(1, &commandBuffer);
+        VerifyPoints(points, singleSampledTexture);
+    }
+
+    // Verify all the points of an MSAA teture are of the same color.
+    void VerifyAllMSAAPointsOfSameColor(const wgpu::Color& color,
+                                        const wgpu::Texture& msaaTexture) {
+        auto textureWidth = msaaTexture.GetWidth();
+        auto textureHeight = msaaTexture.GetHeight();
+        std::vector<Point> points(textureWidth * textureHeight);
+        for (size_t i = 0; i < points.size(); ++i) {
+            uint32_t x = i % (textureWidth);
+            uint32_t y = i / (textureWidth);
+            points[i] = {x, y, color};
+        }
+        VerifyMSAAPoints(points, msaaTexture);
+    }
+
+    void TestLoadOrClearThenPartialResolve(wgpu::LoadOp loadOp,
+                                           const wgpu::Color& initialColor,
+                                           const wgpu::Color& userDrawColor) {
+        constexpr wgpu::Color kBlack = {0.0f, 0.0f, 0.0f, 0.0f};
+        wgpu::RenderPassDescriptorResolveRect rect{};
+        rect.colorOffsetX = 1;
+        rect.colorOffsetY = 2;
+        rect.resolveOffsetX = 2;
+        rect.resolveOffsetY = 2;
+        rect.width = 1;
+        rect.height = 1;
+
+        // Only the single point at coordinate {resolveOffsetX, resolveOffsetY} in the resolve
+        // texture is modified. All other points in the resolve texture remain unchanged.
+        std::vector<Point> points = {
+            {1, 1, kBlack}, {2, 1, kBlack}, {3, 1, kBlack}, {1, 2, kBlack}, {2, 2, initialColor},
+            {3, 2, kBlack}, {1, 3, kBlack}, {2, 3, kBlack}, {3, 3, kBlack},
+        };
+
+        // Test wgpu::LoadOp::Clear or wgpu::LoadOp::Load without user draw.
+        TestLoadOrClearThenPartialResolve(rect, points, loadOp, initialColor);
+
+        // If user draws, the resolve texture color is mixed with initial color and user draw color.
+        const wgpu::Color finalColor = {
+            (initialColor.r + userDrawColor.r) / 2.0, (initialColor.g + userDrawColor.g) / 2.0,
+            (initialColor.b + userDrawColor.b) / 2.0, (initialColor.a + userDrawColor.a) / 2.0};
+        points[4] = {2, 2, finalColor};
+        rect.colorOffsetX = 1;
+        rect.colorOffsetY = 1;
+
+        // Test wgpu::LoadOp::Clear or wgpu::LoadOp::Load  with user draw.
+        TestLoadOrClearThenPartialResolve(rect, points, loadOp, initialColor, userDrawColor);
+    }
 };
 
 // Test rendering into a resolve texture then start another render pass with
 // LoadOp::ExpandResolveTexture. The resolve texture will have its content preserved between
 // passes.
 TEST_P(DawnLoadResolveTextureTest, DrawThenLoad) {
+    // TODO(crbug.com/474147745): [Capture] validation error: TransientAttachment usage.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
     auto multiSampledTexture = CreateTextureForRenderAttachment(
         kColorFormat, 4, 1, 1,
         /*transientAttachment=*/device.HasFeature(wgpu::FeatureName::TransientAttachments),
@@ -1664,6 +1933,9 @@ TEST_P(DawnLoadResolveTextureTest, DrawThenLoad) {
 
 // Test using ExpandResolveTexture load op for non-zero indexed attachment.
 TEST_P(DawnLoadResolveTextureTest, DrawThenLoadNonZeroIndexedAttachment) {
+    // TODO(crbug.com/474147745): [Capture] validation error: TransientAttachment usage.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
     auto multiSampledTexture = CreateTextureForRenderAttachment(
         kColorFormat, 4, 1, 1,
         /*transientAttachment=*/device.HasFeature(wgpu::FeatureName::TransientAttachments),
@@ -1717,6 +1989,9 @@ TEST_P(DawnLoadResolveTextureTest, TwoOutputsDrawThenLoadColor0) {
     // with DawnLoadResolveTexture feature if there are more than one attachment.
     DAWN_TEST_UNSUPPORTED_IF(HasResolveMultipleAttachmentInSeparatePassesToggle());
 
+    // TODO(383731610): multiple outputs are not working in compat mode.
+    DAWN_SUPPRESS_TEST_IF(IsCompatibilityMode());
+
     auto multiSampledTexture1 = CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
                                                                  /*transientAttachment=*/false,
                                                                  /*supportsTextureBinding=*/false);
@@ -1740,9 +2015,6 @@ TEST_P(DawnLoadResolveTextureTest, TwoOutputsDrawThenLoadColor0) {
     wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithTwoOutputsForTest(
         /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false);
-
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
 
     // In first render pass:
     // - we draw a red triangle to attachment0. StoreOp=Discard to discard the MSAA texture's
@@ -1798,6 +2070,9 @@ TEST_P(DawnLoadResolveTextureTest, TwoOutputsDrawThenLoadColor1) {
     // with DawnLoadResolveTexture feature if there are more than one attachment.
     DAWN_TEST_UNSUPPORTED_IF(HasResolveMultipleAttachmentInSeparatePassesToggle());
 
+    // TODO(383731610): multiple outputs are not working in compat mode.
+    DAWN_SUPPRESS_TEST_IF(IsCompatibilityMode());
+
     auto multiSampledTexture1 = CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
                                                                  /*transientAttachment=*/false,
                                                                  /*supportsTextureBinding=*/false);
@@ -1821,9 +2096,6 @@ TEST_P(DawnLoadResolveTextureTest, TwoOutputsDrawThenLoadColor1) {
     wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithTwoOutputsForTest(
         /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false);
-
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
 
     // In first render pass:
     // - we draw a red triangle to attachment0. StoreOp=Store.
@@ -1902,9 +2174,6 @@ TEST_P(DawnLoadResolveTextureTest, TwoOutputsDrawThenLoadColor0AndColor1) {
     wgpu::RenderPipeline pipeline = CreateRenderPipelineWithTwoOutputsForTest(
         /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false);
 
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
-
     // In first render pass:
     // - we draw a red triangle to attachment0. StoreOp=Discard.
     // - we draw a green triangle to attachment1. StoreOp=Discard.
@@ -1953,6 +2222,9 @@ TEST_P(DawnLoadResolveTextureTest, TwoOutputsDrawThenLoadColor0AndColor1) {
 
 // Test ExpandResolveTexture load op rendering with depth test works correctly.
 TEST_P(DawnLoadResolveTextureTest, DrawWithDepthTest) {
+    // TODO(crbug.com/474147745): [Capture] validation error: TransientAttachment usage.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
     auto multiSampledTexture = CreateTextureForRenderAttachment(
         kColorFormat, 4, 1, 1,
         /*transientAttachment=*/device.HasFeature(wgpu::FeatureName::TransientAttachments),
@@ -1970,9 +2242,6 @@ TEST_P(DawnLoadResolveTextureTest, DrawWithDepthTest) {
         /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/true);
 
     wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
-
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
 
     // In first render pass we clear the render pass without drawing anything
     {
@@ -2031,6 +2300,10 @@ TEST_P(DawnLoadResolveTextureTest, TwoOutputsDrawWithDepthTestColor0AndColor1) {
     // with DawnLoadResolveTexture feature if there are more than one attachment.
     DAWN_TEST_UNSUPPORTED_IF(HasResolveMultipleAttachmentInSeparatePassesToggle());
 
+    // TODO(crbug.com/473890413): [Capture] validation error: attachment state of pipeline not
+    // compatible with pass.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
     auto multiSampledTexture1 = CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
                                                                  /*transientAttachment=*/false,
                                                                  /*supportsTextureBinding=*/false);
@@ -2058,9 +2331,6 @@ TEST_P(DawnLoadResolveTextureTest, TwoOutputsDrawWithDepthTestColor0AndColor1) {
         /*loadOpForColor1=*/PipelineMultisampleLoadOp::ExpandResolveTarget);
 
     wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
-
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
 
     // In first render pass we clear the render pass without drawing anything
     {
@@ -2134,6 +2404,9 @@ TEST_P(DawnLoadResolveTextureTest, TwoOutputsDrawWithDepthTestColor0AndColor1) {
 
 // Test rendering into a layer of a 2D array texture and load op=LoadOp::ExpandResolveTexture.
 TEST_P(DawnLoadResolveTextureTest, DrawThenLoad2DArrayTextureLayer) {
+    // Creating 2D view from 2D array texture is not supported in compat mode.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
+
     auto multiSampledTexture = CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
                                                                 /*transientAttachment=*/false,
                                                                 /*supportsTextureBinding=*/false);
@@ -2184,8 +2457,8 @@ TEST_P(DawnLoadResolveTextureTest, DrawThenLoad2DArrayTextureLayer) {
     VerifyResolveTarget(kGreen, singleSampledTexture, 0, 1);
 }
 
-// Test RenderPassDescriptorExpandResolveRect works correctly when rendering with
-// LoadOp::ExpandResolveTexture.
+// Test RenderPassDescriptorResolveRect works correctly
+// when rendering with LoadOp::ExpandResolveTexture.
 TEST_P(DawnLoadResolveTextureTest, ClearThenLoadAndDrawWithRect) {
     DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::DawnPartialLoadResolveTexture}));
 
@@ -2211,7 +2484,7 @@ TEST_P(DawnLoadResolveTextureTest, ClearThenLoadAndDrawWithRect) {
         utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
             {multiSampledTextureView}, {singleSampledTextureView}, wgpu::LoadOp::Clear,
             wgpu::LoadOp::Clear,
-            /*testDepth=*/false);
+            /*hasDepthStencilAttachment=*/false);
         renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
 
         wgpu::RenderPassEncoder renderPassEncoder = commandEncoder.BeginRenderPass(&renderPass);
@@ -2225,10 +2498,11 @@ TEST_P(DawnLoadResolveTextureTest, ClearThenLoadAndDrawWithRect) {
         utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
             {multiSampledTextureView}, {singleSampledTextureView},
             wgpu::LoadOp::ExpandResolveTexture, wgpu::LoadOp::Clear,
-            /*testDepth=*/false);
+            /*hasDepthStencilAttachment=*/false);
         renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Store;
-        wgpu::RenderPassDescriptorExpandResolveRect rect{};
-        rect.x = rect.y = 0;
+        wgpu::RenderPassDescriptorResolveRect rect{};
+        rect.colorOffsetX = rect.colorOffsetY = 0;
+        rect.resolveOffsetX = rect.resolveOffsetY = 0;
         rect.width = kWidth - 1;
         rect.height = kHeight - 1;
         renderPass.nextInChain = &rect;
@@ -2245,7 +2519,7 @@ TEST_P(DawnLoadResolveTextureTest, ClearThenLoadAndDrawWithRect) {
                         /*msaaCoverage=*/1.0f, /*x=*/kWidth - 1, /*y=*/kHeight - 1);
 }
 
-// Test RenderPassDescriptorExpandResolveRect works correctly with StoreOp::Discard;
+// Test RenderPassDescriptorResolveRect works correctly with StoreOp::Discard.
 TEST_P(DawnLoadResolveTextureTest, StoreOpDiscardWithRect) {
     DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::DawnPartialLoadResolveTexture}));
 
@@ -2267,10 +2541,6 @@ TEST_P(DawnLoadResolveTextureTest, StoreOpDiscardWithRect) {
     wgpu::RenderPipeline redPipelineWithExpandResolve = CreateRenderPipelineWithOneOutputForTest(
         /*testDepth=*/false, /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false,
         /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/true);
-
-    // The color is just random values to test expand VS not.
-    constexpr wgpu::Color kGreen = {0.0f, 0.8f, 0.0f, 0.8f};
-    constexpr wgpu::Color kRed = {0.8f, 0.0f, 0.0f, 0.8f};
 
     // In the first render pass, we draw a green triangle, and keep it stored in the multisampled
     // texture.
@@ -2294,9 +2564,9 @@ TEST_P(DawnLoadResolveTextureTest, StoreOpDiscardWithRect) {
 
         // Discard the multisampled texture at the end of this pass.
         renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
-
-        wgpu::RenderPassDescriptorExpandResolveRect rect{};
-        rect.x = rect.y = 0;
+        wgpu::RenderPassDescriptorResolveRect rect{};
+        rect.colorOffsetX = rect.colorOffsetY = 0;
+        rect.resolveOffsetX = rect.resolveOffsetY = 0;
         rect.width = kWidth - 1;
         rect.height = kHeight - 1;
         renderPass.nextInChain = &rect;
@@ -2327,6 +2597,309 @@ TEST_P(DawnLoadResolveTextureTest, StoreOpDiscardWithRect) {
                         /*msaaCoverage=*/1.0f, /*x=*/kWidth - 1, /*y=*/kHeight - 1);
 }
 
+// Test RenderPassDescriptorResolveRect works correctly when rendering with
+// LoadOp::ExpandResolveTexture.
+TEST_P(DawnLoadResolveTextureTest, ExpandResolve) {
+    DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::DawnPartialLoadResolveTexture}));
+
+    auto multiSampledTexture = CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
+                                                                /*transientAttachment=*/false,
+                                                                /*supportsTextureBinding=*/false);
+    auto multiSampledTextureView = multiSampledTexture.CreateView();
+
+    const uint32_t approxMsaaWidth = 3;
+    const uint32_t approxMsaaHeight = 3;
+    auto approxMultiSampledTexture =
+        CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
+                                         /*transientAttachment=*/false,
+                                         /*supportsTextureBinding=*/false,
+                                         /*supportsCopyDst=*/false,
+                                         /*width*/ approxMsaaWidth,
+                                         /*height*/ approxMsaaHeight);
+    auto approxMultiSampledTextureView = approxMultiSampledTexture.CreateView();
+
+    auto singleSampledTexture =
+        CreateTextureForRenderAttachment(kColorFormat, 1, 1, 1, /*transientAttachment=*/false,
+                                         /*supportsTextureBinding=*/true);
+    auto singleSampledTextureView = singleSampledTexture.CreateView();
+
+    wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
+    wgpu::RenderPipeline pipeline = CreateRenderPipelineWithOneOutputForTest(
+        /*testDepth=*/false, /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false,
+        /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/true);
+
+    wgpu::RenderPipeline redPipeline = CreateRenderPipelineWithOneOutputForTest(
+        /*testDepth=*/false, /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false,
+        /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/false);
+
+    // In first render pass we draw a red triangle. StoreOp=Discard to discard the MSAA texture's
+    // content.
+    {
+        utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+            {multiSampledTextureView}, {singleSampledTextureView}, wgpu::LoadOp::Clear,
+            wgpu::LoadOp::Clear,
+            /*hasDepthStencilAttachment=*/false);
+        renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
+        EncodeRenderPassForTest(commandEncoder, renderPass, redPipeline, kRed);
+    }
+
+    // In the second render pass, we draw a green triangle with LoadOp::ExpandResolveTexture. We
+    // also specify a scissor rect requiring the pixels in the right and bottom edges untouched
+    // during expanding and resolving.
+    {
+        utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+            {approxMultiSampledTextureView}, {singleSampledTextureView},
+            wgpu::LoadOp::ExpandResolveTexture, wgpu::LoadOp::Clear,
+            /*hasDepthStencilAttachment=*/false);
+        renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Store;
+        wgpu::RenderPassDescriptorResolveRect rect{};
+        rect.colorOffsetX = rect.colorOffsetY = 1;
+        rect.resolveOffsetX = rect.resolveOffsetY = 1;
+        rect.width = rect.height = 2;
+        renderPass.nextInChain = &rect;
+        EncodeRenderPassForTest(commandEncoder, renderPass, pipeline, kGreen);
+    }
+
+    wgpu::CommandBuffer commandBuffer = commandEncoder.Finish();
+    queue.Submit(1, &commandBuffer);
+
+    VerifyResolveTarget(kRed, singleSampledTexture, /*mipmapLevel=*/0, /*arrayLayer=*/0,
+                        /*msaaCoverage=*/1.0f, /*x=*/1, /*y=*/0);
+    VerifyResolveTarget(kRed, singleSampledTexture, /*mipmapLevel=*/0, /*arrayLayer=*/0,
+                        /*msaaCoverage=*/1.0f, /*x=*/2, /*y=*/0);
+    VerifyResolveTarget(kGreen, singleSampledTexture, /*mipmapLevel=*/0, /*arrayLayer=*/0,
+                        /*msaaCoverage=*/1.0f, /*x=*/2, /*y=*/1);
+}
+
+// Test RenderPassDescriptorResolveRect works correctly when rendering at different offset with
+// LoadOp::ExpandResolveTexture.
+TEST_P(DawnLoadResolveTextureTest, ExpandResolveDifferentOffset) {
+    DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::DawnPartialLoadResolveTexture}));
+
+    auto multiSampledTexture = CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
+                                                                /*transientAttachment=*/false,
+                                                                /*supportsTextureBinding=*/false);
+    auto multiSampledTextureView = multiSampledTexture.CreateView();
+
+    const uint32_t approxMsaaWidth = 5;
+    const uint32_t approxMsaaHeight = 5;
+    auto approxMultiSampledTexture =
+        CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
+                                         /*transientAttachment=*/false,
+                                         /*supportsTextureBinding=*/false,
+                                         /*supportsCopyDst=*/false,
+                                         /*width*/ approxMsaaWidth,
+                                         /*height*/ approxMsaaHeight);
+    auto approxMultiSampledTextureView = approxMultiSampledTexture.CreateView();
+
+    auto singleSampledTexture =
+        CreateTextureForRenderAttachment(kColorFormat, 1, 1, 1, /*transientAttachment=*/false,
+                                         /*supportsTextureBinding=*/true);
+    auto singleSampledTextureView = singleSampledTexture.CreateView();
+
+    wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
+    wgpu::RenderPipeline pipeline = CreateRenderPipelineWithOneOutputForTest(
+        /*testDepth=*/false, /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false,
+        /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/true);
+
+    wgpu::RenderPipeline redPipeline = CreateRenderPipelineWithOneOutputForTest(
+        /*testDepth=*/false, /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false,
+        /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/false);
+
+    // In first render pass we draw a red triangle. StoreOp=Discard to discard the MSAA texture's
+    // content.
+    {
+        utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+            {multiSampledTextureView}, {singleSampledTextureView}, wgpu::LoadOp::Clear,
+            wgpu::LoadOp::Clear,
+            /*hasDepthStencilAttachment=*/false);
+        renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
+        EncodeRenderPassForTest(commandEncoder, renderPass, redPipeline, kRed);
+    }
+
+    // In the second render pass, we draw a green triangle with LoadOp::ExpandResolveTexture. We
+    // also specify a scissor rect requiring the pixels in the right and bottom edges touched
+    // during expanding and resolving.
+    {
+        utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+            {approxMultiSampledTextureView}, {singleSampledTextureView},
+            wgpu::LoadOp::ExpandResolveTexture, wgpu::LoadOp::Clear,
+            /*hasDepthStencilAttachment=*/false);
+        renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Store;
+        wgpu::RenderPassDescriptorResolveRect rect{};
+        rect.colorOffsetX = rect.colorOffsetY = 1;
+        rect.resolveOffsetX = rect.resolveOffsetY = 0;
+        rect.width = rect.height = 2;
+        renderPass.nextInChain = &rect;
+        EncodeRenderPassForTest(commandEncoder, renderPass, pipeline, kGreen);
+    }
+
+    wgpu::CommandBuffer commandBuffer = commandEncoder.Finish();
+    queue.Submit(1, &commandBuffer);
+
+    VerifyResolveTarget(kGreen, singleSampledTexture, /*mipmapLevel=*/0, /*arrayLayer=*/0,
+                        /*msaaCoverage=*/1.0f, /*x=*/1, /*y=*/0);
+    VerifyResolveTarget(kRed, singleSampledTexture, /*mipmapLevel=*/0, /*arrayLayer=*/0,
+                        /*msaaCoverage=*/1.0f, /*x=*/2, /*y=*/1);
+}
+
+// Test RenderPassDescriptorResolveRect works correctly when texture as input with
+// LoadOp::ExpandResolveTexture.
+TEST_P(DawnLoadResolveTextureTest, ExpandResolveTextureAsInput) {
+    DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::DawnPartialLoadResolveTexture}));
+
+    const uint32_t resolveWidth = 5;
+    const uint32_t resolveHeight = 5;
+    const uint32_t updateSize = 2;
+    mResolveTexture =
+        CreateTextureForRenderAttachment(kColorFormat, 1, 1, 1, /*transientAttachment=*/false,
+                                         /*supportsTextureBinding=*/true,
+                                         /*supportsCopyDst*/ true,
+                                         /*width*/ resolveWidth,
+                                         /*height*/ resolveHeight);
+    auto singleSampledTextureView = mResolveTexture.CreateView();
+
+    wgpu::TexelCopyTextureInfo dst = {};
+    dst.texture = mResolveTexture;
+    std::array<utils::RGBA8, resolveWidth * resolveHeight> rgbaTextureData;
+    for (size_t i = 0; i < rgbaTextureData.size(); ++i) {
+        rgbaTextureData[i] = utils::RGBA8(0, 0, 0, 255);
+    }
+    rgbaTextureData[1] = utils::RGBA8(255, 0, 0, 255);
+    rgbaTextureData[resolveWidth] = utils::RGBA8(0, 255, 0, 255);
+    rgbaTextureData[resolveWidth + 1] = utils::RGBA8(0, 0, 255, 255);
+    rgbaTextureData[resolveWidth * 2 + updateSize] = utils::RGBA8(255, 0, 255, 255);
+    rgbaTextureData[resolveWidth * 2 + updateSize + 1] = utils::RGBA8(255, 255, 0, 255);
+    rgbaTextureData[resolveWidth * 3 + updateSize] = utils::RGBA8(0, 0, 255, 255);
+    rgbaTextureData[resolveWidth * 3 + updateSize + 1] = utils::RGBA8(0, 0, 255, 255);
+    wgpu::TexelCopyBufferLayout dataLayout = {};
+    wgpu::TextureDescriptor textureDesc = {};
+    textureDesc.size = {resolveWidth, resolveHeight, 1};
+    dataLayout.bytesPerRow = textureDesc.size.width * sizeof(utils::RGBA8);
+    queue.WriteTexture(&dst, rgbaTextureData.data(), rgbaTextureData.size() * sizeof(utils::RGBA8),
+                       &dataLayout, &textureDesc.size);
+
+    auto multiSampledTexture = CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
+                                                                /*transientAttachment=*/false,
+                                                                /*supportsTextureBinding=*/false);
+    auto multiSampledTextureView = multiSampledTexture.CreateView();
+
+    const uint32_t approxMsaaWidth = 6;
+    const uint32_t approxMsaaHeight = 6;
+    auto approxMultiSampledTexture =
+        CreateTextureForRenderAttachment(kColorFormat, 4, 1, 1,
+                                         /*transientAttachment=*/false,
+                                         /*supportsTextureBinding=*/false,
+                                         /*supportsCopyDst=*/false,
+                                         /*width*/ approxMsaaWidth,
+                                         /*height*/ approxMsaaHeight);
+    auto approxMultiSampledTextureView = approxMultiSampledTexture.CreateView();
+    wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
+    wgpu::RenderPipeline pipeline = CreateRenderPipelineWithOneOutputForTest(
+        /*testDepth=*/false, /*sampleMask=*/0xFFFFFFFF, /*alphaToCoverageEnabled=*/false,
+        /*flipTriangle=*/false, /*enableExpandResolveLoadOp=*/true);
+
+    // In the first render pass, we draw a green triangle with LoadOp::ExpandResolveTexture. We
+    // also specify a scissor rect requiring the pixels in the left and top edges touched
+    // during expanding and resolving.
+    {
+        utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+            {approxMultiSampledTextureView}, {singleSampledTextureView},
+            wgpu::LoadOp::ExpandResolveTexture, wgpu::LoadOp::Clear,
+            /*hasDepthStencilAttachment=*/false);
+        renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
+        wgpu::RenderPassDescriptorResolveRect rect{};
+        rect.colorOffsetX = rect.colorOffsetY = 0;
+        rect.resolveOffsetX = rect.resolveOffsetY = 0;
+        rect.width = rect.height = updateSize;
+        renderPass.nextInChain = &rect;
+        EncodeRenderPassForTest(commandEncoder, renderPass, pipeline, kGreen);
+    }
+    // In the second render pass, we draw a blue triangle with LoadOp::ExpandResolveTexture. We
+    // also specify a scissor rect requiring the pixels in the middle touched
+    // during expanding and resolving.
+    {
+        utils::ComboRenderPassDescriptor renderPass = CreateComboRenderPassDescriptorForTest(
+            {approxMultiSampledTextureView}, {singleSampledTextureView},
+            wgpu::LoadOp::ExpandResolveTexture, wgpu::LoadOp::Clear,
+            /*hasDepthStencilAttachment=*/false);
+        renderPass.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
+        wgpu::RenderPassDescriptorResolveRect rect{};
+        rect.colorOffsetX = 3;
+        rect.colorOffsetY = 4;
+        rect.resolveOffsetX = 1;
+        rect.resolveOffsetY = 2;
+        rect.width = rect.height = updateSize;
+        renderPass.nextInChain = &rect;
+        constexpr wgpu::Color kBlue = {0.0f, 0.0f, 0.8f, 0.8f};
+        EncodeRenderPassForTest(commandEncoder, renderPass, pipeline, kBlue);
+    }
+
+    wgpu::CommandBuffer commandBuffer = commandEncoder.Finish();
+    queue.Submit(1, &commandBuffer);
+    std::vector<Point> points = {
+        {1, 0, kGreen},
+        {0, 1, {0.0f, 1.0f, 0.0f, 1.0f}},
+        {3, 2, {1.0f, 1.0f, 0.0f, 1.0f}},
+        {2, 3, {0.0f, 0.0f, 1.0f, 1.0f}},
+        {1, 2, {0.0f, 0.0f, 0.0f, 1.0f}},
+        {2, 1, {0.0f, 0.0f, 0.0f, 1.0f}},
+    };
+    VerifyPoints(points);
+}
+
+// Test RenderPassDescriptorResolveRect works correctly with smaller msaa texture when rendering
+// with LoadOp::ExpandResolveTexture.
+TEST_P(DawnLoadResolveTextureTest, ExpandResolveWithSmallerMSAATexture) {
+    wgpu::RenderPassDescriptorResolveRect rect{};
+    rect.colorOffsetX = rect.colorOffsetY = 0;
+    rect.resolveOffsetX = rect.resolveOffsetY = 0;
+    rect.width = 3;
+    rect.height = 3;
+
+    std::vector<Point> points = {
+        {1, 0, kGreen},
+        {2, 0, kGreen},
+        {2, 1, kGreen},
+        {3, 0, kRed},
+    };
+    TestExpandAndResolveWithRect(rect, points);
+}
+
+// Test RenderPassDescriptorResolveRect works correctly with non zero offset when rendering with
+// LoadOp::ExpandResolveTexture.
+TEST_P(DawnLoadResolveTextureTest, ExpandResolveDifferentNonZeroOffsetsWithSmallerMSAATexture) {
+    wgpu::RenderPassDescriptorResolveRect rect{};
+    rect.colorOffsetX = 1;
+    rect.colorOffsetY = 2;
+    rect.resolveOffsetX = 3;
+    rect.resolveOffsetY = 4;
+    rect.width = 3;
+    rect.height = 3;
+    std::vector<Point> points = {
+        {5, 4, kGreen},
+    };
+    TestExpandAndResolveWithRect(rect, points);
+    points = {
+        {4, 4, kGreen},
+    };
+    // Test when resolveOffsetX - colorOffsetX and resolveOffsetY - colorOffsetY are different.
+    rect.resolveOffsetX = 2;
+    TestExpandAndResolveWithRect(rect, points);
+}
+
+// Test that RenderPassDescriptorResolveRect works with wgpu::LoadOp::Clear.
+TEST_P(DawnLoadResolveTextureTest, ClearThenPartialResolve) {
+    TestLoadOrClearThenPartialResolve(wgpu::LoadOp::Clear, /*initialColor*/ kRed,
+                                      /*userDrawColor*/ kGreen);
+}
+
+// Test that RenderPassDescriptorResolveRect works with wgpu::LoadOp::Load.
+TEST_P(DawnLoadResolveTextureTest, LoadThenPartialResolve) {
+    TestLoadOrClearThenPartialResolve(wgpu::LoadOp::Clear, /*initialColor*/ kGreen,
+                                      /*userDrawColor*/ kRed);
+}
+
 DAWN_INSTANTIATE_TEST(MultisampledRenderingTest,
                       D3D11Backend(),
                       D3D12Backend(),
@@ -2335,6 +2908,7 @@ DAWN_INSTANTIATE_TEST(MultisampledRenderingTest,
                       MetalBackend(),
                       OpenGLBackend(),
                       OpenGLESBackend(),
+                      WebGPUBackend(),
                       VulkanBackend(),
                       VulkanBackend({"always_resolve_into_zero_level_and_layer"}),
                       VulkanBackend({"resolve_multiple_attachments_in_separate_passes"}),
@@ -2351,6 +2925,7 @@ DAWN_INSTANTIATE_TEST(MultisampledRenderingWithTransientAttachmentTest,
                       MetalBackend(),
                       OpenGLBackend(),
                       OpenGLESBackend(),
+                      WebGPUBackend(),
                       VulkanBackend(),
                       VulkanBackend({"always_resolve_into_zero_level_and_layer"}),
                       MetalBackend({"emulate_store_and_msaa_resolve"}),
@@ -2366,6 +2941,7 @@ DAWN_INSTANTIATE_TEST(MultisampledRenderToSingleSampledTest,
                       MetalBackend(),
                       OpenGLBackend(),
                       OpenGLESBackend(),
+                      WebGPUBackend(),
                       VulkanBackend(),
                       VulkanBackend({"always_resolve_into_zero_level_and_layer"}),
                       MetalBackend({"emulate_store_and_msaa_resolve"}),
@@ -2381,6 +2957,7 @@ DAWN_INSTANTIATE_TEST(DawnLoadResolveTextureTest,
                       MetalBackend(),
                       OpenGLBackend(),
                       OpenGLESBackend(),
+                      WebGPUBackend(),
                       VulkanBackend(),
                       VulkanBackend({"always_resolve_into_zero_level_and_layer"}),
                       VulkanBackend({"resolve_multiple_attachments_in_separate_passes"}),

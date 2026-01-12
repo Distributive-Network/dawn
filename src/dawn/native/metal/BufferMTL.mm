@@ -59,11 +59,7 @@ ResultOrError<Ref<Buffer>> Buffer::Create(Device* device,
 
 // static
 uint64_t Buffer::QueryMaxBufferLength(id<MTLDevice> mtlDevice) {
-    if (@available(iOS 12, tvOS 12, macOS 10.14, *)) {
         return [mtlDevice maxBufferLength];
-    }
-    // 256Mb limit in versions without based on the data in the feature set tables.
-    return 256 * 1024 * 1024;
 }
 
 Buffer::Buffer(DeviceBase* dev, const UnpackedPtr<BufferDescriptor>& desc)
@@ -204,15 +200,19 @@ MaybeError Buffer::MapAsyncImpl(wgpu::MapMode mode, size_t offset, size_t size) 
     return {};
 }
 
-void* Buffer::GetMappedPointer() {
+MaybeError Buffer::FinalizeMapImpl(BufferState newState) {
+    return {};
+}
+
+void* Buffer::GetMappedPointerImpl() {
     return [*mMtlBuffer contents];
 }
 
-void Buffer::UnmapImpl() {
+void Buffer::UnmapImpl(BufferState oldState, BufferState newState) {
     // Nothing to do, Metal StorageModeShared buffers are always mapped.
 }
 
-void Buffer::DestroyImpl() {
+void Buffer::DestroyImpl(DestroyReason reason) {
     // TODO(crbug.com/dawn/831): DestroyImpl is called from two places.
     // - It may be called if the buffer is explicitly destroyed with APIDestroy.
     //   This case is NOT thread-safe and needs proper synchronization with other
@@ -220,7 +220,7 @@ void Buffer::DestroyImpl() {
     // - It may be called when the last ref to the buffer is dropped and the buffer
     //   is implicitly destroyed. This case is thread-safe because there are no
     //   other threads using the buffer since there are no other live refs.
-    BufferBase::DestroyImpl();
+    BufferBase::DestroyImpl(reason);
     mMtlBuffer = nullptr;
 }
 

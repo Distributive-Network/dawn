@@ -30,17 +30,22 @@
 #include "src/tint/lang/core/type/abstract_float.h"
 #include "src/tint/lang/core/type/abstract_int.h"
 #include "src/tint/lang/core/type/array.h"
+#include "src/tint/lang/core/type/binding_array.h"
 #include "src/tint/lang/core/type/bool.h"
 #include "src/tint/lang/core/type/f16.h"
 #include "src/tint/lang/core/type/f32.h"
 #include "src/tint/lang/core/type/i32.h"
+#include "src/tint/lang/core/type/i8.h"
 #include "src/tint/lang/core/type/matrix.h"
 #include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/core/type/reference.h"
 #include "src/tint/lang/core/type/sampler.h"
 #include "src/tint/lang/core/type/struct.h"
+#include "src/tint/lang/core/type/texel_buffer.h"
 #include "src/tint/lang/core/type/texture.h"
 #include "src/tint/lang/core/type/u32.h"
+#include "src/tint/lang/core/type/u64.h"
+#include "src/tint/lang/core/type/u8.h"
 #include "src/tint/lang/core/type/vector.h"
 #include "src/tint/utils/rtti/switch.h"
 
@@ -109,7 +114,7 @@ bool Type::IsFloatScalarOrVector() const {
 }
 
 bool Type::IsIntegerScalar() const {
-    return IsAnyOf<U32, I32>();
+    return IsAnyOf<U32, I32, U64, U8, I8>();
 }
 
 bool Type::IsIntegerVector() const {
@@ -117,27 +122,27 @@ bool Type::IsIntegerVector() const {
 }
 
 bool Type::IsSignedIntegerScalar() const {
-    return IsAnyOf<I32, AbstractInt>();
+    return IsAnyOf<I32, I8, AbstractInt>();
 }
 
 bool Type::IsUnsignedIntegerScalar() const {
-    return Is<U32>();
+    return IsAnyOf<U32, U64, U8>();
 }
 
 bool Type::IsSignedIntegerVector() const {
-    return Is([](const Vector* v) { return v->Type()->IsAnyOf<I32, AbstractInt>(); });
+    return Is([](const Vector* v) { return v->Type()->IsSignedIntegerScalar(); });
 }
 
 bool Type::IsUnsignedIntegerVector() const {
-    return Is([](const Vector* v) { return v->Type()->Is<U32>(); });
+    return Is([](const Vector* v) { return v->Type()->IsUnsignedIntegerScalar(); });
 }
 
 bool Type::IsUnsignedIntegerScalarOrVector() const {
-    return Is<U32>() || IsUnsignedIntegerVector();
+    return IsUnsignedIntegerScalar() || IsUnsignedIntegerVector();
 }
 
 bool Type::IsSignedIntegerScalarOrVector() const {
-    return IsAnyOf<I32, AbstractInt>() || IsSignedIntegerVector();
+    return IsSignedIntegerScalar() || IsSignedIntegerVector();
 }
 
 bool Type::IsIntegerScalarOrVector() const {
@@ -148,12 +153,12 @@ bool Type::IsAbstractScalarOrVector() const {
     return Is<AbstractInt>() || Is([](const Vector* v) { return v->Type()->Is<AbstractInt>(); });
 }
 
-bool Type::IsBoolScalarOrVector() const {
-    return Is<Bool>() || Is([](const Vector* v) { return v->Type()->Is<Bool>(); });
+bool Type::IsBoolVector() const {
+    return Is([](const Vector* v) { return v->Type()->Is<Bool>(); });
 }
 
-bool Type::IsScalarVector() const {
-    return Is([](const Vector* v) { return v->Type()->Is<core::type::Scalar>(); });
+bool Type::IsBoolScalarOrVector() const {
+    return Is<Bool>() || IsBoolVector();
 }
 
 bool Type::IsNumericScalarOrVector() const {
@@ -162,7 +167,13 @@ bool Type::IsNumericScalarOrVector() const {
 }
 
 bool Type::IsHandle() const {
-    return IsAnyOf<Sampler, Texture>();
+    if (IsAnyOf<Sampler, TexelBuffer, Texture>()) {
+        return true;
+    }
+    if (auto* binding_array = As<BindingArray>()) {
+        return binding_array->ElemType()->IsHandle();
+    }
+    return false;
 }
 
 bool Type::IsAbstract() const {

@@ -25,6 +25,11 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/439062058): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // GEN_BUILD:CONDITION(tint_build_is_linux || tint_build_is_mac)
 
 #include <unistd.h>
@@ -88,16 +93,20 @@ std::optional<bool> TerminalIsDarkImpl(FILE* out) {
     // Returns true if there's data available on stdin, or false if no data was available after
     // 100ms.
     auto poll_stdin = [] {
-        // Note: These macros introduce identifiers that start with `__`.
+        // These macros introduce identifiers that start with `__` and use c-style memory access,
+        // thus cause warnings.
         TINT_BEGIN_DISABLE_WARNING(RESERVED_IDENTIFIER);
+        TINT_BEGIN_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
         fd_set rfds{};
         FD_ZERO(&rfds);
         FD_SET(STDIN_FILENO, &rfds);
+
         timeval tv{};
         tv.tv_sec = 0;
         tv.tv_usec = 100'000;
         int res = select(STDIN_FILENO + 1, &rfds, nullptr, nullptr, &tv);
         return res > 0 && FD_ISSET(STDIN_FILENO, &rfds);
+        TINT_END_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
         TINT_END_DISABLE_WARNING(RESERVED_IDENTIFIER);
     };
 

@@ -28,47 +28,17 @@
 #include "dawn/native/vulkan/RenderPassCache.h"
 
 #include "absl/container/inlined_vector.h"
-#include "dawn/common/BitSetIterator.h"
 #include "dawn/common/Enumerator.h"
 #include "dawn/common/HashUtils.h"
 #include "dawn/common/Range.h"
 #include "dawn/native/vulkan/DeviceVk.h"
 #include "dawn/native/vulkan/TextureVk.h"
+#include "dawn/native/vulkan/UtilsVulkan.h"
 #include "dawn/native/vulkan/VulkanError.h"
 
 namespace dawn::native::vulkan {
 
 namespace {
-VkAttachmentLoadOp VulkanAttachmentLoadOp(wgpu::LoadOp op) {
-    switch (op) {
-        case wgpu::LoadOp::Load:
-            return VK_ATTACHMENT_LOAD_OP_LOAD;
-        case wgpu::LoadOp::Clear:
-            return VK_ATTACHMENT_LOAD_OP_CLEAR;
-        case wgpu::LoadOp::ExpandResolveTexture:
-            return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        case wgpu::LoadOp::Undefined:
-            DAWN_UNREACHABLE();
-            break;
-    }
-    DAWN_UNREACHABLE();
-}
-
-VkAttachmentStoreOp VulkanAttachmentStoreOp(wgpu::StoreOp op) {
-    // TODO(crbug.com/dawn/485): return STORE_OP_STORE_NONE_QCOM if the device has required
-    // extension.
-    switch (op) {
-        case wgpu::StoreOp::Store:
-            return VK_ATTACHMENT_STORE_OP_STORE;
-        case wgpu::StoreOp::Discard:
-            return VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        case wgpu::StoreOp::Undefined:
-            DAWN_UNREACHABLE();
-            break;
-    }
-    DAWN_UNREACHABLE();
-}
-
 void InitializeLoadResolveSubpassDependencies(
     absl::InlinedVector<VkSubpassDependency, 2>* subpassDependenciesOut) {
     VkSubpassDependency dependencies[2];
@@ -160,7 +130,7 @@ ResultOrError<RenderPassCache::RenderPassInfo> RenderPassCache::GetRenderPass(
 }
 
 ResultOrError<RenderPassCache::RenderPassInfo> RenderPassCache::CreateRenderPassForQuery(
-    const RenderPassCacheQuery& query) const {
+    const RenderPassCacheQuery& query) {
     // The Vulkan subpasses want to know the layout of the attachments with VkAttachmentRef.
     // Precompute them as they must be pointer-chained in VkSubpassDescription.
     // Note that both colorAttachmentRefs and resolveAttachmentRefs can be sparse with holes
@@ -189,7 +159,7 @@ ResultOrError<RenderPassCache::RenderPassInfo> RenderPassCache::CreateRenderPass
 
     uint32_t attachmentCount = 0;
     ColorAttachmentIndex highestColorAttachmentIndexPlusOne(static_cast<uint8_t>(0));
-    for (auto i : IterateBitSet(query.colorMask)) {
+    for (auto i : query.colorMask) {
         auto& attachmentRef = colorAttachmentRefs[i];
         auto& attachmentDesc = attachmentDescs[attachmentCount];
 
@@ -240,7 +210,7 @@ ResultOrError<RenderPassCache::RenderPassInfo> RenderPassCache::CreateRenderPass
     uint32_t resolveAttachmentCount = 0;
     ColorAttachmentIndex highestInputAttachmentIndex(static_cast<uint8_t>(0));
 
-    for (auto i : IterateBitSet(query.resolveTargetMask)) {
+    for (auto i : query.resolveTargetMask) {
         auto& resolveAttachmentRef = resolveAttachmentRefs[i];
         auto& resolveAttachmentDesc = attachmentDescs[attachmentCount];
 
@@ -324,6 +294,7 @@ ResultOrError<RenderPassCache::RenderPassInfo> RenderPassCache::CreateRenderPass
     // Create the render pass from the zillion parameters
     RenderPassInfo renderPassInfo;
     renderPassInfo.mainSubpass = subpassDescs.size() - 1;
+    renderPassInfo.uniqueId = nextRenderPassId++;
     DAWN_TRY(CheckVkSuccess(mDevice->fn.CreateRenderPass(mDevice->GetVkDevice(), &createInfo,
                                                          nullptr, &*renderPassInfo.renderPass),
                             "CreateRenderPass"));
@@ -339,7 +310,7 @@ size_t RenderPassCache::CacheFuncs::operator()(const RenderPassCacheQuery& query
 
     HashCombine(&hash, Hash(query.resolveTargetMask));
 
-    for (auto i : IterateBitSet(query.colorMask)) {
+    for (auto i : query.colorMask) {
         HashCombine(&hash, query.colorFormats[i], query.colorLoadOp[i], query.colorStoreOp[i]);
     }
     HashCombine(&hash, query.expandResolveMask);
@@ -370,7 +341,7 @@ bool RenderPassCache::CacheFuncs::operator()(const RenderPassCacheQuery& a,
         return false;
     }
 
-    for (auto i : IterateBitSet(a.colorMask)) {
+    for (auto i : a.colorMask) {
         if ((a.colorFormats[i] != b.colorFormats[i]) || (a.colorLoadOp[i] != b.colorLoadOp[i]) ||
             (a.colorStoreOp[i] != b.colorStoreOp[i])) {
             return false;

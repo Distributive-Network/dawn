@@ -27,6 +27,8 @@
 
 #include "dawn/native/PipelineCache.h"
 
+#include <atomic>
+
 namespace dawn::native {
 
 PipelineCacheBase::PipelineCacheBase(BlobCache* cache, const CacheKey& key, bool storeOnIdle)
@@ -34,7 +36,15 @@ PipelineCacheBase::PipelineCacheBase(BlobCache* cache, const CacheKey& key, bool
 
 Blob PipelineCacheBase::Initialize() {
     DAWN_ASSERT(!mInitialized);
-    Blob blob = mCache->Load(mKey);
+
+    auto loadResult = mCache->Load(mKey);
+    Blob blob;
+    if (loadResult.IsSuccess()) {
+        blob = loadResult.AcquireSuccess();
+    }
+    // Otherwise cache hit but hash validation failed, leaving blob empty to continue as if it was a
+    // cache miss.
+
     mCacheHit = !blob.Empty();
     mInitialized = true;
     return blob;
@@ -62,7 +72,7 @@ MaybeError PipelineCacheBase::DidCompilePipeline() {
     if (mStoreOnIdle) {
         // Assume pipeline cache was modified by compiling a pipeline. It will be stored in
         // BlobCache at some later point in StoreOnIdle() if necessary.
-        mNeedsStore = true;
+        mNeedsStore.store(true, std::memory_order_relaxed);
     } else {
         // TODO(dawn:549): Flush is currently synchronously happening on the same thread as pipeline
         // compilation, but it's perhaps deferrable.
@@ -75,8 +85,7 @@ MaybeError PipelineCacheBase::DidCompilePipeline() {
 
 MaybeError PipelineCacheBase::StoreOnIdle() {
     DAWN_ASSERT(mStoreOnIdle);
-    if (mNeedsStore) {
-        mNeedsStore = false;
+    if (mNeedsStore.exchange(false, std::memory_order_relaxed)) {
         DAWN_TRY(Flush());
     }
     return {};

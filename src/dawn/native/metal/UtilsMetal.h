@@ -50,14 +50,14 @@ namespace dawn::native::metal {
 
 MTLPixelFormat MetalPixelFormat(const DeviceBase* device, wgpu::TextureFormat format);
 
-NSRef<NSString> MakeDebugName(DeviceBase* device, const char* prefix, std::string label = "");
+NSRef<NSString> MakeDebugName(DeviceBase* device, const char* prefix, std::string_view label = "");
 
 // Templating for setting the label on MTL objects because not all MTL objects are of the same base
 // class. For example MTLBuffer and MTLTexture inherit MTLResource, but MTLFunction does not. Note
 // that we allow a nullable Metal object because APISetLabel does not currently do any checks on
 // backend resources.
 template <typename T>
-void SetDebugName(DeviceBase* device, T* mtlObj, const char* prefix, std::string label = "") {
+void SetDebugName(DeviceBase* device, T* mtlObj, const char* prefix, std::string_view label = "") {
     if (!device->IsToggleEnabled(Toggle::UseUserDefinedLabelsInBackend)) {
         return;
     }
@@ -130,13 +130,10 @@ MaybeError EncodeMetalRenderPass(Device* device,
                                  EncodeInsideRenderPass encodeInside,
                                  BeginRenderPassCmd* renderPassCmd = nullptr);
 
-MTLStorageMode IOSurfaceStorageMode();
-
 id<MTLTexture> CreateTextureMtlForPlane(MTLTextureUsage mtlUsage,
                                         const Format& format,
                                         size_t plane,
                                         Device* device,
-                                        uint32_t sampleCount,
                                         IOSurfaceRef ioSurface);
 
 MaybeError EncodeEmptyMetalRenderPass(Device* device,
@@ -144,10 +141,10 @@ MaybeError EncodeEmptyMetalRenderPass(Device* device,
                                       MTLRenderPassDescriptor* mtlRenderPass,
                                       Extent3D size);
 
-bool SupportCounterSamplingAtCommandBoundary(id<MTLDevice> device)
-    API_AVAILABLE(macos(11.0), ios(14.0));
-bool SupportCounterSamplingAtStageBoundary(id<MTLDevice> device)
-    API_AVAILABLE(macos(11.0), ios(14.0));
+bool SupportCounterSamplingAtCommandBoundary(id<MTLDevice> device);
+bool SupportCounterSamplingAtStageBoundary(id<MTLDevice> device);
+
+bool SupportTextureComponentSwizzle(id<MTLDevice> device);
 
 }  // namespace dawn::native::metal
 

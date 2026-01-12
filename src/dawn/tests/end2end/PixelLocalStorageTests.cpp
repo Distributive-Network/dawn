@@ -36,11 +36,19 @@ namespace {
 
 class PixelLocalStorageTests : public DawnTest {
   protected:
+    void GetRequiredLimits(const dawn::utils::ComboLimits& supported,
+                           dawn::utils::ComboLimits& required) override {
+        required.maxStorageBuffersInFragmentStage = supported.maxStorageBuffersInFragmentStage;
+        required.maxStorageBuffersPerShaderStage = supported.maxStorageBuffersPerShaderStage;
+    }
+
     void SetUp() override {
         DawnTest::SetUp();
         DAWN_TEST_UNSUPPORTED_IF(
             !device.HasFeature(wgpu::FeatureName::PixelLocalStorageCoherent) &&
             !device.HasFeature(wgpu::FeatureName::PixelLocalStorageNonCoherent));
+
+        DAWN_TEST_UNSUPPORTED_IF(GetSupportedLimits().maxStorageBuffersInFragmentStage < 1);
 
         supportsCoherent = device.HasFeature(wgpu::FeatureName::PixelLocalStorageCoherent);
     }
@@ -205,8 +213,8 @@ class PixelLocalStorageTests : public DawnTest {
                 pass.End();
 
                 // Copy clearedTexture -> attachment.
-                wgpu::ImageCopyTexture src = utils::CreateImageCopyTexture(clearedTexture);
-                wgpu::ImageCopyTexture dst = utils::CreateImageCopyTexture(attachment);
+                wgpu::TexelCopyTextureInfo src = utils::CreateTexelCopyTextureInfo(clearedTexture);
+                wgpu::TexelCopyTextureInfo dst = utils::CreateTexelCopyTextureInfo(attachment);
                 wgpu::Extent3D copySize = {1, 1, 1};
                 encoder.CopyTextureToTexture(&src, &dst, &copySize);
 
@@ -587,18 +595,27 @@ TEST_P(PixelLocalStorageTests, InvertedOffsetOrder) {
 
 // Test implicit pixel local slot.
 TEST_P(PixelLocalStorageTests, ImplicitSlot) {
+    // crbug.com/450817278.
+    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsD3D11() && IsWARP());
+
     PLSSpec spec = {4, {}, CheckMethod::StorageBuffer};
     DoTest(spec);
 }
 
 // Test multiple implicit pixel local slot.
 TEST_P(PixelLocalStorageTests, MultipleImplicitSlot) {
+    // crbug.com/450817278.
+    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsD3D11() && IsWARP());
+
     PLSSpec spec = {16, {}, CheckMethod::StorageBuffer};
     DoTest(spec);
 }
 
 // Test mixed implicit / explicit pixel local slot.
 TEST_P(PixelLocalStorageTests, MixedImplicitExplicit) {
+    // crbug.com/450817278.
+    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsD3D11() && IsWARP());
+
     {
         PLSSpec spec = {16,
                         {{4, wgpu::TextureFormat::R32Uint}, {8, wgpu::TextureFormat::R32Float}},

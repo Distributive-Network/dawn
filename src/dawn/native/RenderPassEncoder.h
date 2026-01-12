@@ -28,8 +28,6 @@
 #ifndef SRC_DAWN_NATIVE_RENDERPASSENCODER_H_
 #define SRC_DAWN_NATIVE_RENDERPASSENCODER_H_
 
-#include <vector>
-
 #include "dawn/native/Error.h"
 #include "dawn/native/Forward.h"
 #include "dawn/native/RenderEncoderBase.h"
@@ -106,7 +104,7 @@ class RenderPassEncoder final : public RenderEncoderBase {
                       StringView label);
 
   private:
-    void DestroyImpl() override;
+    void DestroyImpl(DestroyReason reason) override;
 
     void TrackQueryAvailability(QuerySetBase* querySet, uint32_t queryIndex);
 

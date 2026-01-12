@@ -25,11 +25,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <cstddef>
 #include <iostream>
+#include <span>
 #include <string>
 
 #include "src/tint/cmd/fuzz/wgsl/fuzz.h"
-#include "src/tint/utils/cli/cli.h"
+#include "src/tint/utils/command/cli.h"
 #include "src/tint/utils/command/command.h"
 #include "src/tint/utils/text/base64.h"
 #include "src/tint/utils/text/string.h"
@@ -42,12 +44,23 @@ namespace {
 
 tint::fuzz::wgsl::Options options;
 
+[[nodiscard]] inline std::string ReplaceAll(std::string str,
+                                            std::string_view substr,
+                                            std::string_view replacement) {
+    size_t pos = 0;
+    while ((pos = str.find(substr, pos)) != std::string_view::npos) {
+        str.replace(pos, substr.length(), replacement);
+        pos += replacement.length();
+    }
+    return str;
+}
+
 std::string get_default_dxc_path(char*** argv) {
     std::string default_dxc_path = "";
 #if TINT_BUILD_HLSL_WRITER
     // Assume the DXC library is in the same directory as this executable
     std::string exe_path = (*argv)[0];
-    exe_path = tint::ReplaceAll(exe_path, "\\", "/");
+    exe_path = ReplaceAll(exe_path, "\\", "/");
     auto pos = exe_path.rfind('/');
     if (pos != std::string::npos) {
         default_dxc_path = exe_path.substr(0, pos) + '/' + tint::hlsl::validate::kDxcDLLName;
@@ -64,9 +77,9 @@ void print_dxc_path_found(const std::string& dxc_path) {
     // Log whether the DXC library was found or not once at initialization.
     auto dxc = tint::Command::LookPath(dxc_path);
     if (dxc.Found()) {
-        std::cout << "DXC library found: " << dxc.Path() << std::endl;
+        std::cout << "DXC library found: " << dxc.Path() << "\n";
     } else {
-        std::cout << "DXC library not found: " << dxc_path << std::endl;
+        std::cout << "DXC library not found: " << dxc_path << "\n";
     }
 #endif
 }
@@ -77,12 +90,15 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* input, size_t size) {
     if (size > 0) {
         std::string_view wgsl(reinterpret_cast<const char*>(input), size);
         auto data = tint::DecodeBase64FromComments(wgsl);
-        tint::fuzz::wgsl::Run(wgsl, options, data.Slice());
+        tint::fuzz::wgsl::Run(wgsl, options, data.AsSpan());
     }
     return 0;
 }
 
-extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv) {
+// Explicitly specify the visibility to prevent the linker from stripping the function on macOS, as
+// the LibFuzzer runtime uses dlsym() instead of calling the function directly.
+extern "C" __attribute__((visibility("default"))) int LLVMFuzzerInitialize(int* argc,
+                                                                           char*** argv) {
     tint::cli::OptionSet opts;
 
     tint::Vector<std::string_view, 8> arguments;
@@ -137,9 +153,10 @@ extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv) {
     options.dump = opt_dump.value.value_or(false);
 
     print_dxc_path_found(options.dxc);
-#if defined(TINT_ASAN_ENABLED) && !defined(NDEBUG)
+#if DAWN_ASAN_ENABLED() && !defined(NDEBUG)
     // TODO(crbug.com/352402877): Avoid DXC timeouts on asan + debug fuzzer builds
-    std::cout << "DXC validation disabled in asan + debug builds" << std::endl;
+    std::cout << "DXC validation disabled in asan + debug builds"
+              << "\n";
     options.dxc = "";
 #endif
 

@@ -25,6 +25,11 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/439062058): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // This is an example to manually test surface code. Controls are the following, scoped to the
 // currently focused window:
 //  - W: creates a new window.
@@ -146,7 +151,7 @@ static wgpu::Queue queue;
 
 static std::unordered_map<wgpu::TextureFormat, wgpu::RenderPipeline> trianglePipelines;
 wgpu::RenderPipeline GetOrCreateTrianglePipeline(wgpu::TextureFormat format) {
-    if (trianglePipelines.count(format)) {
+    if (trianglePipelines.contains(format)) {
         return trianglePipelines[format];
     }
 
@@ -265,7 +270,8 @@ void DoRender(WindowData* data) {
     wgpu::CommandBuffer commands = encoder.Finish();
     queue.Submit(1, &commands);
 
-    data->surface.Present();
+    wgpu::Status presentStatus = data->surface.Present();
+    DAWN_ASSERT(presentStatus == wgpu::Status::Success);
 }
 
 std::ostream& operator<<(std::ostream& o, const wgpu::SurfaceConfiguration& desc) {
@@ -303,7 +309,7 @@ void OnKeyPress(GLFWwindow* window, int key, int, int action, int) {
         return;
     }
 
-    DAWN_ASSERT(windows.count(window) == 1);
+    DAWN_ASSERT(windows.contains(window));
 
     WindowData* data = windows[window].get();
     switch (key) {
@@ -409,7 +415,9 @@ int main(int argc, const char* argv[]) {
 
     wgpu::InstanceDescriptor instanceDescriptor{};
     instanceDescriptor.nextInChain = &toggles;
-    instanceDescriptor.features.timedWaitAnyEnable = true;
+    static constexpr auto kTimedWaitAny = wgpu::InstanceFeatureName::TimedWaitAny;
+    instanceDescriptor.requiredFeatureCount = 1;
+    instanceDescriptor.requiredFeatures = &kTimedWaitAny;
     instance = wgpu::CreateInstance(&instanceDescriptor);
 
     // Choose an adapter we like.
@@ -417,7 +425,9 @@ int main(int argc, const char* argv[]) {
     wgpu::RequestAdapterOptions options = {};
     options.backendType = backendOpt.GetValue();
     if (options.backendType != wgpu::BackendType::Undefined) {
-        options.compatibilityMode = dawn::utils::BackendRequiresCompat(options.backendType);
+        options.featureLevel = dawn::utils::BackendRequiresCompat(options.backendType)
+                                   ? wgpu::FeatureLevel::Compatibility
+                                   : wgpu::FeatureLevel::Core;
     }
 
     wgpu::Future adapterFuture = instance.RequestAdapter(

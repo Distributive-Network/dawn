@@ -42,10 +42,19 @@ constexpr static uint32_t kRTSize = 8;
 
 class BindGroupTests : public DawnTest {
   protected:
+    void GetRequiredLimits(const dawn::utils::ComboLimits& supported,
+                           dawn::utils::ComboLimits& required) override {
+        // TODO(crbug.com/383593270): Enable all the limits.
+        required.maxStorageBuffersInVertexStage = supported.maxStorageBuffersInVertexStage;
+        required.maxStorageBuffersInFragmentStage = supported.maxStorageBuffersInFragmentStage;
+        required.maxStorageBuffersPerShaderStage = supported.maxStorageBuffersPerShaderStage;
+        required.maxStorageTexturesInFragmentStage = supported.maxStorageTexturesInFragmentStage;
+        required.maxStorageTexturesPerShaderStage = supported.maxStorageTexturesPerShaderStage;
+    }
+
     void SetUp() override {
         DawnTest::SetUp();
-        mMinUniformBufferOffsetAlignment =
-            GetSupportedLimits().limits.minUniformBufferOffsetAlignment;
+        mMinUniformBufferOffsetAlignment = GetSupportedLimits().minUniformBufferOffsetAlignment;
     }
     wgpu::CommandBuffer CreateSimpleComputeCommandBuffer(const wgpu::ComputePipeline& pipeline,
                                                          const wgpu::BindGroup& bindGroup) {
@@ -328,11 +337,12 @@ TEST_P(BindGroupTests, UBOSamplerAndTexture) {
                              {{0, buffer, 0, sizeof(transform)}, {1, sampler}, {2, textureView}});
 
     wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-    wgpu::ImageCopyBuffer imageCopyBuffer =
-        utils::CreateImageCopyBuffer(stagingBuffer, 0, widthInBytes);
-    wgpu::ImageCopyTexture imageCopyTexture = utils::CreateImageCopyTexture(texture, 0, {0, 0, 0});
+    wgpu::TexelCopyBufferInfo texelCopyBufferInfo =
+        utils::CreateTexelCopyBufferInfo(stagingBuffer, 0, widthInBytes);
+    wgpu::TexelCopyTextureInfo texelCopyTextureInfo =
+        utils::CreateTexelCopyTextureInfo(texture, 0, {0, 0, 0});
     wgpu::Extent3D copySize = {width, height, 1};
-    encoder.CopyBufferToTexture(&imageCopyBuffer, &imageCopyTexture, &copySize);
+    encoder.CopyBufferToTexture(&texelCopyBufferInfo, &texelCopyTextureInfo, &copySize);
     wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass.renderPassInfo);
     pass.SetPipeline(pipeline);
     pass.SetBindGroup(0, bindGroup);
@@ -442,6 +452,9 @@ TEST_P(BindGroupTests, MultipleBindLayouts) {
 // for certain backends.
 // This test passes by not asserting or crashing.
 TEST_P(BindGroupTests, MultipleEntryPointsWithMultipleNonZeroGroups) {
+    // TODO(crbug.com/473886640): [Capture] validation error: sparse bind group layout.
+    DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
     wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
         struct Contents {
             f : f32
@@ -707,6 +720,103 @@ TEST_P(BindGroupTests, SetDynamicBindGroupBeforePipeline) {
     EXPECT_PIXEL_RGBA8_EQ(notFilled, renderPass.color, max, max);
 }
 
+// Test atomic operations against a storage buffer with dynamic offsets.
+// This is to ensure dynamic offsets are applied in the generated HLSL for D3D12.
+TEST_P(BindGroupTests, DynamicOffsetsWithAtomicOperations) {
+    constexpr uint32_t kBufferSize = 256;
+    constexpr uint32_t kBufferSizeBytes = kBufferSize * sizeof(uint32_t);
+
+    constexpr uint32_t kBaseOffset = 64;
+    constexpr uint32_t kBaseOffsetBytes = kBaseOffset * sizeof(uint32_t);
+
+    constexpr uint32_t kDynamicOffset = 64;
+    constexpr uint32_t kDynamicOffsetBytes = kDynamicOffset * sizeof(uint32_t);
+
+    constexpr uint32_t kStorageArraySize = 10;
+    constexpr uint32_t kStorageArraySizeBytes = kStorageArraySize * sizeof(uint32_t);
+
+    std::vector<uint32_t> data(kBufferSize);
+    for (uint32_t i = 0; i < kStorageArraySize; ++i) {
+        // Seed all values. These will be overwritten by the compute shader using atomic operations.
+        data[kBaseOffset + kDynamicOffset + i] = 6;
+    }
+
+    wgpu::Buffer storageBuffer = utils::CreateBufferFromData(
+        device, data.data(), kBufferSizeBytes,
+        wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc);
+
+    wgpu::BindGroupLayout bindGroupLayout = utils::MakeBindGroupLayout(
+        device, {{0, wgpu::ShaderStage::Compute, wgpu::BufferBindingType::Storage, true}});
+
+    wgpu::BindGroup bindGroup =
+        utils::MakeBindGroup(device, bindGroupLayout,
+                             {{0, storageBuffer, /*offset bytes*/ kBaseOffsetBytes,
+                               /*size bytes*/ kStorageArraySizeBytes}});
+
+    const char* cs = R"(
+        @group(0) @binding(0) var<storage, read_write> buffer : array<atomic<u32>>;
+
+        @compute @workgroup_size(1) fn main() {
+            let v = atomicLoad(&buffer[0]);
+            atomicStore(&buffer[0], v); // 6
+
+            atomicAdd(&buffer[1], 1); // 7
+            atomicSub(&buffer[2], 1); // 5
+            atomicMax(&buffer[3], 8); // 8
+            atomicMin(&buffer[4], 4); // 4
+
+            // 6 = 0b0110, 3 = 0b0011
+            atomicAnd(&buffer[5], 2); // 0b0010 = 2
+
+            // 6 = 0b0110, 8 = 0b1000
+            atomicOr(&buffer[6], 8); // 0b1110 = 14
+
+            // 6 = 0b0110, 15 = 0b1111
+            atomicXor(&buffer[7], 15); // 0b1001 = 9
+
+            atomicExchange(&buffer[8], 13); // 13
+            atomicCompareExchangeWeak(&buffer[9], 6, 42); // 42
+        }
+    )";
+
+    std::vector<uint32_t> expectedData(kBufferSize);
+    expectedData[kBaseOffset + kDynamicOffset + 0] = 6;
+    expectedData[kBaseOffset + kDynamicOffset + 1] = 7;
+    expectedData[kBaseOffset + kDynamicOffset + 2] = 5;
+    expectedData[kBaseOffset + kDynamicOffset + 3] = 8;
+    expectedData[kBaseOffset + kDynamicOffset + 4] = 4;
+    expectedData[kBaseOffset + kDynamicOffset + 5] = 2;
+    expectedData[kBaseOffset + kDynamicOffset + 6] = 14;
+    expectedData[kBaseOffset + kDynamicOffset + 7] = 9;
+    expectedData[kBaseOffset + kDynamicOffset + 8] = 13;
+    expectedData[kBaseOffset + kDynamicOffset + 9] = 42;
+
+    wgpu::ShaderModule csModule = utils::CreateShaderModule(device, cs);
+
+    wgpu::ComputePipelineDescriptor csDesc;
+    csDesc.compute.module = csModule;
+
+    wgpu::PipelineLayoutDescriptor pipelineLayoutDescriptor;
+    pipelineLayoutDescriptor.bindGroupLayoutCount = 1;
+    pipelineLayoutDescriptor.bindGroupLayouts = &bindGroupLayout;
+    csDesc.layout = device.CreatePipelineLayout(&pipelineLayoutDescriptor);
+
+    wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&csDesc);
+
+    std::array<uint32_t, 1> offsets = {kDynamicOffsetBytes};
+
+    wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
+    wgpu::ComputePassEncoder computePassEncoder = commandEncoder.BeginComputePass();
+    computePassEncoder.SetPipeline(pipeline);
+    computePassEncoder.SetBindGroup(0, bindGroup, offsets.size(), offsets.data());
+    computePassEncoder.DispatchWorkgroups(1);
+    computePassEncoder.End();
+    wgpu::CommandBuffer commands = commandEncoder.Finish();
+    queue.Submit(1, &commands);
+
+    EXPECT_BUFFER_U32_RANGE_EQ(expectedData.data(), storageBuffer, 0, expectedData.size());
+}
+
 // Test that the same renderpass can use 3 more pipelines
 TEST_P(BindGroupTests, ThreePipelinesInSameRenderpass) {
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
@@ -794,6 +904,8 @@ TEST_P(BindGroupTests, ThreePipelinesInSameRenderpass) {
 
 // Test that bind groups set for one pipeline are still set when the pipeline changes.
 TEST_P(BindGroupTests, BindGroupsPersistAfterPipelineChange) {
+    DAWN_TEST_UNSUPPORTED_IF(GetSupportedLimits().maxStorageBuffersInFragmentStage < 1);
+
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
     // Create a bind group layout which uses a single dynamic uniform buffer.
@@ -874,6 +986,7 @@ TEST_P(BindGroupTests, BindGroupsPersistAfterPipelineChange) {
 TEST_P(BindGroupTests, DrawThenChangePipelineAndBindGroup) {
     // TODO(anglebug.com/3032): fix failure in ANGLE/D3D11
     DAWN_SUPPRESS_TEST_IF(IsANGLE() && IsWindows());
+    DAWN_TEST_UNSUPPORTED_IF(GetSupportedLimits().maxStorageBuffersInFragmentStage < 1);
 
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
@@ -1163,6 +1276,8 @@ TEST_P(BindGroupTests, DynamicOffsetOrder) {
 // conflict. This can happen if the backend treats dynamic bindings separately from non-dynamic
 // bindings.
 TEST_P(BindGroupTests, DynamicAndNonDynamicBindingsDoNotConflictAfterRemapping) {
+    DAWN_SUPPRESS_TEST_IF(IsWARP());
+
     auto RunTestWith = [&](bool dynamicBufferFirst) {
         uint32_t dynamicBufferBindingNumber = dynamicBufferFirst ? 0 : 1;
         uint32_t bufferBindingNumber = dynamicBufferFirst ? 1 : 0;
@@ -1326,6 +1441,8 @@ TEST_P(BindGroupTests, DynamicBindingNoneVisibility) {
 
 // Test that bind group bindings may have unbounded and arbitrary binding numbers
 TEST_P(BindGroupTests, ArbitraryBindingNumbers) {
+    DAWN_SUPPRESS_TEST_IF(IsWARP());
+
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
@@ -1468,6 +1585,8 @@ TEST_P(BindGroupTests, EmptyLayout) {
 // This is a regression test for crbug.com/dawn/410 which tests that it can successfully compile and
 // execute the shader.
 TEST_P(BindGroupTests, ReadonlyStorage) {
+    DAWN_TEST_UNSUPPORTED_IF(GetSupportedLimits().maxStorageBuffersInFragmentStage < 1);
+
     utils::ComboRenderPipelineDescriptor pipelineDescriptor;
 
     pipelineDescriptor.vertex.module = utils::CreateShaderModule(device, R"(
@@ -1537,8 +1656,10 @@ TEST_P(BindGroupTests, CreateWithDestroyedResource) {
 
     // Test various usages and binding types since they take different backend code paths.
     doBufferTest(wgpu::BufferBindingType::Uniform, wgpu::BufferUsage::Uniform);
-    doBufferTest(wgpu::BufferBindingType::Storage, wgpu::BufferUsage::Storage);
-    doBufferTest(wgpu::BufferBindingType::ReadOnlyStorage, wgpu::BufferUsage::Storage);
+    if (GetSupportedLimits().maxStorageBuffersInFragmentStage > 0) {
+        doBufferTest(wgpu::BufferBindingType::Storage, wgpu::BufferUsage::Storage);
+        doBufferTest(wgpu::BufferBindingType::ReadOnlyStorage, wgpu::BufferUsage::Storage);
+    }
 
     // Test a sampled texture.
     {
@@ -1598,6 +1719,148 @@ TEST_P(BindGroupTests, CreateWithDestroyedResource) {
     }
 }
 
+// Test a bindgroup has a invisible binding in the fragment stage.
+// This test passes by not asserting or crashing.
+TEST_P(BindGroupTests, BindingInvisibleInFragmentStage) {
+    wgpu::ShaderModule shaderModule = utils::CreateShaderModule(device, R"(
+            struct VertexOut {
+                @builtin(position) position : vec4f,
+            }
+
+            @vertex fn vsMain(@builtin(vertex_index) VertexIndex : u32) -> VertexOut {
+                const pos = array(
+                    vec2( 1.0, -1.0),
+                    vec2(-1.0, -1.0),
+                    vec2( 0.0,  1.0),
+                );
+                var output: VertexOut;
+                output.position = vec4f(pos[VertexIndex], 0.0, 1.0);
+                return output;
+            }
+
+            // to reuse the same pipeline layout
+            @fragment fn fsMain() -> @location(0) vec4f {
+                return vec4f(1.0);
+            }
+
+            @group(0) @binding(0) var<storage, read_write> output : u32;
+
+            @compute @workgroup_size(1, 1, 1)
+            fn csMain() {
+                output = 1u;
+            })");
+
+    // Create storage buffer.
+    wgpu::BufferDescriptor bufferDesc;
+    bufferDesc.size = sizeof(uint32_t) * 4;
+    bufferDesc.usage = wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::Storage;
+    wgpu::Buffer storageBuffer = device.CreateBuffer(&bufferDesc);
+
+    // Create bind group layout.
+    wgpu::BindGroupLayoutEntry entries[1];
+    entries[0].binding = 0;
+    entries[0].visibility = wgpu::ShaderStage::Compute;
+    entries[0].buffer.type = wgpu::BufferBindingType::Storage;
+
+    wgpu::BindGroupLayoutDescriptor bindGroupLayoutDesc;
+    bindGroupLayoutDesc.entryCount = 1;
+    bindGroupLayoutDesc.entries = entries;
+    wgpu::BindGroupLayout bindGroupLayout = device.CreateBindGroupLayout(&bindGroupLayoutDesc);
+
+    // Create bind group.
+    wgpu::BindGroup bindGroup = utils::MakeBindGroup(device, bindGroupLayout, {{0, storageBuffer}});
+
+    // Create pipeline layout.
+    wgpu::PipelineLayoutDescriptor pipelineLayoutDesc;
+    pipelineLayoutDesc.bindGroupLayoutCount = 1;
+    pipelineLayoutDesc.bindGroupLayouts = &bindGroupLayout;
+    wgpu::PipelineLayout pipelineLayout = device.CreatePipelineLayout(&pipelineLayoutDesc);
+
+    // Create render pipeline.
+    utils::ComboRenderPipelineDescriptor renderPipelineDescriptor;
+    renderPipelineDescriptor.vertex.module = shaderModule;
+    renderPipelineDescriptor.cFragment.module = shaderModule;
+    renderPipelineDescriptor.cFragment.targetCount = 1;
+    renderPipelineDescriptor.layout = pipelineLayout;
+    wgpu::RenderPipeline renderPipeline = device.CreateRenderPipeline(&renderPipelineDescriptor);
+
+    // Create compute pipeline.
+    wgpu::ComputePipelineDescriptor computePipelineDescriptor;
+    computePipelineDescriptor.compute.module = shaderModule;
+    computePipelineDescriptor.layout = pipelineLayout;
+    wgpu::ComputePipeline computePipeline =
+        device.CreateComputePipeline(&computePipelineDescriptor);
+
+    // Encode commands to render and compute passes.
+    utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, 1, 1);
+    wgpu::CommandEncoder commandEncoder = device.CreateCommandEncoder();
+    wgpu::RenderPassEncoder renderPassEncoder =
+        commandEncoder.BeginRenderPass(&renderPass.renderPassInfo);
+    renderPassEncoder.SetPipeline(renderPipeline);
+    renderPassEncoder.SetBindGroup(0, bindGroup);
+    renderPassEncoder.Draw(3);
+    renderPassEncoder.End();
+    wgpu::ComputePassEncoder computePassEncoder = commandEncoder.BeginComputePass();
+    computePassEncoder.SetPipeline(computePipeline);
+    computePassEncoder.SetBindGroup(0, bindGroup);
+    computePassEncoder.DispatchWorkgroups(1);
+    computePassEncoder.End();
+    wgpu::CommandBuffer commands = commandEncoder.Finish();
+    queue.Submit(1, &commands);
+    EXPECT_PIXEL_RGBA8_EQ(utils::RGBA8(255, 255, 255, 255), renderPass.color, 0, 0);
+    EXPECT_BUFFER_U32_EQ(1u, storageBuffer, 0);
+}
+
+// Test that overwriting a lower-index bindgroup doesn't cause issues in backends.
+TEST_P(BindGroupTests, OverwritingLowerIndexBG) {
+    wgpu::ComputePipelineDescriptor cpDesc;
+    cpDesc.compute.module = utils::CreateShaderModule(device, R"(
+        @group(0) @binding(0) var<storage, read> input : u32;
+        @group(1) @binding(0) var<storage, read_write> output : u32;
+        @compute @workgroup_size(1) fn copy() {
+            output = output + input;
+        }
+    )");
+    wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&cpDesc);
+
+    uint32_t value = 23;
+    wgpu::Buffer inputBuffer =
+        utils::CreateBufferFromData(device, &value, sizeof(value), wgpu::BufferUsage::Storage);
+
+    wgpu::BufferDescriptor outputDesc = {
+        .usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
+        .size = sizeof(uint32_t),
+    };
+    wgpu::Buffer outputBuffer = device.CreateBuffer(&outputDesc);
+
+    wgpu::BindGroup inputBG =
+        utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0), {{0, inputBuffer}});
+    wgpu::BindGroup outputBG =
+        utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(1), {{0, outputBuffer}});
+    wgpu::BindGroup emptyBG =
+        utils::MakeBindGroup(device, utils::MakeBindGroupLayout(device, {}), {});
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
+    pass.SetPipeline(pipeline);
+    pass.SetBindGroup(0, inputBG);
+    pass.SetBindGroup(1, outputBG);
+    pass.DispatchWorkgroups(1);
+
+    // Overwrite the lower index BG before putting its value back. In Vulkan it would have ended up
+    // "disturbing" BG 1 so this test checks that this is correctly handled.
+    pass.SetBindGroup(0, emptyBG);
+    pass.SetBindGroup(0, inputBG);
+    pass.DispatchWorkgroups(1);
+
+    pass.End();
+
+    wgpu::CommandBuffer commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    EXPECT_BUFFER_U32_EQ(23 * 2, outputBuffer, 0);
+}
+
 DAWN_INSTANTIATE_TEST(BindGroupTests,
                       D3D11Backend(),
                       D3D12Backend(),
@@ -1605,7 +1868,8 @@ DAWN_INSTANTIATE_TEST(BindGroupTests,
                       MetalBackend(),
                       OpenGLBackend(),
                       OpenGLESBackend(),
-                      VulkanBackend());
+                      VulkanBackend(),
+                      WebGPUBackend());
 
 }  // namespace
 }  // namespace dawn

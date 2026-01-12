@@ -62,6 +62,10 @@ MaybeError ComputePipeline::InitializeImpl() {
         compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
     }
 
+    if (device->IsToggleEnabled(Toggle::D3DSkipShaderOptimizations)) {
+        compileFlags |= D3DCOMPILE_SKIP_OPTIMIZATION;
+    }
+
     if (device->IsToggleEnabled(Toggle::UseDXC) &&
         ((compileFlags & D3DCOMPILE_OPTIMIZATION_LEVEL2) == 0)) {
         // DXC's default opt level is /O3, unlike FXC's /O1. Set explicitly, otherwise there's no
@@ -84,15 +88,9 @@ MaybeError ComputePipeline::InitializeImpl() {
     d3dDesc.pRootSignature = ToBackend(GetLayout())->GetRootSignature();
 
     d3d::CompiledShader compiledShader;
-    DAWN_TRY_ASSIGN(
-        compiledShader,
-        module->Compile(
-            computeStage, SingleShaderStage::Compute, ToBackend(GetLayout()), compileFlags,
-            /* usedInterstageVariables */ {},
-            /* maxSubgroupSizeForFullSubgroups */
-            IsFullSubgroupsRequired()
-                ? std::make_optional(device->GetLimits().experimentalSubgroupLimits.maxSubgroupSize)
-                : std::nullopt));
+    DAWN_TRY_ASSIGN(compiledShader, module->Compile(computeStage, SingleShaderStage::Compute,
+                                                    ToBackend(GetLayout()), compileFlags,
+                                                    /* usedInterstageVariables */ {}));
     d3dDesc.CS = {compiledShader.shaderBlob.Data(), compiledShader.shaderBlob.Size()};
 
     StreamIn(&mCacheKey, d3dDesc, ToBackend(GetLayout())->GetRootSignatureBlob());
@@ -142,8 +140,8 @@ MaybeError ComputePipeline::InitializeImpl() {
 
 ComputePipeline::~ComputePipeline() = default;
 
-void ComputePipeline::DestroyImpl() {
-    ComputePipelineBase::DestroyImpl();
+void ComputePipeline::DestroyImpl(DestroyReason reason) {
+    ComputePipelineBase::DestroyImpl(reason);
     ToBackend(GetDevice())->ReferenceUntilUnused(mPipelineState);
 }
 

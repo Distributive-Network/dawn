@@ -32,6 +32,7 @@
 
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/ir/builder.h"
+#include "src/tint/lang/core/ir/constant.h"
 #include "src/tint/lang/core/ir/exit_if.h"
 #include "src/tint/lang/core/ir/exit_loop.h"
 #include "src/tint/lang/core/ir/exit_switch.h"
@@ -40,6 +41,7 @@
 #include "src/tint/lang/core/ir/loop.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/switch.h"
+#include "src/tint/lang/core/ir/type/array_count.h"
 #include "src/tint/lang/core/ir/value.h"
 #include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/core/type/reference.h"
@@ -79,14 +81,17 @@
 #include "src/tint/lang/wgsl/ast/return_statement.h"
 #include "src/tint/lang/wgsl/ast/statement.h"
 #include "src/tint/lang/wgsl/ast/struct.h"
+#include "src/tint/lang/wgsl/ast/subgroup_size_attribute.h"
 #include "src/tint/lang/wgsl/ast/switch_statement.h"
 #include "src/tint/lang/wgsl/ast/templated_identifier.h"
 #include "src/tint/lang/wgsl/ast/unary_op_expression.h"
 #include "src/tint/lang/wgsl/ast/var.h"
 #include "src/tint/lang/wgsl/ast/variable_decl_statement.h"
 #include "src/tint/lang/wgsl/ast/while_statement.h"
+#include "src/tint/lang/wgsl/ast/workgroup_attribute.h"
 #include "src/tint/lang/wgsl/ir/builtin_call.h"
 #include "src/tint/lang/wgsl/program/program.h"
+#include "src/tint/lang/wgsl/sem/array_count.h"
 #include "src/tint/lang/wgsl/sem/builtin_enum_expression.h"
 #include "src/tint/lang/wgsl/sem/builtin_fn.h"
 #include "src/tint/lang/wgsl/sem/call.h"
@@ -96,6 +101,7 @@
 #include "src/tint/lang/wgsl/sem/member_accessor_expression.h"
 #include "src/tint/lang/wgsl/sem/module.h"
 #include "src/tint/lang/wgsl/sem/switch_statement.h"
+#include "src/tint/lang/wgsl/sem/type_expression.h"
 #include "src/tint/lang/wgsl/sem/value_constructor.h"
 #include "src/tint/lang/wgsl/sem/value_conversion.h"
 #include "src/tint/lang/wgsl/sem/value_expression.h"
@@ -104,7 +110,6 @@
 #include "src/tint/utils/containers/scope_stack.h"
 #include "src/tint/utils/macros/defer.h"
 #include "src/tint/utils/macros/scoped_assignment.h"
-#include "src/tint/utils/result/result.h"
 #include "src/tint/utils/rtti/switch.h"
 
 using namespace tint::core::number_suffixes;  // NOLINT
@@ -113,7 +118,7 @@ using namespace tint::core::fluent_types;     // NOLINT
 namespace tint::wgsl::reader {
 namespace {
 
-using ResultType = tint::Result<core::ir::Module>;
+using ResultType = diag::Result<core::ir::Module>;
 
 /// Impl is the private-implementation of FromProgram().
 class Impl {
@@ -190,7 +195,9 @@ class Impl {
 
     diag::Diagnostic& AddError(const Source& source) { return diagnostics_.AddError(source); }
 
-    bool NeedTerminator() { return current_block_ && !current_block_->Terminator(); }
+    bool NeedTerminator() {
+        return (current_block_ != nullptr) && (current_block_->Terminator() == nullptr);
+    }
 
     void SetTerminator(core::ir::Terminator* terminator) {
         TINT_ASSERT(current_block_);
@@ -252,7 +259,7 @@ class Impl {
         }
 
         if (diagnostics_.ContainsErrors()) {
-            return Failure{std::move(diagnostics_)};
+            return diag::Failure{std::move(diagnostics_)};
         }
 
         return std::move(mod);
@@ -280,13 +287,28 @@ class Impl {
                 case ast::PipelineStage::kCompute: {
                     ir_func->SetStage(core::ir::Function::PipelineStage::kCompute);
 
-                    // TODO(dsinclair): When overrides are supported, this will have to change. The
-                    // `sem` does not hold information on override workgroup sizes so we'll have to
-                    // pull this from elsewhere.
-                    auto wg_size = sem->WorkgroupSize();
-                    ir_func->SetWorkgroupSize(builder_.Constant(u32(wg_size[0].value())),
-                                              builder_.Constant(u32(wg_size[1].value_or(1))),
-                                              builder_.Constant(u32(wg_size[2].value_or(1))));
+                    auto attr = ast::GetAttribute<ast::WorkgroupAttribute>(ast_func->attributes);
+                    TINT_ASSERT(attr) << "Missing workgroup attribute for compute entry point.";
+
+                    TINT_SCOPED_ASSIGNMENT(current_block_, mod.root_block);
+
+                    // The x size is always required (y, z are optional).
+                    auto value_x = EmitValueExpression(attr->x);
+                    bool is_unsigned = value_x->Type()->IsUnsignedIntegerScalar();
+
+                    auto* one_const = is_unsigned ? builder_.Constant(1_u) : builder_.Constant(1_i);
+
+                    ir_func->SetWorkgroupSize(value_x,
+                                              attr->y ? EmitValueExpression(attr->y) : one_const,
+                                              attr->z ? EmitValueExpression(attr->z) : one_const);
+
+                    const auto subgroup_attr =
+                        ast::GetAttribute<ast::SubgroupSizeAttribute>(ast_func->attributes);
+                    if (subgroup_attr) {
+                        auto* subgroup_size = EmitValueExpression(subgroup_attr->subgroup_size);
+                        ir_func->SetSubgroupSize(subgroup_size);
+                    }
+
                     break;
                 }
                 default: {
@@ -301,7 +323,10 @@ class Impl {
                         ir_func->SetReturnInterpolation(interp->interpolation);
                     },
                     [&](const ast::InvariantAttribute*) { ir_func->SetReturnInvariant(true); },
-                    [&](const ast::BuiltinAttribute* b) { ir_func->SetReturnBuiltin(b->builtin); });
+                    [&](const ast::BuiltinAttribute* b) {
+                        ir_func->SetReturnBuiltin(b->builtin);
+                        ir_func->SetReturnDepthMode(b->depth_mode);
+                    });
             }
             ir_func->SetReturnLocation(sem->ReturnLocation());
         }
@@ -312,7 +337,7 @@ class Impl {
         Vector<core::ir::FunctionParam*, 1> params;
         for (auto* p : ast_func->params) {
             const auto* param_sem = program_.Sem().Get(p)->As<sem::Parameter>();
-            auto* ty = param_sem->Type()->Clone(clone_ctx_.type_ctx);
+            auto* ty = RemapOverrideSizedArrayIfNeeded(param_sem->Type());
             auto* param = builder_.FunctionParam(p->name->symbol.NameView(), ty);
 
             for (auto* attr : p->attributes) {
@@ -397,9 +422,15 @@ class Impl {
             const auto* sem = program_.Sem().GetVal(stmt->rhs);
             switch (sem->Stage()) {
                 case core::EvaluationStage::kRuntime:
-                case core::EvaluationStage::kOverride:
-                    EmitValueExpression(stmt->rhs);
-                    break;
+                case core::EvaluationStage::kOverride: {
+                    auto* value = EmitValueExpression(stmt->rhs);
+                    auto* result = value->As<core::ir::InstructionResult>();
+                    // Overrides need to be referenced if they are to be retained in single entry
+                    // point in the case of phony assignment.
+                    if (!result || result->Instruction()->Block() == mod.root_block) {
+                        current_block_->Append(builder_.Let(value));
+                    }
+                } break;
                 case core::EvaluationStage::kNotEvaluated:
                 case core::EvaluationStage::kConstant:
                     // Don't emit.
@@ -449,13 +480,11 @@ class Impl {
         auto b = builder_.Append(current_block_);
         if (auto* v = std::get_if<core::ir::Value*>(&lhs)) {
             auto* load = b.Load(*v);
-            auto* ty = load->Result(0)->Type();
-            auto* inst = current_block_->Append(BinaryOp(ty, load->Result(0), rhs, op));
+            auto* inst = current_block_->Append(BinaryOp(load->Result(), rhs, op));
             b.Store(*v, inst);
         } else if (auto ref = std::get_if<VectorRefElementAccess>(&lhs)) {
             auto* load = b.LoadVectorElement(ref->vector, ref->index);
-            auto* ty = load->Result(0)->Type();
-            auto* inst = b.Append(BinaryOp(ty, load->Result(0), rhs, op));
+            auto* inst = b.Append(BinaryOp(load->Result(), rhs, op));
             b.StoreVectorElement(ref->vector, ref->index, inst);
         }
     }
@@ -759,7 +788,7 @@ class Impl {
                 if (impl.program_.Sem().Get<sem::Load>(expr)) {
                     auto* load = impl.builder_.Load(value);
                     impl.current_block_->Append(load);
-                    value = load->Result(0);
+                    value = load->Result();
                 }
                 bindings_.Add(expr, value);
             }
@@ -769,7 +798,7 @@ class Impl {
                 if (impl.program_.Sem().Get<sem::Load>(expr)) {
                     auto* load = impl.builder_.LoadVectorElement(access.vector, access.index);
                     impl.current_block_->Append(load);
-                    bindings_.Add(expr, load->Result(0));
+                    bindings_.Add(expr, load->Result());
                 } else {
                     bindings_.Add(expr, access);
                 }
@@ -856,7 +885,7 @@ class Impl {
                         }
                         auto* val = impl.builder_.Swizzle(ty, obj, std::move(indices));
                         impl.current_block_->Append(val);
-                        Bind(expr, val->Result(0));
+                        Bind(expr, val->Result());
                         return nullptr;
                     },  //
                     TINT_ICE_ON_NO_MATCH);
@@ -871,14 +900,14 @@ class Impl {
                     if (auto* inst_res = obj->As<core::ir::InstructionResult>()) {
                         if (auto* access = inst_res->Instruction()->As<core::ir::Access>()) {
                             access->AddIndex(index);
-                            access->Result(0)->SetType(ty);
+                            access->Result()->SetType(ty);
                             bindings_.Remove(expr->object);
                             // Move the access after the index expression.
                             if (impl.current_block_->Back() != access) {
                                 impl.current_block_->Remove(access);
                                 impl.current_block_->Append(access);
                             }
-                            Bind(expr, access->Result(0));
+                            Bind(expr, access->Result());
                             return;
                         }
                     }
@@ -887,12 +916,10 @@ class Impl {
                 // Create a new access
                 auto* access = impl.builder_.Access(ty, obj, index);
                 impl.current_block_->Append(access);
-                Bind(expr, access->Result(0));
+                Bind(expr, access->Result());
             }
 
             void EmitBinary(const ast::BinaryExpression* b) {
-                auto* b_sem = impl.program_.Sem().Get(b);
-                auto* ty = b_sem->Type()->Clone(impl.clone_ctx_.type_ctx);
                 auto lhs = GetValue(b->lhs);
                 if (!lhs) {
                     return;
@@ -901,12 +928,12 @@ class Impl {
                 if (!rhs) {
                     return;
                 }
-                auto* inst = impl.BinaryOp(ty, lhs, rhs, b->op);
+                auto* inst = impl.BinaryOp(lhs, rhs, b->op);
                 if (!inst) {
                     return;
                 }
                 impl.current_block_->Append(inst);
-                Bind(b, inst->Result(0));
+                Bind(b, inst->Result());
             }
 
             void EmitUnary(const ast::UnaryOpExpression* expr) {
@@ -914,8 +941,6 @@ class Impl {
                 if (!val) {
                     return;
                 }
-                auto* sem = impl.program_.Sem().Get(expr);
-                auto* ty = sem->Type()->Clone(impl.clone_ctx_.type_ctx);
                 core::ir::Instruction* inst = nullptr;
                 switch (expr->op) {
                     case core::UnaryOp::kAddressOf:
@@ -924,18 +949,21 @@ class Impl {
                         // pointer.
                         Bind(expr, val);
                         return;
-                    case core::UnaryOp::kComplement:
-                        inst = impl.builder_.Complement(ty, val);
+                    case core::UnaryOp::kComplement: {
+                        inst = impl.builder_.Complement(val);
                         break;
-                    case core::UnaryOp::kNegation:
-                        inst = impl.builder_.Negation(ty, val);
+                    }
+                    case core::UnaryOp::kNegation: {
+                        inst = impl.builder_.Negation(val);
                         break;
-                    case core::UnaryOp::kNot:
-                        inst = impl.builder_.Not(ty, val);
+                    }
+                    case core::UnaryOp::kNot: {
+                        inst = impl.builder_.Not(val);
                         break;
+                    }
                 }
                 impl.current_block_->Append(inst);
-                Bind(expr, inst->Result(0));
+                Bind(expr, inst->Result());
             }
 
             void EmitCall(const ast::CallExpression* expr) {
@@ -976,9 +1004,25 @@ class Impl {
                     if (b->Fn() == wgsl::BuiltinFn::kBitcast) {
                         inst = impl.builder_.Bitcast(ty, args[0]);
                     } else {
-                        auto* res = impl.builder_.InstructionResult(ty);
-                        inst = impl.builder_.ir.CreateInstruction<wgsl::ir::BuiltinCall>(
-                            res, b->Fn(), std::move(args));
+                        auto* call =
+                            impl.builder_.Call<wgsl::ir::BuiltinCall>(ty, b->Fn(), std::move(args));
+
+                        // Set explicit template parameters if present.
+                        if (b->Overload().num_explicit_templates > 0) {
+                            auto* tmpl = expr->target->identifier->As<ast::TemplatedIdentifier>();
+                            TINT_ASSERT(tmpl);
+                            Vector<const core::type::Type*, 1> explicit_types;
+                            for (uint32_t i = 0; i < b->Overload().num_explicit_templates; i++) {
+                                auto* tmpl_sem = impl.program_.Sem().Get(tmpl->arguments[i]);
+                                auto* tmpl_ty = tmpl_sem->As<sem::TypeExpression>();
+                                TINT_ASSERT(tmpl_ty);
+                                auto* cloned_ty = tmpl_ty->Type()->Clone(impl.clone_ctx_.type_ctx);
+                                explicit_types.Push(cloned_ty);
+                            }
+                            call->SetExplicitTemplateParams(std::move(explicit_types));
+                        }
+
+                        inst = call;
                     }
                 } else if (sem->Target()->As<sem::ValueConstructor>()) {
                     inst = impl.builder_.Construct(ty, std::move(args));
@@ -997,7 +1041,7 @@ class Impl {
                     return;
                 }
                 impl.current_block_->Append(inst);
-                Bind(expr, inst->Result(0));
+                Bind(expr, inst->Result());
             }
 
             void EmitIdentifier(const ast::IdentifierExpression* i) {
@@ -1074,12 +1118,24 @@ class Impl {
                     return;
                 }
 
+                const auto* lhs_sem = impl.program_.Sem().GetVal(expr->lhs);
+                const auto* rhs_sem = impl.program_.Sem().GetVal(expr->rhs);
+
+                const bool is_const_eval = lhs_sem->Stage() <= core::EvaluationStage::kOverride &&
+                                           rhs_sem->Stage() <= core::EvaluationStage::kOverride;
+
                 auto& b = impl.builder_;
-                auto* if_inst = b.If(lhs);
+                core::ir::If* if_inst = nullptr;
+                if (is_const_eval) {
+                    if_inst = b.ConstExprIf(lhs);
+                } else {
+                    if_inst = b.If(lhs);
+                }
+
                 impl.current_block_->Append(if_inst);
 
                 auto* result = b.InstructionResult(b.ir.Types().bool_());
-                if_inst->SetResults(result);
+                if_inst->SetResult(result);
 
                 if (expr->op == core::BinaryOp::kLogicalAnd) {
                     if_inst->False()->Append(b.ExitIf(if_inst, b.Constant(false)));
@@ -1173,9 +1229,9 @@ class Impl {
             var,
             [&](const ast::Var* v) {
                 auto* ref = sem->Type()->As<core::type::Reference>();
-                auto* ty = builder_.ir.Types().Get<core::type::Pointer>(
-                    ref->AddressSpace(), ref->StoreType()->Clone(clone_ctx_.type_ctx),
-                    ref->Access());
+                auto* store_ty = RemapOverrideSizedArrayIfNeeded(ref->StoreType());
+                auto* ty = builder_.ir.Types().Get<core::type::Pointer>(ref->AddressSpace(),
+                                                                        store_ty, ref->Access());
 
                 auto* val = builder_.Var(ty);
                 if (v->initializer) {
@@ -1199,7 +1255,7 @@ class Impl {
                 }
 
                 // Store the declaration so we can get the instruction to store too
-                scopes_.Set(v->name->symbol, val->Result(0));
+                scopes_.Set(v->name->symbol, val->Result());
 
                 // Record the original name and source of the var
                 builder_.ir.SetName(val, v->name->symbol.Name());
@@ -1211,10 +1267,18 @@ class Impl {
                     return;
                 }
 
+                // If we've emitted a texture or a sampler to the let then we have
+                // `texture_and_sampler_let` enabled and we want to just strip the let and use the
+                // originating value.
+                if (init->Type()->IsAnyOf<core::type::Texture, core::type::Sampler>()) {
+                    scopes_.Set(l->name->symbol, init);
+                    return;
+                }
+
                 auto* let = current_block_->Append(builder_.Let(l->name->symbol.Name(), init));
 
                 // Store the results of the initialization
-                scopes_.Set(l->name->symbol, let->Result(0));
+                scopes_.Set(l->name->symbol, let->Result());
                 builder_.ir.SetSource(let, l->source);
             },
             [&](const ast::Override* o) {
@@ -1235,7 +1299,7 @@ class Impl {
                 override->SetOverrideId(o_sem->Attributes().override_id.value());
 
                 // Store the declaration so we can get the instruction to store too
-                scopes_.Set(o->name->symbol, override->Result(0));
+                scopes_.Set(o->name->symbol, override->Result());
 
                 // Record the original name and source of the var
                 builder_.ir.SetName(override, o->name->symbol.Name());
@@ -1249,56 +1313,85 @@ class Impl {
             TINT_ICE_ON_NO_MATCH);
     }
 
-    core::ir::CoreBinary* BinaryOp(const core::type::Type* ty,
-                                   core::ir::Value* lhs,
-                                   core::ir::Value* rhs,
-                                   core::BinaryOp op) {
+    core::ir::CoreBinary* BinaryOp(core::ir::Value* lhs, core::ir::Value* rhs, core::BinaryOp op) {
         switch (op) {
             case core::BinaryOp::kAnd:
-                return builder_.And(ty, lhs, rhs);
+                return builder_.And(lhs, rhs);
             case core::BinaryOp::kOr:
-                return builder_.Or(ty, lhs, rhs);
+                return builder_.Or(lhs, rhs);
             case core::BinaryOp::kXor:
-                return builder_.Xor(ty, lhs, rhs);
+                return builder_.Xor(lhs, rhs);
             case core::BinaryOp::kEqual:
-                return builder_.Equal(ty, lhs, rhs);
+                return builder_.Equal(lhs, rhs);
             case core::BinaryOp::kNotEqual:
-                return builder_.NotEqual(ty, lhs, rhs);
+                return builder_.NotEqual(lhs, rhs);
             case core::BinaryOp::kLessThan:
-                return builder_.LessThan(ty, lhs, rhs);
+                return builder_.LessThan(lhs, rhs);
             case core::BinaryOp::kGreaterThan:
-                return builder_.GreaterThan(ty, lhs, rhs);
+                return builder_.GreaterThan(lhs, rhs);
             case core::BinaryOp::kLessThanEqual:
-                return builder_.LessThanEqual(ty, lhs, rhs);
+                return builder_.LessThanEqual(lhs, rhs);
             case core::BinaryOp::kGreaterThanEqual:
-                return builder_.GreaterThanEqual(ty, lhs, rhs);
+                return builder_.GreaterThanEqual(lhs, rhs);
             case core::BinaryOp::kShiftLeft:
-                return builder_.ShiftLeft(ty, lhs, rhs);
+                return builder_.ShiftLeft(lhs, rhs);
             case core::BinaryOp::kShiftRight:
-                return builder_.ShiftRight(ty, lhs, rhs);
+                return builder_.ShiftRight(lhs, rhs);
             case core::BinaryOp::kAdd:
-                return builder_.Add(ty, lhs, rhs);
+                return builder_.Add(lhs, rhs);
             case core::BinaryOp::kSubtract:
-                return builder_.Subtract(ty, lhs, rhs);
+                return builder_.Subtract(lhs, rhs);
             case core::BinaryOp::kMultiply:
-                return builder_.Multiply(ty, lhs, rhs);
+                return builder_.Multiply(lhs, rhs);
             case core::BinaryOp::kDivide:
-                return builder_.Divide(ty, lhs, rhs);
+                return builder_.Divide(lhs, rhs);
             case core::BinaryOp::kModulo:
-                return builder_.Modulo(ty, lhs, rhs);
+                return builder_.Modulo(lhs, rhs);
             case core::BinaryOp::kLogicalAnd:
             case core::BinaryOp::kLogicalOr:
                 TINT_ICE() << "short circuit op should have already been handled";
         }
         TINT_UNREACHABLE();
     }
+
+    const core::type::Type* RemapOverrideSizedArrayIfNeeded(const core::type::Type* ty) {
+        // Check that we have an override-sized array, or a pointer to one.
+        const auto* ary = ty->UnwrapPtr()->As<core::type::Array>();
+        if (!ary ||
+            !ary->Count()
+                 ->IsAnyOf<sem::NamedOverrideArrayCount, sem::UnnamedOverrideArrayCount>()) {
+            return ty->Clone(clone_ctx_.type_ctx);
+        }
+
+        // If the array has an override count, we need to remap it to a value array count.
+        core::ir::Value* count = tint::Switch(
+            ary->Count(),  //
+            [&](const sem::UnnamedOverrideArrayCount* u) {
+                return EmitValueExpression(u->expr->Declaration());
+            },
+            [&](const sem::NamedOverrideArrayCount* n) {
+                return scopes_.Get(n->variable->Declaration()->name->symbol);
+            },
+            TINT_ICE_ON_NO_MATCH);
+
+        auto* ary_count = builder_.ir.Types().Get<core::ir::type::ValueArrayCount>(count);
+        const core::type::Type* remapped_ty = builder_.ir.Types().Get<core::type::Array>(
+            ary->ElemType()->Clone(clone_ctx_.type_ctx), ary_count, ary->Size());
+
+        // If the original type was a pointer, wrap the remapped array in a pointer too.
+        if (auto* ptr = ty->As<core::type::Pointer>()) {
+            remapped_ty = builder_.ir.Types().ptr(ptr->AddressSpace(), remapped_ty, ptr->Access());
+        }
+
+        return remapped_ty;
+    }
 };
 
 }  // namespace
 
-tint::Result<core::ir::Module> ProgramToIR(const Program& program) {
+Result<core::ir::Module> ProgramToIR(const Program& program) {
     if (!program.IsValid()) {
-        return Failure{program.Diagnostics()};
+        return Failure{program.Diagnostics().Str()};
     }
 
     Impl b(program);
@@ -1306,7 +1399,7 @@ tint::Result<core::ir::Module> ProgramToIR(const Program& program) {
     if (r != Success) {
         diag::List err = std::move(r.Failure().reason);
         err.AddNote(Source{}) << "AST:\n" + Program::printer(program);
-        return Failure{err};
+        return Failure{err.Str()};
     }
 
     return r.Move();

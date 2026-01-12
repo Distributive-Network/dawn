@@ -47,6 +47,7 @@ struct Event {
     Action action;
     Id thisId = 0;
     Id otherId = 0;
+    bool operator==(const Event& event) const = default;
 };
 
 std::ostream& operator<<(std::ostream& os, const Event& event) {
@@ -65,10 +66,6 @@ std::ostream& operator<<(std::ostream& os, const Event& event) {
             break;
     }
     return os;
-}
-
-bool operator==(const Event& a, const Event& b) {
-    return a.action == b.action && a.thisId == b.thisId && a.otherId == b.otherId;
 }
 
 using Events = std::vector<Event>;
@@ -94,9 +91,7 @@ struct RefTracker {
         return *this;
     }
 
-    bool operator==(const RefTracker& other) const { return mId == other.mId; }
-
-    bool operator!=(const RefTracker& other) const { return mId != other.mId; }
+    bool operator==(const RefTracker& other) const = default;
 
     Id mId;
     Events* mEvents;
@@ -314,6 +309,32 @@ TEST(RefBase, TCopyAssignmentAlternate) {
                                              Event{Action::kRelease, 2},    // release tracker2
                                              Event{Action::kAssign, 2, 1},  // copy tracker1
                                              Event{Action::kMarker, 30}));
+}
+
+TEST(RefBase, AssignNull) {
+    Events events;
+    RefTracker tracker(1, &events);
+    Ref ref(tracker);
+
+    events.clear();
+    ref = nullptr;
+    EXPECT_EQ(ref.Get(), RefTrackerTraits::kNullValue);
+    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kRelease, 1},   // release tracker
+                                             Event{Action::kAssign, 1, 0}  // assign null
+                                             ));
+}
+
+TEST(RefBase, Reset) {
+    Events events;
+    RefTracker tracker(1, &events);
+    Ref ref(tracker);
+
+    events.clear();
+    ref.Reset();
+    EXPECT_EQ(ref.Get(), RefTrackerTraits::kNullValue);
+    EXPECT_THAT(events, testing::ElementsAre(Event{Action::kRelease, 1},   // release tracker
+                                             Event{Action::kAssign, 1, 0}  // assign null
+                                             ));
 }
 
 // Regression test for an issue where RefBase<T*> comparison would end up using operator bool

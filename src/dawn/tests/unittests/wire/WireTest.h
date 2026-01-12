@@ -111,6 +111,11 @@ inline testing::Matcher<const char*> ValidStringMessage() {
     return MakeMatcher(new StringMessageMatcher());
 }
 
+// Matcher for C++ types to verify that their internal C-handles are identical.
+MATCHER_P(CHandleIs, cType, "") {
+    return arg.Get() == cType;
+}
+
 // Skip a test when the given condition is satisfied.
 #define DAWN_SKIP_TEST_IF(condition)                            \
     do {                                                        \
@@ -136,7 +141,7 @@ namespace utils {
 class TerribleCommandBuffer;
 }  // namespace utils
 
-class WireTest : public testing::Test {
+class WireTest : virtual public testing::Test {
   protected:
     WireTest();
     ~WireTest() override;
@@ -152,8 +157,13 @@ class WireTest : public testing::Test {
 
     testing::StrictMock<MockProcTable> api;
 
-    testing::MockCallback<WGPUDeviceLostCallbackNew> deviceLostCallback;
-    testing::MockCallback<WGPUErrorCallback> uncapturedErrorCallback;
+    // Mock callbacks tracking errors and destruction. These are strict mocks because any errors or
+    // device loss that aren't expected should result in test failures and not just some warnings
+    // printed to stdout.
+    testing::StrictMock<testing::MockCppCallback<wgpu::DeviceLostCallback<void>*>>
+        deviceLostCallback;
+    testing::StrictMock<testing::MockCppCallback<wgpu::UncapturedErrorCallback<void>*>>
+        uncapturedErrorCallback;
 
     wgpu::Instance instance;
     WGPUInstance apiInstance;
@@ -169,6 +179,8 @@ class WireTest : public testing::Test {
 
     dawn::wire::WireServer* GetWireServer();
     dawn::wire::WireClient* GetWireClient();
+
+    size_t GetC2SMaxAllocationSize();
 
     void DeleteServer();
     void DeleteClient();

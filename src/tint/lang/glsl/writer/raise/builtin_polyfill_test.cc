@@ -77,10 +77,10 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, SelectScalar) {
 }
 
 TEST_F(GlslWriter_BuiltinPolyfillTest, SelectVector) {
-    auto* func = b.Function("foo", ty.vec3<f32>());
+    auto* func = b.Function("foo", ty.vec3f());
     b.Append(func->Block(), [&] {
-        auto* false_ = b.Splat(ty.vec3<f32>(), 2_f);
-        auto* true_ = b.Splat(ty.vec3<f32>(), 1_f);
+        auto* false_ = b.Splat(ty.vec3f(), 2_f);
+        auto* true_ = b.Splat(ty.vec3f(), 1_f);
         auto* cond = b.Splat(ty.vec3<bool>(), false);
         b.Return(func, b.Call<vec3<f32>>(core::BuiltinFn::kSelect, false_, true_, cond));
     });
@@ -202,7 +202,6 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, WorkgroupBarrier) {
 
 TEST_F(GlslWriter_BuiltinPolyfillTest, AtomicCompareExchangeWeak) {
     auto* var = b.Var("v", workgroup, ty.atomic<i32>(), core::Access::kReadWrite);
-    var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
     auto* func = b.ComputeFunction("foo");
@@ -219,7 +218,7 @@ __atomic_compare_exchange_result_i32 = struct @align(4) {
 }
 
 $B1: {  # root
-  %v:ptr<workgroup, atomic<i32>, read_write> = var @binding_point(0, 0)
+  %v:ptr<workgroup, atomic<i32>, read_write> = var undef
 }
 
 %foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
@@ -239,7 +238,7 @@ __atomic_compare_exchange_result_i32 = struct @align(4) {
 }
 
 $B1: {  # root
-  %v:ptr<workgroup, atomic<i32>, read_write> = var @binding_point(0, 0)
+  %v:ptr<workgroup, atomic<i32>, read_write> = var undef
 }
 
 %foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
@@ -261,7 +260,6 @@ $B1: {  # root
 
 TEST_F(GlslWriter_BuiltinPolyfillTest, AtomicSub) {
     auto* var = b.Var("v", workgroup, ty.atomic<i32>(), core::Access::kReadWrite);
-    var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
     auto* func = b.ComputeFunction("foo");
@@ -272,7 +270,7 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, AtomicSub) {
 
     auto* src = R"(
 $B1: {  # root
-  %v:ptr<workgroup, atomic<i32>, read_write> = var @binding_point(0, 0)
+  %v:ptr<workgroup, atomic<i32>, read_write> = var undef
 }
 
 %foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
@@ -287,7 +285,7 @@ $B1: {  # root
 
     auto* expect = R"(
 $B1: {  # root
-  %v:ptr<workgroup, atomic<i32>, read_write> = var @binding_point(0, 0)
+  %v:ptr<workgroup, atomic<i32>, read_write> = var undef
 }
 
 %foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
@@ -306,7 +304,6 @@ $B1: {  # root
 
 TEST_F(GlslWriter_BuiltinPolyfillTest, AtomicSub_u32) {
     auto* var = b.Var("v", workgroup, ty.atomic<u32>(), core::Access::kReadWrite);
-    var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
     auto* func = b.ComputeFunction("foo");
@@ -317,7 +314,7 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, AtomicSub_u32) {
 
     auto* src = R"(
 $B1: {  # root
-  %v:ptr<workgroup, atomic<u32>, read_write> = var @binding_point(0, 0)
+  %v:ptr<workgroup, atomic<u32>, read_write> = var undef
 }
 
 %foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
@@ -332,7 +329,7 @@ $B1: {  # root
 
     auto* expect = R"(
 $B1: {  # root
-  %v:ptr<workgroup, atomic<u32>, read_write> = var @binding_point(0, 0)
+  %v:ptr<workgroup, atomic<u32>, read_write> = var undef
 }
 
 %foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
@@ -350,7 +347,6 @@ $B1: {  # root
 
 TEST_F(GlslWriter_BuiltinPolyfillTest, AtomicLoad) {
     auto* var = b.Var("v", workgroup, ty.atomic<i32>(), core::Access::kReadWrite);
-    var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
     auto* func = b.ComputeFunction("foo");
@@ -361,7 +357,7 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, AtomicLoad) {
 
     auto* src = R"(
 $B1: {  # root
-  %v:ptr<workgroup, atomic<i32>, read_write> = var @binding_point(0, 0)
+  %v:ptr<workgroup, atomic<i32>, read_write> = var undef
 }
 
 %foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
@@ -376,7 +372,7 @@ $B1: {  # root
 
     auto* expect = R"(
 $B1: {  # root
-  %v:ptr<workgroup, atomic<i32>, read_write> = var @binding_point(0, 0)
+  %v:ptr<workgroup, atomic<i32>, read_write> = var undef
 }
 
 %foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
@@ -496,11 +492,11 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, InsertBits) {
 TEST_F(GlslWriter_BuiltinPolyfillTest, FMA_f32) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* x = b.Splat(ty.vec3<f32>(), 1_f);
-        auto* y = b.Splat(ty.vec3<f32>(), 2_f);
-        auto* z = b.Splat(ty.vec3<f32>(), 3_f);
+        auto* x = b.Splat(ty.vec3f(), 1_f);
+        auto* y = b.Splat(ty.vec3f(), 2_f);
+        auto* z = b.Splat(ty.vec3f(), 3_f);
 
-        b.Let("x", b.Call(ty.vec3<f32>(), core::BuiltinFn::kFma, x, y, z));
+        b.Let("x", b.Call(ty.vec3f(), core::BuiltinFn::kFma, x, y, z));
         b.Return(func);
     });
 
@@ -533,11 +529,11 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, FMA_f32) {
 TEST_F(GlslWriter_BuiltinPolyfillTest, FMA_f16) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* x = b.Splat(ty.vec3<f16>(), 1_h);
-        auto* y = b.Splat(ty.vec3<f16>(), 2_h);
-        auto* z = b.Splat(ty.vec3<f16>(), 3_h);
+        auto* x = b.Splat(ty.vec3h(), 1_h);
+        auto* y = b.Splat(ty.vec3h(), 2_h);
+        auto* z = b.Splat(ty.vec3h(), 3_h);
 
-        b.Let("x", b.Call(ty.vec3<f16>(), core::BuiltinFn::kFma, x, y, z));
+        b.Let("x", b.Call(ty.vec3h(), core::BuiltinFn::kFma, x, y, z));
         b.Return(func);
     });
 
@@ -589,7 +585,7 @@ SB = struct @align(4) {
 }
 
 $B1: {  # root
-  %v:ptr<storage, SB, read_write> = var @binding_point(0, 0)
+  %v:ptr<storage, SB, read_write> = var undef @binding_point(0, 0)
 }
 
 %foo = @fragment func():void {
@@ -609,7 +605,7 @@ SB = struct @align(4) {
 }
 
 $B1: {  # root
-  %v:ptr<storage, SB, read_write> = var @binding_point(0, 0)
+  %v:ptr<storage, SB, read_write> = var undef @binding_point(0, 0)
 }
 
 %foo = @fragment func():void {
@@ -692,8 +688,8 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, AllScalar) {
 TEST_F(GlslWriter_BuiltinPolyfillTest, DotF32) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* x = b.Let("x", b.Splat(ty.vec3<f32>(), 2_f));
-        auto* y = b.Let("y", b.Splat(ty.vec3<f32>(), 3_f));
+        auto* x = b.Let("x", b.Splat(ty.vec3f(), 2_f));
+        auto* y = b.Let("y", b.Splat(ty.vec3f(), 3_f));
         b.Let("z", b.Call(ty.f32(), core::BuiltinFn::kDot, x, y));
         b.Return(func);
     });
@@ -729,8 +725,8 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, DotF32) {
 TEST_F(GlslWriter_BuiltinPolyfillTest, DotF16) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* x = b.Let("x", b.Splat(ty.vec4<f16>(), 2_h));
-        auto* y = b.Let("y", b.Splat(ty.vec4<f16>(), 3_h));
+        auto* x = b.Let("x", b.Splat(ty.vec4h(), 2_h));
+        auto* y = b.Let("y", b.Splat(ty.vec4h(), 3_h));
         b.Let("z", b.Call(ty.f16(), core::BuiltinFn::kDot, x, y));
         b.Return(func);
     });
@@ -767,8 +763,8 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, DotF16) {
 TEST_F(GlslWriter_BuiltinPolyfillTest, DotI32) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* x = b.Let("x", b.Splat(ty.vec4<i32>(), 2_i));
-        auto* y = b.Let("y", b.Splat(ty.vec4<i32>(), 3_i));
+        auto* x = b.Let("x", b.Splat(ty.vec4i(), 2_i));
+        auto* y = b.Let("y", b.Splat(ty.vec4i(), 3_i));
         b.Let("z", b.Call(ty.i32(), core::BuiltinFn::kDot, x, y));
         b.Return(func);
     });
@@ -825,8 +821,8 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, DotI32) {
 TEST_F(GlslWriter_BuiltinPolyfillTest, DotU32) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* x = b.Let("x", b.Splat(ty.vec2<u32>(), 2_u));
-        auto* y = b.Let("y", b.Splat(ty.vec2<u32>(), 3_u));
+        auto* x = b.Let("x", b.Splat(ty.vec2u(), 2_u));
+        auto* y = b.Let("y", b.Splat(ty.vec2u(), 3_u));
         b.Let("z", b.Call(ty.u32(), core::BuiltinFn::kDot, x, y));
         b.Return(func);
     });
@@ -881,7 +877,7 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, Modf_Scalar) {
                               core::BuiltinFn::kModf, value);
         auto* fract = b.Access<f32>(result, 0_u);
         auto* whole = b.Access<f32>(result, 1_u);
-        b.Return(func, b.Add<f32>(fract, whole));
+        b.Return(func, b.Add(fract, whole));
     });
 
     auto* src = R"(
@@ -910,7 +906,7 @@ __modf_result_f32 = struct @align(4) {
 
 %foo = func(%value:f32):f32 {
   $B1: {
-    %3:ptr<function, __modf_result_f32, read_write> = var
+    %3:ptr<function, __modf_result_f32, read_write> = var undef
     %4:ptr<function, f32, read_write> = access %3, 1u
     %5:f32 = glsl.modf %value, %4
     %6:ptr<function, f32, read_write> = access %3, 0u
@@ -930,14 +926,14 @@ __modf_result_f32 = struct @align(4) {
 
 TEST_F(GlslWriter_BuiltinPolyfillTest, Modf_Vector) {
     auto* value = b.FunctionParam<vec4<f32>>("value");
-    auto* func = b.Function("foo", ty.vec4<f32>());
+    auto* func = b.Function("foo", ty.vec4f());
     func->SetParams({value});
     b.Append(func->Block(), [&] {
-        auto* result = b.Call(core::type::CreateModfResult(ty, mod.symbols, ty.vec4<f32>()),
+        auto* result = b.Call(core::type::CreateModfResult(ty, mod.symbols, ty.vec4f()),
                               core::BuiltinFn::kModf, value);
         auto* fract = b.Access<vec4<f32>>(result, 0_u);
         auto* whole = b.Access<vec4<f32>>(result, 1_u);
-        b.Return(func, b.Add<vec4<f32>>(fract, whole));
+        b.Return(func, b.Add(fract, whole));
     });
 
     auto* src = R"(
@@ -966,7 +962,7 @@ __modf_result_vec4_f32 = struct @align(16) {
 
 %foo = func(%value:vec4<f32>):vec4<f32> {
   $B1: {
-    %3:ptr<function, __modf_result_vec4_f32, read_write> = var
+    %3:ptr<function, __modf_result_vec4_f32, read_write> = var undef
     %4:ptr<function, vec4<f32>, read_write> = access %3, 1u
     %5:vec4<f32> = glsl.modf %value, %4
     %6:ptr<function, vec4<f32>, read_write> = access %3, 0u
@@ -993,7 +989,7 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, Frexp_Scalar) {
                               core::BuiltinFn::kFrexp, value);
         auto* fract = b.Access<f32>(result, 0_u);
         auto* exp = b.Access<i32>(result, 1_u);
-        b.Return(func, b.Add<f32>(fract, b.Convert<f32>(exp)));
+        b.Return(func, b.Add(fract, b.Convert<f32>(exp)));
     });
 
     auto* src = R"(
@@ -1023,7 +1019,7 @@ __frexp_result_f32 = struct @align(4) {
 
 %foo = func(%value:f32):f32 {
   $B1: {
-    %3:ptr<function, __frexp_result_f32, read_write> = var
+    %3:ptr<function, __frexp_result_f32, read_write> = var undef
     %4:ptr<function, i32, read_write> = access %3, 1u
     %5:f32 = glsl.frexp %value, %4
     %6:ptr<function, f32, read_write> = access %3, 0u
@@ -1044,14 +1040,14 @@ __frexp_result_f32 = struct @align(4) {
 
 TEST_F(GlslWriter_BuiltinPolyfillTest, Frexp_Vector) {
     auto* value = b.FunctionParam<vec4<f32>>("value");
-    auto* func = b.Function("foo", ty.vec4<f32>());
+    auto* func = b.Function("foo", ty.vec4f());
     func->SetParams({value});
     b.Append(func->Block(), [&] {
-        auto* result = b.Call(core::type::CreateFrexpResult(ty, mod.symbols, ty.vec4<f32>()),
+        auto* result = b.Call(core::type::CreateFrexpResult(ty, mod.symbols, ty.vec4f()),
                               core::BuiltinFn::kFrexp, value);
         auto* fract = b.Access<vec4<f32>>(result, 0_u);
         auto* exp = b.Access<vec4<i32>>(result, 1_u);
-        b.Return(func, b.Add<vec4<f32>>(fract, b.Convert<vec4<f32>>(exp)));
+        b.Return(func, b.Add(fract, b.Convert<vec4<f32>>(exp)));
     });
 
     auto* src = R"(
@@ -1081,7 +1077,7 @@ __frexp_result_vec4_f32 = struct @align(16) {
 
 %foo = func(%value:vec4<f32>):vec4<f32> {
   $B1: {
-    %3:ptr<function, __frexp_result_vec4_f32, read_write> = var
+    %3:ptr<function, __frexp_result_vec4_f32, read_write> = var undef
     %4:ptr<function, vec4<i32>, read_write> = access %3, 1u
     %5:vec4<f32> = glsl.frexp %value, %4
     %6:ptr<function, vec4<f32>, read_write> = access %3, 0u
@@ -1134,7 +1130,7 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, AbsScalar) {
 TEST_F(GlslWriter_BuiltinPolyfillTest, AbsVector) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("x", b.Call(ty.vec2<u32>(), core::BuiltinFn::kAbs, b.Splat<vec2<u32>>(2_u)));
+        b.Let("x", b.Call(ty.vec2u(), core::BuiltinFn::kAbs, b.Splat<vec2<u32>>(2_u)));
         b.Return(func);
     });
 
@@ -1165,15 +1161,15 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, AbsVector) {
 TEST_F(GlslWriter_BuiltinPolyfillTest, QuantizeToF16) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* v = b.Var("x", b.Zero(ty.vec2<f32>()));
-        b.Let("a", b.Call(ty.vec2<f32>(), core::BuiltinFn::kQuantizeToF16, b.Load(v)));
+        auto* v = b.Var("x", b.Zero(ty.vec2f()));
+        b.Let("a", b.Call(ty.vec2f(), core::BuiltinFn::kQuantizeToF16, b.Load(v)));
         b.Return(func);
     });
 
     auto* src = R"(
 %foo = @fragment func():void {
   $B1: {
-    %x:ptr<function, vec2<f32>, read_write> = var, vec2<f32>(0.0f)
+    %x:ptr<function, vec2<f32>, read_write> = var vec2<f32>(0.0f)
     %3:vec2<f32> = load %x
     %4:vec2<f32> = quantizeToF16 %3
     %a:vec2<f32> = let %4
@@ -1186,7 +1182,7 @@ TEST_F(GlslWriter_BuiltinPolyfillTest, QuantizeToF16) {
     auto* expect = R"(
 %foo = @fragment func():void {
   $B1: {
-    %x:ptr<function, vec2<f32>, read_write> = var, vec2<f32>(0.0f)
+    %x:ptr<function, vec2<f32>, read_write> = var vec2<f32>(0.0f)
     %3:vec2<f32> = load %x
     %4:vec2<f32> = call %tint_quantize_to_f16, %3
     %a:vec2<f32> = let %4

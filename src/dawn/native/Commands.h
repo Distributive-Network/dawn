@@ -38,6 +38,7 @@
 
 #include "dawn/native/AttachmentState.h"
 #include "dawn/native/BindingInfo.h"
+#include "dawn/native/BlockInfo.h"
 #include "dawn/native/Texture.h"
 
 #include "dawn/native/dawn_platform.h"
@@ -45,6 +46,8 @@
 namespace dawn::native {
 
 class CommandAllocator;
+struct TexelBlockInfo;
+struct TexelCopyTextureInfo;
 
 // Definition of the commands that are present in the CommandIterator given by the
 // CommandBufferBuilder. There are not defined in CommandBuffer.h to break some header
@@ -83,8 +86,10 @@ enum class Command {
     SetScissorRect,
     SetBlendConstant,
     SetBindGroup,
+    SetImmediates,
     SetIndexBuffer,
     SetVertexBuffer,
+    SetResourceTable,
     WriteBuffer,
     WriteTimestamp,
 };
@@ -151,6 +156,18 @@ struct RenderPassDepthStencilAttachmentInfo {
     bool stencilReadOnly;
 };
 
+struct ResolveRect {
+    uint32_t colorOffsetX = 0;
+    uint32_t colorOffsetY = 0;
+    uint32_t resolveOffsetX = 0;
+    uint32_t resolveOffsetY = 0;
+    uint32_t updateWidth = 0;
+    uint32_t updateHeight = 0;
+    // Returns whether this ResolveRect contains valid dimensions for a partial resolve operation.
+    // A resolve rectangle is considered valid only when both width and height are non-zero.
+    bool HasValue() const;
+};
+
 struct BeginRenderPassCmd {
     BeginRenderPassCmd();
     ~BeginRenderPassCmd();
@@ -164,6 +181,8 @@ struct BeginRenderPassCmd {
     // Cache the width and height of all attachments for convenience
     uint32_t width;
     uint32_t height;
+    // Used for partial resolve
+    ResolveRect resolveRect;
 
     Ref<QuerySetBase> occlusionQuerySet;
     TimestampWrites timestampWrites;
@@ -176,8 +195,8 @@ struct BufferCopy {
 
     Ref<BufferBase> buffer;
     uint64_t offset;
-    uint32_t bytesPerRow;
-    uint32_t rowsPerImage;
+    BlockCount blocksPerRow;
+    BlockCount rowsPerImage;
 };
 
 struct TextureCopy {
@@ -188,9 +207,12 @@ struct TextureCopy {
 
     Ref<TextureBase> texture;
     uint32_t mipLevel;
-    Origin3D origin;  // Texels / array layer
+    TexelOrigin3D origin;  // Texels / array layer
     Aspect aspect;
 };
+
+// Returns the TexelBlockInfo for t's texture and aspect
+const TexelBlockInfo& GetBlockInfo(const TextureCopy& t);
 
 struct CopyBufferToBufferCmd {
     CopyBufferToBufferCmd();
@@ -206,19 +228,19 @@ struct CopyBufferToBufferCmd {
 struct CopyBufferToTextureCmd {
     BufferCopy source;
     TextureCopy destination;
-    Extent3D copySize;  // Texels
+    TexelExtent3D copySize;
 };
 
 struct CopyTextureToBufferCmd {
     TextureCopy source;
     BufferCopy destination;
-    Extent3D copySize;  // Texels
+    TexelExtent3D copySize;
 };
 
 struct CopyTextureToTextureCmd {
     TextureCopy source;
     TextureCopy destination;
-    Extent3D copySize;  // Texels
+    TexelExtent3D copySize;
 };
 
 struct DispatchCmd {
@@ -366,6 +388,14 @@ struct SetBindGroupCmd {
     uint32_t dynamicOffsetCount;
 };
 
+struct SetImmediatesCmd {
+    SetImmediatesCmd();
+    ~SetImmediatesCmd();
+
+    uint32_t offset;
+    uint32_t size;
+};
+
 struct SetIndexBufferCmd {
     SetIndexBufferCmd();
     ~SetIndexBufferCmd();
@@ -384,6 +414,13 @@ struct SetVertexBufferCmd {
     Ref<BufferBase> buffer;
     uint64_t offset;
     uint64_t size;
+};
+
+struct SetResourceTableCmd {
+    SetResourceTableCmd();
+    ~SetResourceTableCmd();
+
+    Ref<ResourceTableBase> table;
 };
 
 struct WriteBufferCmd {

@@ -80,14 +80,14 @@ class CommandEncoder final : public ApiObjectBase {
                                                      BufferBase* destination,
                                                      uint64_t destinationOffset,
                                                      uint64_t size);
-    void APICopyBufferToTexture(const ImageCopyBuffer* source,
-                                const ImageCopyTexture* destination,
+    void APICopyBufferToTexture(const TexelCopyBufferInfo* source,
+                                const TexelCopyTextureInfo* destination,
                                 const Extent3D* copySize);
-    void APICopyTextureToBuffer(const ImageCopyTexture* source,
-                                const ImageCopyBuffer* destination,
+    void APICopyTextureToBuffer(const TexelCopyTextureInfo* source,
+                                const TexelCopyBufferInfo* destination,
                                 const Extent3D* copySize);
-    void APICopyTextureToTexture(const ImageCopyTexture* source,
-                                 const ImageCopyTexture* destination,
+    void APICopyTextureToTexture(const TexelCopyTextureInfo* source,
+                                 const TexelCopyTextureInfo* destination,
                                  const Extent3D* copySize);
     void APIClearBuffer(BufferBase* destination, uint64_t destinationOffset, uint64_t size);
 
@@ -101,6 +101,7 @@ class CommandEncoder final : public ApiObjectBase {
                             uint32_t queryCount,
                             BufferBase* destination,
                             uint64_t destinationOffset);
+    void APISetResourceTable(ResourceTableBase* table);
     void APIWriteBuffer(BufferBase* buffer,
                         uint64_t bufferOffset,
                         const uint8_t* data,
@@ -132,18 +133,24 @@ class CommandEncoder final : public ApiObjectBase {
 
     [[nodiscard]] InternalUsageScope MakeInternalUsageScope();
 
+    ResourceTableBase* GetResourceTable() const { return mResourceTable; }
+
   private:
     CommandEncoder(DeviceBase* device, const UnpackedPtr<CommandEncoderDescriptor>& descriptor);
     CommandEncoder(DeviceBase* device, ObjectBase::ErrorTag tag, StringView label);
 
-    void DestroyImpl() override;
+    void DestroyImpl(DestroyReason reason) override;
 
     MaybeError ValidateFinish() const;
+
+    // An owning Ref<> is part of the CommandAllocator.
+    raw_ptr<ResourceTableBase> mResourceTable = nullptr;
 
     EncodingContext mEncodingContext;
     absl::flat_hash_set<BufferBase*> mTopLevelBuffers;
     absl::flat_hash_set<TextureBase*> mTopLevelTextures;
     absl::flat_hash_set<QuerySetBase*> mUsedQuerySets;
+    absl::flat_hash_set<ResourceTableBase*> mUsedResourceTables;
 
     uint64_t mDebugGroupStackSize = 0;
 

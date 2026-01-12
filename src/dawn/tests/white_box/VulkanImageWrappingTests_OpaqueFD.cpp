@@ -106,9 +106,7 @@ class VulkanImageWrappingTestBackendOpaqueFD : public VulkanImageWrappingTestBac
     }
 
     bool SupportsTestParams(const TestParams& params) const override {
-        return mDeviceVk->GetDeviceInfo().HasExt(DeviceExt::ExternalMemoryFD) &&
-               (!params.useDedicatedAllocation ||
-                mDeviceVk->GetDeviceInfo().HasExt(DeviceExt::DedicatedAllocation));
+        return mDeviceVk->GetDeviceInfo().HasExt(DeviceExt::ExternalMemoryFD);
     }
 
     std::unique_ptr<ExternalTexture> CreateTexture(uint32_t width,
@@ -230,7 +228,7 @@ class VulkanImageWrappingTestBackendOpaqueFD : public VulkanImageWrappingTestBac
         deviceVk->fn.GetImageMemoryRequirements(deviceVk->GetVkDevice(), handle, &requirements);
 
         int bestType = deviceVk->GetResourceMemoryAllocator()->FindBestTypeIndex(
-            requirements, MemoryKind::Opaque);
+            requirements, MemoryKind::DeviceLocal);
 
         VkMemoryAllocateInfo allocateInfo;
         allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;

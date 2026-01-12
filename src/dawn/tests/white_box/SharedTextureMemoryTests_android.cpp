@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "dawn/common/Assert.h"
 #include "dawn/native/vulkan/DeviceVk.h"
 #include "dawn/native/vulkan/UtilsVulkan.h"
 #include "dawn/native/vulkan/VulkanError.h"
@@ -185,16 +186,31 @@ class SharedTextureMemoryTestAndroidVulkanBackend
     }
 };
 
-class SharedTextureMemoryTestAndroidOpenGLESBackend
+class SharedTextureMemoryTestAndroidSyncFDOpenGLESBackend
     : public SharedTextureMemoryTestAndroidBackend<SharedTextureMemoryTestBackend> {
   public:
     static SharedTextureMemoryTestBackend* GetInstance() {
-        static SharedTextureMemoryTestAndroidOpenGLESBackend b;
+        static SharedTextureMemoryTestAndroidSyncFDOpenGLESBackend b;
         return &b;
     }
 
     std::vector<wgpu::FeatureName> RequiredFeatures(const wgpu::Adapter&) const override {
-        return {wgpu::FeatureName::SharedTextureMemoryAHardwareBuffer};
+        return {wgpu::FeatureName::SharedTextureMemoryAHardwareBuffer,
+                wgpu::FeatureName::SharedFenceSyncFD};
+    }
+};
+
+class SharedTextureMemoryTestAndroidEGLSyncOpenGLESBackend
+    : public SharedTextureMemoryTestAndroidBackend<SharedTextureMemoryTestBackend> {
+  public:
+    static SharedTextureMemoryTestBackend* GetInstance() {
+        static SharedTextureMemoryTestAndroidEGLSyncOpenGLESBackend b;
+        return &b;
+    }
+
+    std::vector<wgpu::FeatureName> RequiredFeatures(const wgpu::Adapter&) const override {
+        return {wgpu::FeatureName::SharedTextureMemoryAHardwareBuffer,
+                wgpu::FeatureName::SharedFenceEGLSync};
     }
 };
 
@@ -235,27 +251,41 @@ TEST_P(SharedTextureMemoryTests, GPUWriteThenCPURead) {
 
     wgpu::SharedTextureMemoryBeginAccessDescriptor beginDesc = {};
     wgpu::SharedTextureMemoryVkImageLayoutBeginState beginLayout{};
-    beginLayout.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    beginLayout.newLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    beginDesc.nextInChain = &beginLayout;
+    if (IsVulkan()) {
+        beginLayout.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        beginLayout.newLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        beginDesc.nextInChain = &beginLayout;
+    }
     memory.BeginAccess(texture, &beginDesc);
 
     device.GetQueue().Submit(1, &commandBuffer);
 
     wgpu::SharedTextureMemoryEndAccessState endState = {};
     wgpu::SharedTextureMemoryVkImageLayoutEndState endLayout{};
-    endState.nextInChain = &endLayout;
+    if (IsVulkan()) {
+        endState.nextInChain = &endLayout;
+    }
     memory.EndAccess(texture, &endState);
 
     wgpu::SharedFenceExportInfo exportInfo;
-    wgpu::SharedFenceSyncFDExportInfo syncFdExportInfo;
-    exportInfo.nextInChain = &syncFdExportInfo;
-
     endState.fences[0].ExportInfo(&exportInfo);
 
+    // AHardwareBuffer_lock requires a fd to wait on. Otherwise we would need wait until the
+    // submitted work is finished here.
+    DAWN_TEST_UNSUPPORTED_IF(exportInfo.type != wgpu::SharedFenceType::SyncFD);
+
+    wgpu::SharedFenceSyncFDExportInfo syncFdExportInfo;
+    exportInfo.nextInChain = &syncFdExportInfo;
+    endState.fences[0].ExportInfo(&exportInfo);
+
+    // AHardwareBuffer_lock consumes the fd, so duplicate it before passing.
+    // The original fd will be closed when endState is destroyed.
+    const int dupFd = dup(syncFdExportInfo.handle);
+    EXPECT_GE(dupFd, 0);
+
     void* ptr;
-    EXPECT_EQ(AHardwareBuffer_lock(aHardwareBuffer, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
-                                   syncFdExportInfo.handle, nullptr, &ptr),
+    EXPECT_EQ(AHardwareBuffer_lock(aHardwareBuffer, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, dupFd,
+                                   nullptr, &ptr),
               0);
 
     auto* pixels = static_cast<utils::RGBA8*>(ptr);
@@ -272,6 +302,9 @@ TEST_P(SharedTextureMemoryTests, GPUWriteThenCPURead) {
 
 // Test writing the memory on the CPU, then sampling on the device.
 TEST_P(SharedTextureMemoryTests, CPUWriteThenGPURead) {
+    // TODO(crbug.com/444741058): Fails on Intel-based brya devices running Android Desktop.
+    DAWN_SUPPRESS_TEST_IF(IsVulkan() && IsIntel() && IsAndroid());
+
     AHardwareBuffer_Desc aHardwareBufferDesc = {
         .width = 4,
         .height = 4,
@@ -332,8 +365,11 @@ TEST_P(SharedTextureMemoryTests, CPUWriteThenGPURead) {
 
     wgpu::SharedTextureMemoryBeginAccessDescriptor beginDesc = {};
     beginDesc.initialized = true;
+
     wgpu::SharedTextureMemoryVkImageLayoutBeginState beginLayout{};
-    beginDesc.nextInChain = &beginLayout;
+    if (IsVulkan()) {
+        beginDesc.nextInChain = &beginLayout;
+    }
 
     memory.BeginAccess(texture, &beginDesc);
     EXPECT_TEXTURE_EQ(expected.data(), texture, {0, 0},
@@ -344,6 +380,9 @@ TEST_P(SharedTextureMemoryTests, CPUWriteThenGPURead) {
 // instance.
 TEST_P(SharedTextureMemoryTests, InvalidSharedTextureMemoryAHardwareBufferProperties) {
     DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::YCbCrVulkanSamplers}));
+
+    // TODO(crbug.com/444741058): Fails on Intel-based brya devices running Android Desktop.
+    DAWN_SUPPRESS_TEST_IF(IsVulkan() && IsIntel() && IsAndroid());
 
     AHardwareBuffer_Desc aHardwareBufferDesc = {
         .width = 4,
@@ -377,6 +416,9 @@ TEST_P(SharedTextureMemoryTests, InvalidSharedTextureMemoryAHardwareBufferProper
 // Test querying YCbCr info from the Device.
 TEST_P(SharedTextureMemoryTests, QueryYCbCrInfoFromDevice) {
     DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::YCbCrVulkanSamplers}));
+
+    // TODO(crbug.com/444741058): Fails on Intel-based brya devices running Android Desktop.
+    DAWN_SUPPRESS_TEST_IF(IsVulkan() && IsIntel() && IsAndroid());
 
     AHardwareBuffer_Desc aHardwareBufferDesc = {
         .width = 4,
@@ -440,6 +482,9 @@ TEST_P(SharedTextureMemoryTests, QueryYCbCrInfoFromDevice) {
 // Test querying YCbCr info from the SharedTextureMemory without external format.
 TEST_P(SharedTextureMemoryTests, QueryYCbCrInfoWithoutExternalFormat) {
     DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::YCbCrVulkanSamplers}));
+
+    // TODO(crbug.com/444741058): Fails on Intel-based brya devices running Android Desktop.
+    DAWN_SUPPRESS_TEST_IF(IsVulkan() && IsIntel() && IsAndroid());
 
     AHardwareBuffer_Desc aHardwareBufferDesc = {
         .width = 4,
@@ -645,17 +690,32 @@ DAWN_INSTANTIATE_PREFIXED_TEST_P(Vulkan,
                                  {SharedTextureMemoryTestAndroidVulkanBackend::GetInstance()},
                                  {1});
 
-DAWN_INSTANTIATE_PREFIXED_TEST_P(OpenGLES,
-                                 SharedTextureMemoryNoFeatureTests,
-                                 {OpenGLESBackend()},
-                                 {SharedTextureMemoryTestAndroidOpenGLESBackend::GetInstance()},
-                                 {1});
+DAWN_INSTANTIATE_PREFIXED_TEST_P(
+    OpenGLES_SyncFD,
+    SharedTextureMemoryNoFeatureTests,
+    {OpenGLESBackend()},
+    {SharedTextureMemoryTestAndroidSyncFDOpenGLESBackend::GetInstance()},
+    {1});
 
-DAWN_INSTANTIATE_PREFIXED_TEST_P(OpenGLES,
-                                 SharedTextureMemoryTests,
-                                 {OpenGLESBackend()},
-                                 {SharedTextureMemoryTestAndroidOpenGLESBackend::GetInstance()},
-                                 {1});
+DAWN_INSTANTIATE_PREFIXED_TEST_P(
+    OpenGLES_SyncFD,
+    SharedTextureMemoryTests,
+    {OpenGLESBackend()},
+    {SharedTextureMemoryTestAndroidSyncFDOpenGLESBackend::GetInstance()},
+    {1});
 
+DAWN_INSTANTIATE_PREFIXED_TEST_P(
+    OpenGLES_EGLSync,
+    SharedTextureMemoryNoFeatureTests,
+    {OpenGLESBackend()},
+    {SharedTextureMemoryTestAndroidEGLSyncOpenGLESBackend::GetInstance()},
+    {1});
+
+DAWN_INSTANTIATE_PREFIXED_TEST_P(
+    OpenGLES_EGLSync,
+    SharedTextureMemoryTests,
+    {OpenGLESBackend()},
+    {SharedTextureMemoryTestAndroidEGLSyncOpenGLESBackend::GetInstance()},
+    {1});
 }  // anonymous namespace
 }  // namespace dawn

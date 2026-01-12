@@ -59,6 +59,8 @@ class SamplerBase : public ApiObjectBase,
     bool IsComparison() const;
     bool IsFiltering() const;
     bool IsYCbCr() const;
+    // Valid to call only if `IsYCbCr()` is true.
+    YCbCrVkDescriptor GetYCbCrVkDescriptor() const;
 
     // Functions necessary for the unordered_set<SamplerBase*>-based cache.
     size_t ComputeContentHash() override;
@@ -70,13 +72,7 @@ class SamplerBase : public ApiObjectBase,
     uint16_t GetMaxAnisotropy() const { return mMaxAnisotropy; }
 
   protected:
-    void DestroyImpl() override;
-
-    // Valid to call only if `IsYCbCr()` is true.
-    YCbCrVkDescriptor GetYCbCrVkDescriptor() {
-        DAWN_ASSERT(IsYCbCr());
-        return mYCbCrVkDescriptor;
-    }
+    void DestroyImpl(DestroyReason reason) override;
 
   private:
     SamplerBase(DeviceBase* device, ObjectBase::ErrorTag tag, StringView label);

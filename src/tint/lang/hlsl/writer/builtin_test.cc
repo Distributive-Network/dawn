@@ -48,7 +48,7 @@ namespace tint::hlsl::writer {
 namespace {
 
 TEST_F(HlslWriterTest, BuiltinSelectScalar) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* x = b.Let("x", 1_i);
         auto* y = b.Let("y", 2_i);
@@ -60,7 +60,7 @@ TEST_F(HlslWriterTest, BuiltinSelectScalar) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   int x = int(1);
   int y = int(2);
   int w = ((true) ? (y) : (x));
@@ -70,20 +70,20 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinSelectVector) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* x = b.Let("x", b.Construct<vec2<i32>>(1_i, 2_i));
         auto* y = b.Let("y", b.Construct<vec2<i32>>(3_i, 4_i));
         auto* cmp = b.Construct<vec2<bool>>(true, false);
 
-        auto* c = b.Call(ty.vec2<i32>(), core::BuiltinFn::kSelect, x, y, cmp);
+        auto* c = b.Call(ty.vec2i(), core::BuiltinFn::kSelect, x, y, cmp);
         b.Let("w", c);
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   int2 x = int2(int(1), int(2));
   int2 y = int2(int(3), int(4));
   int2 w = ((bool2(true, false)) ? (y) : (x));
@@ -93,7 +93,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinTrunc) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* val = b.Var("v", b.Zero(ty.f32()));
 
@@ -106,23 +106,22 @@ TEST_F(HlslWriterTest, BuiltinTrunc) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float v = 0.0f;
   float v_1 = v;
-  float v_2 = floor(v_1);
-  float val = (((v_1 < 0.0f)) ? (ceil(v_1)) : (v_2));
+  float val = (((v_1 < 0.0f)) ? (ceil(v_1)) : (floor(v_1)));
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTruncVec) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* val = b.Var("v", b.Splat(ty.vec3<f32>(), 2_f));
+        auto* val = b.Var("v", b.Splat(ty.vec3f(), 2_f));
 
         auto* v = b.Load(val);
-        auto* t = b.Call(ty.vec3<f32>(), core::BuiltinFn::kTrunc, v);
+        auto* t = b.Call(ty.vec3f(), core::BuiltinFn::kTrunc, v);
 
         b.Let("val", t);
         b.Return(func);
@@ -130,18 +129,17 @@ TEST_F(HlslWriterTest, BuiltinTruncVec) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float3 v = (2.0f).xxx;
   float3 v_1 = v;
-  float3 v_2 = floor(v_1);
-  float3 val = (((v_1 < (0.0f).xxx)) ? (ceil(v_1)) : (v_2));
+  float3 val = (((v_1 < (0.0f).xxx)) ? (ceil(v_1)) : (floor(v_1)));
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTruncF16) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* val = b.Var("v", b.Zero(ty.f16()));
 
@@ -154,11 +152,10 @@ TEST_F(HlslWriterTest, BuiltinTruncF16) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float16_t v = float16_t(0.0h);
   float16_t v_1 = v;
-  float16_t v_2 = floor(v_1);
-  float16_t val = (((v_1 < float16_t(0.0h))) ? (ceil(v_1)) : (v_2));
+  float16_t val = (((v_1 < float16_t(0.0h))) ? (ceil(v_1)) : (floor(v_1)));
 }
 
 )");
@@ -166,7 +163,7 @@ void foo() {
 
 TEST_F(HlslWriterTest, BuiltinStorageAtomicStore) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
-                                                    {mod.symbols.New("padding"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("padding"), ty.vec4f()},
                                                     {mod.symbols.New("a"), ty.atomic<i32>()},
                                                     {mod.symbols.New("b"), ty.atomic<u32>()},
                                                 });
@@ -175,7 +172,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicStore) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Call(ty.void_(), core::BuiltinFn::kAtomicStore,
                b.Access(ty.ptr<storage, atomic<i32>, read_write>(), var, 1_u), 123_i);
@@ -185,7 +182,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicStore) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
   v.InterlockedExchange(int(16u), int(123), v_1);
 }
@@ -198,7 +195,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicStoreDirect) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Call(ty.void_(), core::BuiltinFn::kAtomicStore, var, 123_i);
         b.Return(func);
@@ -207,7 +204,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicStoreDirect) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
   v.InterlockedExchange(int(0u), int(123), v_1);
 }
@@ -217,7 +214,7 @@ void foo() {
 
 TEST_F(HlslWriterTest, BuiltinStorageAtomicLoad) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
-                                                    {mod.symbols.New("padding"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("padding"), ty.vec4f()},
                                                     {mod.symbols.New("a"), ty.atomic<i32>()},
                                                     {mod.symbols.New("b"), ty.atomic<u32>()},
                                                 });
@@ -226,7 +223,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicLoad) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.i32(), core::BuiltinFn::kAtomicLoad,
                           b.Access(ty.ptr<storage, atomic<i32>, read_write>(), var, 1_u)));
@@ -236,7 +233,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicLoad) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
   v.InterlockedOr(int(16u), int(0), v_1);
   int x = v_1;
@@ -250,7 +247,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicLoadDirect) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.i32(), core::BuiltinFn::kAtomicLoad, var));
         b.Return(func);
@@ -259,7 +256,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicLoadDirect) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
   v.InterlockedOr(int(0u), int(0), v_1);
   int x = v_1;
@@ -270,7 +267,7 @@ void foo() {
 
 TEST_F(HlslWriterTest, BuiltinStorageAtomicSub) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
-                                                    {mod.symbols.New("padding"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("padding"), ty.vec4f()},
                                                     {mod.symbols.New("a"), ty.atomic<i32>()},
                                                     {mod.symbols.New("b"), ty.atomic<u32>()},
                                                 });
@@ -279,7 +276,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicSub) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.i32(), core::BuiltinFn::kAtomicSub,
                           b.Access(ty.ptr<storage, atomic<i32>, read_write>(), var, 1_u), 123_i));
@@ -289,9 +286,9 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicSub) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
-  v.InterlockedAdd(int(16u), (int(0) - int(123)), v_1);
+  v.InterlockedAdd(int(16u), asint((asuint(int(0)) - asuint(int(123)))), v_1);
   int x = v_1;
 }
 
@@ -303,7 +300,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicSubDirect) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.i32(), core::BuiltinFn::kAtomicSub, var, 123_i));
         b.Return(func);
@@ -312,9 +309,9 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicSubDirect) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
-  v.InterlockedAdd(int(0u), (int(0) - int(123)), v_1);
+  v.InterlockedAdd(int(0u), asint((asuint(int(0)) - asuint(int(123)))), v_1);
   int x = v_1;
 }
 
@@ -323,7 +320,7 @@ void foo() {
 
 TEST_F(HlslWriterTest, BuiltinStorageAtomicCompareExchangeWeak) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
-                                                    {mod.symbols.New("padding"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("padding"), ty.vec4f()},
                                                     {mod.symbols.New("a"), ty.atomic<i32>()},
                                                     {mod.symbols.New("b"), ty.atomic<u32>()},
                                                 });
@@ -332,7 +329,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicCompareExchangeWeak) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Let("x",
               b.Call(core::type::CreateAtomicCompareExchangeResult(ty, mod.symbols, ty.i32()),
@@ -349,7 +346,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicCompareExchangeWeak) {
 
 
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
   v.InterlockedCompareExchange(int(16u), int(123), int(345), v_1);
   int v_2 = v_1;
@@ -364,7 +361,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicCompareExchangeWeakDirect) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(core::type::CreateAtomicCompareExchangeResult(ty, mod.symbols, ty.i32()),
                           core::BuiltinFn::kAtomicCompareExchangeWeak, var, 123_i, 345_i));
@@ -379,7 +376,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicCompareExchangeWeakDirect) {
 
 
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
   v.InterlockedCompareExchange(int(0u), int(123), int(345), v_1);
   int v_2 = v_1;
@@ -402,7 +399,7 @@ using HlslBuiltinAtomic = HlslWriterTestWithParam<AtomicData>;
 TEST_P(HlslBuiltinAtomic, IndirectAccess) {
     auto param = GetParam();
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
-                                                    {mod.symbols.New("padding"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("padding"), ty.vec4f()},
                                                     {mod.symbols.New("a"), ty.atomic<i32>()},
                                                     {mod.symbols.New("b"), ty.atomic<u32>()},
                                                 });
@@ -411,7 +408,7 @@ TEST_P(HlslBuiltinAtomic, IndirectAccess) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.i32(), param.fn,
                           b.Access(ty.ptr<storage, atomic<i32>, read_write>(), var, 1_u), 123_i));
@@ -421,7 +418,7 @@ TEST_P(HlslBuiltinAtomic, IndirectAccess) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
   v.)" + std::string(param.interlock) +
                                 R"((int(16u), int(123), v_1);
@@ -437,7 +434,7 @@ TEST_P(HlslBuiltinAtomic, DirectAccess) {
     var->SetBindingPoint(0, 0);
     b.ir.root_block->Append(var);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.i32(), param.fn, var, 123_i));
         b.Return(func);
@@ -446,7 +443,7 @@ TEST_P(HlslBuiltinAtomic, DirectAccess) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
-void foo() {
+void main() {
   int v_1 = int(0);
   v.)" + std::string(param.interlock) +
                                 R"((int(0u), int(123), v_1);
@@ -469,7 +466,7 @@ INSTANTIATE_TEST_SUITE_P(HlslWriterTest,
 
 TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicStore) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
-                                                    {mod.symbols.New("padding"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("padding"), ty.vec4f()},
                                                     {mod.symbols.New("a"), ty.atomic<i32>()},
                                                     {mod.symbols.New("b"), ty.atomic<u32>()},
                                                 });
@@ -477,7 +474,7 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicStore) {
     auto* var = b.Var("v", workgroup, sb, core::Access::kReadWrite);
     b.ir.root_block->Append(var);
 
-    auto* func = b.ComputeFunction("foo");
+    auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {
         b.Call(ty.void_(), core::BuiltinFn::kAtomicStore,
                b.Access(ty.ptr<workgroup, atomic<i32>, read_write>(), var, 1_u), 123_i);
@@ -491,14 +488,14 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicStore) {
   uint b;
 };
 
-struct foo_inputs {
+struct main_inputs {
   uint tint_local_index : SV_GroupIndex;
 };
 
 
 groupshared SB v;
-void foo_inner(uint tint_local_index) {
-  if ((tint_local_index == 0u)) {
+void main_inner(uint tint_local_index) {
+  if ((tint_local_index < 1u)) {
     v.padding = (0.0f).xxxx;
     int v_1 = int(0);
     InterlockedExchange(v.a, int(0), v_1);
@@ -511,8 +508,8 @@ void foo_inner(uint tint_local_index) {
 }
 
 [numthreads(1, 1, 1)]
-void foo(foo_inputs inputs) {
-  foo_inner(inputs.tint_local_index);
+void main(main_inputs inputs) {
+  main_inner(inputs.tint_local_index);
 }
 
 )");
@@ -520,7 +517,7 @@ void foo(foo_inputs inputs) {
 
 TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicLoad) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
-                                                    {mod.symbols.New("padding"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("padding"), ty.vec4f()},
                                                     {mod.symbols.New("a"), ty.atomic<i32>()},
                                                     {mod.symbols.New("b"), ty.atomic<u32>()},
                                                 });
@@ -528,7 +525,7 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicLoad) {
     auto* var = b.Var("v", workgroup, sb, core::Access::kReadWrite);
     b.ir.root_block->Append(var);
 
-    auto* func = b.ComputeFunction("foo");
+    auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.i32(), core::BuiltinFn::kAtomicLoad,
                           b.Access(ty.ptr<workgroup, atomic<i32>, read_write>(), var, 1_u)));
@@ -542,14 +539,14 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicLoad) {
   uint b;
 };
 
-struct foo_inputs {
+struct main_inputs {
   uint tint_local_index : SV_GroupIndex;
 };
 
 
 groupshared SB v;
-void foo_inner(uint tint_local_index) {
-  if ((tint_local_index == 0u)) {
+void main_inner(uint tint_local_index) {
+  if ((tint_local_index < 1u)) {
     v.padding = (0.0f).xxxx;
     int v_1 = int(0);
     InterlockedExchange(v.a, int(0), v_1);
@@ -563,8 +560,8 @@ void foo_inner(uint tint_local_index) {
 }
 
 [numthreads(1, 1, 1)]
-void foo(foo_inputs inputs) {
-  foo_inner(inputs.tint_local_index);
+void main(main_inputs inputs) {
+  main_inner(inputs.tint_local_index);
 }
 
 )");
@@ -572,7 +569,7 @@ void foo(foo_inputs inputs) {
 
 TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicSub) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
-                                                    {mod.symbols.New("padding"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("padding"), ty.vec4f()},
                                                     {mod.symbols.New("a"), ty.atomic<i32>()},
                                                     {mod.symbols.New("b"), ty.atomic<u32>()},
                                                 });
@@ -580,7 +577,7 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicSub) {
     auto* var = b.Var("v", workgroup, sb, core::Access::kReadWrite);
     b.ir.root_block->Append(var);
 
-    auto* func = b.ComputeFunction("foo");
+    auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.i32(), core::BuiltinFn::kAtomicSub,
                           b.Access(ty.ptr<workgroup, atomic<i32>, read_write>(), var, 1_u), 123_i));
@@ -596,14 +593,14 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicSub) {
   uint b;
 };
 
-struct foo_inputs {
+struct main_inputs {
   uint tint_local_index : SV_GroupIndex;
 };
 
 
 groupshared SB v;
-void foo_inner(uint tint_local_index) {
-  if ((tint_local_index == 0u)) {
+void main_inner(uint tint_local_index) {
+  if ((tint_local_index < 1u)) {
     v.padding = (0.0f).xxxx;
     int v_1 = int(0);
     InterlockedExchange(v.a, int(0), v_1);
@@ -620,8 +617,8 @@ void foo_inner(uint tint_local_index) {
 }
 
 [numthreads(1, 1, 1)]
-void foo(foo_inputs inputs) {
-  foo_inner(inputs.tint_local_index);
+void main(main_inputs inputs) {
+  main_inner(inputs.tint_local_index);
 }
 
 )");
@@ -629,7 +626,7 @@ void foo(foo_inputs inputs) {
 
 TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicCompareExchangeWeak) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
-                                                    {mod.symbols.New("padding"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("padding"), ty.vec4f()},
                                                     {mod.symbols.New("a"), ty.atomic<i32>()},
                                                     {mod.symbols.New("b"), ty.atomic<u32>()},
                                                 });
@@ -637,7 +634,7 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicCompareExchangeWeak) {
     auto* var = b.Var("v", workgroup, sb, core::Access::kReadWrite);
     b.ir.root_block->Append(var);
 
-    auto* func = b.ComputeFunction("foo");
+    auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(core::type::CreateAtomicCompareExchangeResult(ty, mod.symbols, ty.i32()),
                           core::BuiltinFn::kAtomicCompareExchangeWeak,
@@ -658,14 +655,14 @@ struct atomic_compare_exchange_result_i32 {
   bool exchanged;
 };
 
-struct foo_inputs {
+struct main_inputs {
   uint tint_local_index : SV_GroupIndex;
 };
 
 
 groupshared SB v;
-void foo_inner(uint tint_local_index) {
-  if ((tint_local_index == 0u)) {
+void main_inner(uint tint_local_index) {
+  if ((tint_local_index < 1u)) {
     v.padding = (0.0f).xxxx;
     int v_1 = int(0);
     InterlockedExchange(v.a, int(0), v_1);
@@ -680,8 +677,8 @@ void foo_inner(uint tint_local_index) {
 }
 
 [numthreads(1, 1, 1)]
-void foo(foo_inputs inputs) {
-  foo_inner(inputs.tint_local_index);
+void main(main_inputs inputs) {
+  main_inner(inputs.tint_local_index);
 }
 
 )");
@@ -693,7 +690,7 @@ TEST_P(HlslBuiltinWorkgroupAtomic, Access) {
     auto* var = b.Var("v", workgroup, ty.atomic<i32>(), core::Access::kReadWrite);
     b.ir.root_block->Append(var);
 
-    auto* func = b.ComputeFunction("foo");
+    auto* func = b.ComputeFunction("main");
 
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.i32(), param.fn, var, 123_i));
@@ -701,14 +698,14 @@ TEST_P(HlslBuiltinWorkgroupAtomic, Access) {
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
-    EXPECT_EQ(output_.hlsl, R"(struct foo_inputs {
+    EXPECT_EQ(output_.hlsl, R"(struct main_inputs {
   uint tint_local_index : SV_GroupIndex;
 };
 
 
 groupshared int v;
-void foo_inner(uint tint_local_index) {
-  if ((tint_local_index == 0u)) {
+void main_inner(uint tint_local_index) {
+  if ((tint_local_index < 1u)) {
     int v_1 = int(0);
     InterlockedExchange(v, int(0), v_1);
   }
@@ -720,8 +717,8 @@ void foo_inner(uint tint_local_index) {
 }
 
 [numthreads(1, 1, 1)]
-void foo(foo_inputs inputs) {
-  foo_inner(inputs.tint_local_index);
+void main(main_inputs inputs) {
+  main_inner(inputs.tint_local_index);
 }
 
 )");
@@ -739,7 +736,7 @@ INSTANTIATE_TEST_SUITE_P(HlslWriterTest,
                                                     "InterlockedExchange"}));
 
 TEST_F(HlslWriterTest, BuiltinSignScalar) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Let("x", b.Call(ty.f16(), core::BuiltinFn::kSign, 1_h));
         b.Return(func);
@@ -747,7 +744,7 @@ TEST_F(HlslWriterTest, BuiltinSignScalar) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float16_t x = float16_t(sign(float16_t(1.0h)));
 }
 
@@ -755,16 +752,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinSignVector) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("x", b.Call(ty.vec3<f32>(), core::BuiltinFn::kSign,
-                          b.Composite(ty.vec3<f32>(), 1_f, 2_f, 3_f)));
+        b.Let("x",
+              b.Call(ty.vec3f(), core::BuiltinFn::kSign, b.Composite(ty.vec3f(), 1_f, 2_f, 3_f)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float3 x = float3(sign(float3(1.0f, 2.0f, 3.0f)));
 }
 
@@ -772,7 +769,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinStorageBarrier) {
-    auto* func = b.ComputeFunction("foo");
+    auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {
         b.Call(ty.void_(), core::BuiltinFn::kStorageBarrier);
         b.Return(func);
@@ -781,7 +778,7 @@ TEST_F(HlslWriterTest, BuiltinStorageBarrier) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 [numthreads(1, 1, 1)]
-void foo() {
+void main() {
   DeviceMemoryBarrierWithGroupSync();
 }
 
@@ -789,7 +786,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureBarrier) {
-    auto* func = b.ComputeFunction("foo");
+    auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {
         b.Call(ty.void_(), core::BuiltinFn::kTextureBarrier);
         b.Return(func);
@@ -798,7 +795,7 @@ TEST_F(HlslWriterTest, BuiltinTextureBarrier) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 [numthreads(1, 1, 1)]
-void foo() {
+void main() {
   DeviceMemoryBarrierWithGroupSync();
 }
 
@@ -806,7 +803,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinWorkgroupBarrier) {
-    auto* func = b.ComputeFunction("foo");
+    auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {
         b.Call(ty.void_(), core::BuiltinFn::kWorkgroupBarrier);
         b.Return(func);
@@ -815,7 +812,7 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupBarrier) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 [numthreads(1, 1, 1)]
-void foo() {
+void main() {
   GroupMemoryBarrierWithGroupSync();
 }
 
@@ -823,100 +820,143 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureNumLevels1D) {
-    auto* t = b.FunctionParam(
-        "t", ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k1d, ty.f32()));
+    auto* st = ty.sampled_texture(core::type::TextureDimension::k1d, ty.f32());
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, st));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", st);
     func->SetParams({t});
-
     b.Append(func->Block(), [&] {
         b.Let("d", b.Call(ty.u32(), core::BuiltinFn::kTextureNumLevels, t));
         b.Return(func);
     });
 
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
+    });
+
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+Texture1D<float4> x : register(t0);
 void foo(Texture1D<float4> t) {
   uint2 v = (0u).xx;
-  t.GetDimensions(0u, v[0u], v[1u]);
+  t.GetDimensions(0u, v.x, v.y);
   uint d = v.y;
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureNumLevels2D) {
-    auto* t = b.FunctionParam(
-        "t", ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2d, ty.f32()));
+    auto* st = ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32());
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, st));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", st);
     func->SetParams({t});
-
     b.Append(func->Block(), [&] {
         b.Let("d", b.Call(ty.u32(), core::BuiltinFn::kTextureNumLevels, t));
         b.Return(func);
     });
 
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
+    });
+
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+Texture2D<float4> x : register(t0);
 void foo(Texture2D<float4> t) {
   uint3 v = (0u).xxx;
-  t.GetDimensions(0u, v[0u], v[1u], v[2u]);
+  t.GetDimensions(0u, v.x, v.y, v.z);
   uint d = v.z;
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureNumLevels3D) {
-    auto* t = b.FunctionParam(
-        "t", ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k3d, ty.f32()));
+    auto* st = ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32());
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, st));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", st);
     func->SetParams({t});
-
     b.Append(func->Block(), [&] {
         b.Let("d", b.Call(ty.u32(), core::BuiltinFn::kTextureNumLevels, t));
         b.Return(func);
     });
 
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
+    });
+
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+Texture3D<float4> x : register(t0);
 void foo(Texture3D<float4> t) {
   uint4 v = (0u).xxxx;
-  t.GetDimensions(0u, v[0u], v[1u], v[2u], v[3u]);
+  t.GetDimensions(0u, v.x, v.y, v.z, v.w);
   uint d = v.w;
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureDimension1D) {
-    auto* t = b.FunctionParam(
-        "t", ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k1d, ty.f32()));
+    auto* st = ty.sampled_texture(core::type::TextureDimension::k1d, ty.f32());
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, st));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", st);
     func->SetParams({t});
-
     b.Append(func->Block(), [&] {
         b.Let("d", b.Call(ty.u32(), core::BuiltinFn::kTextureDimensions, t));
         b.Return(func);
     });
 
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
+    });
+
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+Texture1D<float4> x : register(t0);
 void foo(Texture1D<float4> t) {
   uint v = 0u;
   t.GetDimensions(v);
@@ -924,154 +964,212 @@ void foo(Texture1D<float4> t) {
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureDimension2D) {
-    auto* t = b.FunctionParam(
-        "t", ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2d, ty.f32()));
+    auto* st = ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32());
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, st));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", st);
     func->SetParams({t});
-
     b.Append(func->Block(), [&] {
-        b.Let("d", b.Call(ty.vec2<u32>(), core::BuiltinFn::kTextureDimensions, t));
+        b.Let("d", b.Call(ty.vec2u(), core::BuiltinFn::kTextureDimensions, t));
         b.Return(func);
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+Texture2D<float4> x : register(t0);
 void foo(Texture2D<float4> t) {
   uint2 v = (0u).xx;
-  t.GetDimensions(v[0u], v[1u]);
+  t.GetDimensions(v.x, v.y);
   uint2 d = v;
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureDimension2dLOD) {
-    auto* t = b.FunctionParam(
-        "t", ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2d, ty.f32()));
+    auto* st = ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32());
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, st));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", st);
     func->SetParams({t});
-
     b.Append(func->Block(), [&] {
-        b.Let("d", b.Call(ty.vec2<u32>(), core::BuiltinFn::kTextureDimensions, t, 1_i));
+        b.Let("d", b.Call(ty.vec2u(), core::BuiltinFn::kTextureDimensions, t, 1_i));
         b.Return(func);
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+Texture2D<float4> x : register(t0);
 void foo(Texture2D<float4> t) {
   uint3 v = (0u).xxx;
-  t.GetDimensions(0u, v[0u], v[1u], v[2u]);
-  uint3 v_1 = (0u).xxx;
-  t.GetDimensions(uint(min(uint(int(1)), (v.z - 1u))), v_1[0u], v_1[1u], v_1[2u]);
-  uint2 d = v_1.xy;
+  t.GetDimensions(uint(int(1)), v.x, v.y, v.z);
+  uint2 d = v.xy;
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureDimension3D) {
-    auto* t = b.FunctionParam(
-        "t", ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k3d, ty.f32()));
+    auto* st = ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32());
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, st));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", st);
     func->SetParams({t});
-
     b.Append(func->Block(), [&] {
-        b.Let("d", b.Call(ty.vec3<u32>(), core::BuiltinFn::kTextureDimensions, t));
+        b.Let("d", b.Call(ty.vec3u(), core::BuiltinFn::kTextureDimensions, t));
         b.Return(func);
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+Texture3D<float4> x : register(t0);
 void foo(Texture3D<float4> t) {
   uint3 v = (0u).xxx;
-  t.GetDimensions(v[0u], v[1u], v[2u]);
+  t.GetDimensions(v.x, v.y, v.z);
   uint3 d = v;
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureLayers2dArray) {
-    auto* t = b.FunctionParam(
-        "t", ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2dArray, ty.f32()));
+    auto* st = ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32());
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, st));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", st);
     func->SetParams({t});
-
     b.Append(func->Block(), [&] {
         b.Let("d", b.Call(ty.u32(), core::BuiltinFn::kTextureNumLayers, t));
         b.Return(func);
     });
 
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
+    });
+
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+Texture2DArray<float4> x : register(t0);
 void foo(Texture2DArray<float4> t) {
   uint3 v = (0u).xxx;
-  t.GetDimensions(v[0u], v[1u], v[2u]);
+  t.GetDimensions(v.x, v.y, v.z);
   uint d = v.z;
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureNumLayersCubeArray) {
-    auto* t = b.FunctionParam("t", ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCubeArray, ty.f32()));
+    auto* st = ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32());
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, st));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", st);
     func->SetParams({t});
-
     b.Append(func->Block(), [&] {
         b.Let("d", b.Call(ty.u32(), core::BuiltinFn::kTextureNumLayers, t));
         b.Return(func);
     });
 
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
+    });
+
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+TextureCubeArray<float4> x : register(t0);
 void foo(TextureCubeArray<float4> t) {
   uint3 v = (0u).xxx;
-  t.GetDimensions(v[0u], v[1u], v[2u]);
+  t.GetDimensions(v.x, v.y, v.z);
   uint d = v.z;
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureNumSamples) {
-    auto* t = b.FunctionParam(
-        "t", ty.Get<core::type::DepthMultisampledTexture>(core::type::TextureDimension::k2d));
+    auto* ms = ty.depth_multisampled_texture(core::type::TextureDimension::k2d);
+
+    core::ir::Var* v = b.Var("x", ty.ptr(handle, ms));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
 
     auto* func = b.Function("foo", ty.void_());
+    auto* t = b.FunctionParam("t", ms);
     func->SetParams({t});
 
     b.Append(func->Block(), [&] {
@@ -1079,28 +1177,36 @@ TEST_F(HlslWriterTest, BuiltinTextureNumSamples) {
         b.Return(func);
     });
 
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(v));
+        b.Return(eb);
+    });
+
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
+Texture2DMS<float4> x : register(t0);
 void foo(Texture2DMS<float4> t) {
   uint3 v = (0u).xxx;
-  t.GetDimensions(v[0u], v[1u], v[2u]);
+  t.GetDimensions(v.x, v.y, v.z);
   uint d = v.z;
 }
 
 [numthreads(1, 1, 1)]
-void unused_entry_point() {
+void main() {
+  foo(x);
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureLoad_1DF32) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k1d, ty.f32())));
+    auto* t =
+        b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k1d, ty.f32())));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* coords = b.Value(1_u);
         auto* level = b.Value(3_u);
@@ -1109,120 +1215,122 @@ TEST_F(HlslWriterTest, BuiltinTextureLoad_1DF32) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture1D<float4> v : register(t0);
-void foo() {
+void main() {
   int v_1 = int(1u);
-  float4 x = float4(v.Load(int2(v_1, int(3u))));
+  float4 x = v.Load(int2(v_1, int(3u)));
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureLoad_2DLevelI32) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k2d, ty.i32())));
+    auto* t =
+        b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.i32())));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Composite(ty.vec2<u32>(), 1_u, 2_u);
+        auto* coords = b.Composite(ty.vec2u(), 1_u, 2_u);
         auto* level = b.Value(3_u);
         b.Let("x", b.Call<vec4<i32>>(core::BuiltinFn::kTextureLoad, b.Load(t), coords, level));
         b.Return(func);
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<int4> v : register(t0);
-void foo() {
+void main() {
   int2 v_1 = int2(uint2(1u, 2u));
-  int4 x = int4(v.Load(int3(v_1, int(3u))));
+  int4 x = v.Load(int3(v_1, int(3u)));
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureLoad_3DLevelU32) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::SampledTexture>(core::type::TextureDimension::k3d, ty.f32())));
+    auto* t =
+        b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Composite(ty.vec3<i32>(), 1_i, 2_i, 3_i);
+        auto* coords = b.Composite(ty.vec3i(), 1_i, 2_i, 3_i);
         auto* level = b.Value(4_u);
         b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureLoad, b.Load(t), coords, level));
         b.Return(func);
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
-void foo() {
-  int3 v_1 = int3(int3(int(1), int(2), int(3)));
-  float4 x = float4(v.Load(int4(v_1, int(4u))));
+void main() {
+  float4 x = v.Load(int4(int3(int(1), int(2), int(3)), int(4u)));
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureLoad_Multisampled2DI32) {
-    auto* t = b.Var(ty.ptr(handle, ty.Get<core::type::MultisampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.i32())));
+    auto* t =
+        b.Var(ty.ptr(handle, ty.multisampled_texture(core::type::TextureDimension::k2d, ty.i32())));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Composite(ty.vec2<i32>(), 1_i, 2_i);
+        auto* coords = b.Composite(ty.vec2i(), 1_i, 2_i);
         auto* sample_idx = b.Value(3_i);
         b.Let("x", b.Call<vec4<i32>>(core::BuiltinFn::kTextureLoad, b.Load(t), coords, sample_idx));
         b.Return(func);
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DMS<int4> v : register(t0);
-void foo() {
-  int2 v_1 = int2(int2(int(1), int(2)));
-  int4 x = int4(v.Load(v_1, int(int(3))));
+void main() {
+  int4 x = v.Load(int2(int(1), int(2)), int(3));
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureLoad_Depth2DLevelF32) {
-    auto* t =
-        b.Var(ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+    auto* t = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<i32>(), b.Value(1_i), b.Value(2_i));
+        auto* coords = b.Construct(ty.vec2i(), b.Value(1_i), b.Value(2_i));
         auto* level = b.Value(3_u);
         b.Let("x", b.Call<f32>(core::BuiltinFn::kTextureLoad, b.Load(t), coords, level));
         b.Return(func);
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
-void foo() {
-  int2 v_1 = int2(int2(int(1), int(2)));
+void main() {
+  int2 v_1 = int2(int(1), int(2));
   float x = v.Load(int3(v_1, int(3u))).x;
 }
 
@@ -1230,14 +1338,13 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureLoad_Depth2DArrayLevelF32) {
-    auto* t = b.Var(
-        ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+    auto* t = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Composite(ty.vec2<i32>(), 1_i, 2_i);
+        auto* coords = b.Composite(ty.vec2i(), 1_i, 2_i);
         auto* array_idx = b.Value(3_u);
         auto* sample_idx = b.Value(4_i);
         b.Let("x",
@@ -1246,59 +1353,56 @@ TEST_F(HlslWriterTest, BuiltinTextureLoad_Depth2DArrayLevelF32) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
-void foo() {
-  int2 v_1 = int2(int2(int(1), int(2)));
-  int v_2 = int(3u);
-  float x = v.Load(int4(v_1, v_2, int(int(4)))).x;
+void main() {
+  float x = v.Load(int4(int2(int(1), int(2)), int(3u), int(4))).x;
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureLoad_DepthMultisampledF32) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::DepthMultisampledTexture>(core::type::TextureDimension::k2d)));
+    auto* t =
+        b.Var(ty.ptr(handle, ty.depth_multisampled_texture(core::type::TextureDimension::k2d)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Composite(ty.vec2<i32>(), 1_i, 2_i);
+        auto* coords = b.Composite(ty.vec2i(), 1_i, 2_i);
         auto* sample_idx = b.Value(3_u);
         b.Let("x", b.Call<f32>(core::BuiltinFn::kTextureLoad, b.Load(t), coords, sample_idx));
         b.Return(func);
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DMS<float4> v : register(t0);
-void foo() {
-  int2 v_1 = int2(int2(int(1), int(2)));
-  float x = v.Load(v_1, int(3u)).x;
+void main() {
+  float x = v.Load(int2(int(1), int(2)), int(3u)).x;
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureStore1D) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::StorageTexture>(
-                    core::type::TextureDimension::k1d, core::TexelFormat::kR32Float,
-                    core::Access::kReadWrite,
-                    core::type::StorageTexture::SubtypeFor(core::TexelFormat::kR32Float, ty))));
+    auto* t = b.Var(
+        ty.ptr(handle, ty.storage_texture(core::type::TextureDimension::k1d,
+                                          core::TexelFormat::kR32Float, core::Access::kReadWrite)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* coords = b.Value(1_i);
-        auto* value = b.Composite(ty.vec4<f32>(), .5_f, 0_f, 0_f, 1_f);
+        auto* value = b.Composite(ty.vec4f(), .5_f, 0_f, 0_f, 1_f);
         b.Call(ty.void_(), core::BuiltinFn::kTextureStore, b.Load(t), coords, value);
         b.Return(func);
     });
@@ -1306,7 +1410,7 @@ TEST_F(HlslWriterTest, BuiltinTextureStore1D) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWTexture1D<float4> v : register(u0);
-void foo() {
+void main() {
   v[int(1)] = float4(0.5f, 0.0f, 0.0f, 1.0f);
 }
 
@@ -1314,18 +1418,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinTextureStore3D) {
-    auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::StorageTexture>(
-                    core::type::TextureDimension::k3d, core::TexelFormat::kR32Float,
-                    core::Access::kReadWrite,
-                    core::type::StorageTexture::SubtypeFor(core::TexelFormat::kR32Float, ty))));
+    auto* t = b.Var(
+        ty.ptr(handle, ty.storage_texture(core::type::TextureDimension::k3d,
+                                          core::TexelFormat::kR32Float, core::Access::kReadWrite)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Composite(ty.vec3<i32>(), 1_i, 2_i, 3_i);
-        auto* value = b.Composite(ty.vec4<f32>(), .5_f, 0_f, 0_f, 1_f);
+        auto* coords = b.Composite(ty.vec3i(), 1_i, 2_i, 3_i);
+        auto* value = b.Composite(ty.vec4f(), .5_f, 0_f, 0_f, 1_f);
         b.Call(ty.void_(), core::BuiltinFn::kTextureStore, b.Load(t), coords, value);
         b.Return(func);
     });
@@ -1333,7 +1435,7 @@ TEST_F(HlslWriterTest, BuiltinTextureStore3D) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWTexture3D<float4> v : register(u0);
-void foo() {
+void main() {
   v[int3(int(1), int(2), int(3))] = float4(0.5f, 0.0f, 0.0f, 1.0f);
 }
 
@@ -1342,17 +1444,15 @@ void foo() {
 
 TEST_F(HlslWriterTest, BuiltinTextureStoreArray) {
     auto* t = b.Var(ty.ptr(
-        handle, ty.Get<core::type::StorageTexture>(
-                    core::type::TextureDimension::k2dArray, core::TexelFormat::kRgba32Float,
-                    core::Access::kReadWrite,
-                    core::type::StorageTexture::SubtypeFor(core::TexelFormat::kR32Float, ty))));
+        handle, ty.storage_texture(core::type::TextureDimension::k2dArray,
+                                   core::TexelFormat::kRgba32Float, core::Access::kReadWrite)));
     t->SetBindingPoint(0, 0);
     b.ir.root_block->Append(t);
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Composite(ty.vec2<i32>(), 1_i, 2_i);
-        auto* value = b.Composite(ty.vec4<f32>(), .5_f, .4_f, .3_f, 1_f);
+        auto* coords = b.Composite(ty.vec2i(), 1_i, 2_i);
+        auto* value = b.Composite(ty.vec4f(), .5_f, .4_f, .3_f, 1_f);
         b.Call(ty.void_(), core::BuiltinFn::kTextureStore, b.Load(t), coords, 3_u, value);
         b.Return(func);
     });
@@ -1360,7 +1460,7 @@ TEST_F(HlslWriterTest, BuiltinTextureStoreArray) {
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWTexture2DArray<float4> v : register(u0);
-void foo() {
+void main() {
   v[int3(int2(int(1), int(2)), int(3u))] = float4(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f);
 }
 
@@ -1371,18 +1471,16 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_Depth2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* depth_ref = b.Value(3_f);
 
         auto* t = b.Load(tex);
@@ -1393,12 +1491,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_Depth2d) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float4 x = v.GatherCmp(v_1, float2(1.0f, 2.0f), 3.0f);
 }
 
@@ -1409,20 +1508,18 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_Depth2dOffset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* depth_ref = b.Value(3_f);
-        auto* offset = b.Construct(ty.vec2<i32>(), b.Value(4_i), b.Value(5_i));
+        auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -1432,14 +1529,14 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_Depth2dOffset) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.GatherCmp(v_1, v_2, 3.0f, int2(int(4), int(5)));
+void main() {
+  float4 x = v.GatherCmp(v_1, float2(1.0f, 2.0f), 3.0f, int2(int(4), int(5)));
 }
 
 )");
@@ -1449,18 +1546,16 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_DepthCubeArray) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(2.5_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(2.5_f));
         auto* array_idx = b.Value(6_u);
         auto* depth_ref = b.Value(3_f);
 
@@ -1472,12 +1567,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_DepthCubeArray) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 2.5f);
   float4 x = v.GatherCmp(v_1, float4(v_2, float(6u)), 3.0f);
 }
@@ -1489,21 +1585,19 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_Depth2dArrayOffset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(6_i);
         auto* depth_ref = b.Value(3_f);
-        auto* offset = b.Construct(ty.vec2<i32>(), b.Value(4_i), b.Value(5_i));
+        auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -1513,15 +1607,15 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_Depth2dArrayOffset) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
-  int2 v_3 = int2(int(4), int(5));
-  float4 x = v.GatherCmp(v_1, float3(v_2, float(int(6))), 3.0f, v_3);
+  float4 x = v.GatherCmp(v_1, float3(v_2, float(int(6))), 3.0f, int2(int(4), int(5)));
 }
 
 )");
@@ -1531,18 +1625,17 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_Alpha) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.i32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.i32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -1551,12 +1644,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_Alpha) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<int4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   int4 x = v.GatherAlpha(v_1, float2(1.0f, 2.0f));
 }
 
@@ -1566,18 +1660,17 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_RedOffset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.i32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.i32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* offset = b.Composite<vec2<i32>>(1_i, 3_i);
 
         auto* t = b.Load(tex);
@@ -1587,12 +1680,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_RedOffset) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<int4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   int4 x = v.GatherRed(v_1, float2(1.0f, 2.0f), int2(int(1), int(3)));
 }
 
@@ -1602,18 +1696,17 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_GreenArray) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.i32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.i32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(1_u);
 
         auto* t = b.Load(tex);
@@ -1624,12 +1717,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_GreenArray) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<int4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   int4 x = v.GatherGreen(v_1, float3(v_2, float(1u)));
 }
@@ -1641,18 +1735,17 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_BlueArrayOffset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.i32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.i32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(1_i);
         auto* offset = b.Composite<vec2<i32>>(1_i, 2_i);
 
@@ -1664,12 +1757,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_BlueArrayOffset) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<int4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   int4 x = v.GatherBlue(v_1, float3(v_2, float(int(1))), int2(int(1), int(2)));
 }
@@ -1681,18 +1775,16 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_Depth) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -1701,12 +1793,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_Depth) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float4 x = v.Gather(v_1, float2(1.0f, 2.0f));
 }
 
@@ -1716,18 +1809,16 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_DepthOffset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* offset = b.Composite<vec2<i32>>(3_i, 4_i);
 
         auto* t = b.Load(tex);
@@ -1737,12 +1828,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_DepthOffset) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float4 x = v.Gather(v_1, float2(1.0f, 2.0f), int2(int(3), int(4)));
 }
 
@@ -1752,18 +1844,16 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_DepthArray) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_i);
 
         auto* t = b.Load(tex);
@@ -1773,12 +1863,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_DepthArray) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float4 x = v.Gather(v_1, float3(v_2, float(int(4))));
 }
@@ -1789,18 +1880,16 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_DepthArrayOffset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
@@ -1812,12 +1901,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_DepthArrayOffset) {
     });
 
     Options opts;
+    opts.entry_point_name = "main";
     opts.disable_robustness = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float4 x = v.Gather(v_1, float3(v_2, float(4u)), int2(int(4), int(5)));
 }
@@ -1826,16 +1916,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinQuantizeToF16) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* v = b.Var("x", b.Zero(ty.vec2<f32>()));
-        b.Let("a", b.Call(ty.vec2<f32>(), core::BuiltinFn::kQuantizeToF16, b.Load(v)));
+        auto* v = b.Var("x", b.Zero(ty.vec2f()));
+        b.Let("a", b.Call(ty.vec2f(), core::BuiltinFn::kQuantizeToF16, b.Load(v)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float2 x = (0.0f).xx;
   float2 a = f16tof32(f32tof16(x));
 }
@@ -1844,16 +1934,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack2x16Float) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec2<f32>(), 2_f));
+        auto* u = b.Var("u", b.Splat(ty.vec2f(), 2_f));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack2X16Float, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float2 u = (2.0f).xx;
   uint2 v = f32tof16(u);
   uint a = (v.x | (v.y << 16u));
@@ -1863,16 +1953,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinUnpack2x16Float) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.vec2<f32>(), core::BuiltinFn::kUnpack2X16Float, b.Load(u)));
+        b.Let("a", b.Call(ty.vec2f(), core::BuiltinFn::kUnpack2X16Float, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   uint v = u;
   float2 a = f16tof32(uint2((v & 65535u), (v >> 16u)));
@@ -1882,16 +1972,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack2x16Snorm) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec2<f32>(), 2_f));
+        auto* u = b.Var("u", b.Splat(ty.vec2f(), 2_f));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack2X16Snorm, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float2 u = (2.0f).xx;
   int2 v = (int2(round((clamp(u, (-1.0f).xx, (1.0f).xx) * 32767.0f))) & (int(65535)).xx);
   uint a = asuint((v.x | (v.y << 16u)));
@@ -1901,16 +1991,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinUnpack2x16Snorm) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.vec2<f32>(), core::BuiltinFn::kUnpack2X16Snorm, b.Load(u)));
+        b.Let("a", b.Call(ty.vec2f(), core::BuiltinFn::kUnpack2X16Snorm, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   int v = int(u);
   float2 a = clamp((float2((int2((v << 16u), v) >> (16u).xx)) / 32767.0f), (-1.0f).xx, (1.0f).xx);
@@ -1920,16 +2010,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack2x16Unorm) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec2<f32>(), 2_f));
+        auto* u = b.Var("u", b.Splat(ty.vec2f(), 2_f));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack2X16Unorm, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float2 u = (2.0f).xx;
   uint2 v = uint2(round((clamp(u, (0.0f).xx, (1.0f).xx) * 65535.0f)));
   uint a = (v.x | (v.y << 16u));
@@ -1939,16 +2029,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinUnpack2x16Unorm) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.vec2<f32>(), core::BuiltinFn::kUnpack2X16Unorm, b.Load(u)));
+        b.Let("a", b.Call(ty.vec2f(), core::BuiltinFn::kUnpack2X16Unorm, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   uint v = u;
   float2 a = (float2(uint2((v & 65535u), (v >> 16u))) / 65535.0f);
@@ -1958,16 +2048,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack4x8Snorm) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec4<f32>(), 2_f));
+        auto* u = b.Var("u", b.Splat(ty.vec4f(), 2_f));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack4X8Snorm, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float4 u = (2.0f).xxxx;
   int4 v = (int4(round((clamp(u, (-1.0f).xxxx, (1.0f).xxxx) * 127.0f))) & (int(255)).xxxx);
   uint a = asuint((v.x | ((v.y << 8u) | ((v.z << 16u) | (v.w << 24u)))));
@@ -1977,16 +2067,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinUnpack4x8Snorm) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.vec4<f32>(), core::BuiltinFn::kUnpack4X8Snorm, b.Load(u)));
+        b.Let("a", b.Call(ty.vec4f(), core::BuiltinFn::kUnpack4X8Snorm, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   int v = int(u);
   float4 a = clamp((float4((int4((v << 24u), (v << 16u), (v << 8u), v) >> (24u).xxxx)) / 127.0f), (-1.0f).xxxx, (1.0f).xxxx);
@@ -1996,16 +2086,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack4x8Unorm) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec4<f32>(), 2_f));
+        auto* u = b.Var("u", b.Splat(ty.vec4f(), 2_f));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack4X8Unorm, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float4 u = (2.0f).xxxx;
   uint4 v = uint4(round((clamp(u, (0.0f).xxxx, (1.0f).xxxx) * 255.0f)));
   uint a = (v.x | ((v.y << 8u) | ((v.z << 16u) | (v.w << 24u))));
@@ -2015,16 +2105,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinUnpack4x8Unorm) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.vec4<f32>(), core::BuiltinFn::kUnpack4X8Unorm, b.Load(u)));
+        b.Let("a", b.Call(ty.vec4f(), core::BuiltinFn::kUnpack4X8Unorm, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   uint v = u;
   float4 a = (float4(uint4((v & 255u), ((v >> 8u) & 255u), ((v >> 16u) & 255u), (v >> 24u))) / 255.0f);
@@ -2034,42 +2124,43 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack4xI8CorePolyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec4<i32>(), 2_i));
+        auto* u = b.Var("u", b.Splat(ty.vec4i(), 2_i));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack4XI8, b.Load(u)));
         b.Return(func);
     });
 
     Options opts{};
-    opts.polyfill_pack_unpack_4x8 = true;
+    opts.entry_point_name = "main";
+    opts.extensions.polyfill_pack_unpack_4x8 = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   int4 u = (int(2)).xxxx;
   int4 v = u;
   uint4 v_1 = uint4(0u, 8u, 16u, 24u);
-  uint4 v_2 = asuint(v);
-  uint4 v_3 = ((v_2 & uint4((255u).xxxx)) << v_1);
-  uint a = dot(v_3, uint4((1u).xxxx));
+  uint4 v_2 = ((asuint(v) & uint4((255u).xxxx)) << v_1);
+  uint a = dot(v_2, uint4((1u).xxxx));
 }
 
 )");
 }
 
 TEST_F(HlslWriterTest, BuiltinUnpack4xI8CorePolyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.vec4<i32>(), core::BuiltinFn::kUnpack4XI8, b.Load(u)));
+        b.Let("a", b.Call(ty.vec4i(), core::BuiltinFn::kUnpack4XI8, b.Load(u)));
         b.Return(func);
     });
 
     Options opts{};
-    opts.polyfill_pack_unpack_4x8 = true;
+    opts.entry_point_name = "main";
+    opts.extensions.polyfill_pack_unpack_4x8 = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   uint v = u;
   uint4 v_1 = uint4(24u, 16u, 8u, 0u);
@@ -2081,16 +2172,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack4xI8) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec4<i32>(), 2_i));
+        auto* u = b.Var("u", b.Splat(ty.vec4i(), 2_i));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack4XI8, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   int4 u = (int(2)).xxxx;
   uint a = uint(pack_s8(u));
 }
@@ -2099,16 +2190,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinUnpack4xI8) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.vec4<i32>(), core::BuiltinFn::kUnpack4XI8, b.Load(u)));
+        b.Let("a", b.Call(ty.vec4i(), core::BuiltinFn::kUnpack4XI8, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   int4 a = unpack_s8s32(int8_t4_packed(u));
 }
@@ -2117,18 +2208,19 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack4xU8CorePolyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec4<u32>(), 2_u));
+        auto* u = b.Var("u", b.Splat(ty.vec4u(), 2_u));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack4XU8, b.Load(u)));
         b.Return(func);
     });
 
     Options opts{};
-    opts.polyfill_pack_unpack_4x8 = true;
+    opts.entry_point_name = "main";
+    opts.extensions.polyfill_pack_unpack_4x8 = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint4 u = (2u).xxxx;
   uint4 v = u;
   uint4 v_1 = uint4(0u, 8u, 16u, 24u);
@@ -2140,18 +2232,19 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinUnpack4xU8CorePolyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.vec4<u32>(), core::BuiltinFn::kUnpack4XU8, b.Load(u)));
+        b.Let("a", b.Call(ty.vec4u(), core::BuiltinFn::kUnpack4XU8, b.Load(u)));
         b.Return(func);
     });
 
     Options opts{};
-    opts.polyfill_pack_unpack_4x8 = true;
+    opts.entry_point_name = "main";
+    opts.extensions.polyfill_pack_unpack_4x8 = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   uint v = u;
   uint4 v_1 = uint4(0u, 8u, 16u, 24u);
@@ -2163,16 +2256,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack4xU8) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec4<u32>(), 2_u));
+        auto* u = b.Var("u", b.Splat(ty.vec4u(), 2_u));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack4XU8, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint4 u = (2u).xxxx;
   uint a = uint(pack_u8(u));
 }
@@ -2181,16 +2274,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinUnpack4xU8) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.vec4<u32>(), core::BuiltinFn::kUnpack4XU8, b.Load(u)));
+        b.Let("a", b.Call(ty.vec4u(), core::BuiltinFn::kUnpack4XU8, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   uint4 a = unpack_u8u32(uint8_t4_packed(u));
 }
@@ -2199,7 +2292,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinDot4U8PackedPolyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kDot4U8Packed, b.Load(u), u32(3_u)));
@@ -2207,10 +2300,11 @@ TEST_F(HlslWriterTest, BuiltinDot4U8PackedPolyfill) {
     });
 
     Options opts{};
-    opts.polyfill_dot_4x8_packed = true;
+    opts.entry_point_name = "main";
+    opts.extensions.polyfill_dot_4x8_packed = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   uint v = u;
   uint4 v_1 = uint4(0u, 8u, 16u, 24u);
@@ -2225,7 +2319,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinDot4U8Packed) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kDot4U8Packed, b.Load(u), u32(3_u)));
@@ -2234,7 +2328,7 @@ TEST_F(HlslWriterTest, BuiltinDot4U8Packed) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   uint accumulator = 0u;
   uint a = dot4add_u8packed(u, 3u, accumulator);
@@ -2244,16 +2338,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack4xU8ClampPolyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec4<u32>(), 2_u));
+        auto* u = b.Var("u", b.Splat(ty.vec4u(), 2_u));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack4XU8Clamp, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint4 u = (2u).xxxx;
   uint4 v = u;
   uint4 v_1 = uint4(0u, 8u, 16u, 24u);
@@ -2266,18 +2360,19 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack4xI8ClampPolyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec4<i32>(), 2_i));
+        auto* u = b.Var("u", b.Splat(ty.vec4i(), 2_i));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack4XI8Clamp, b.Load(u)));
         b.Return(func);
     });
 
     Options opts{};
-    opts.polyfill_pack_unpack_4x8 = true;
+    opts.entry_point_name = "main";
+    opts.extensions.polyfill_pack_unpack_4x8 = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   int4 u = (int(2)).xxxx;
   int4 v = u;
   uint4 v_1 = uint4(0u, 8u, 16u, 24u);
@@ -2291,16 +2386,16 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinPack4xI8Clamp) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* u = b.Var("u", b.Splat(ty.vec4<i32>(), 2_i));
+        auto* u = b.Var("u", b.Splat(ty.vec4i(), 2_i));
         b.Let("a", b.Call(ty.u32(), core::BuiltinFn::kPack4XI8Clamp, b.Load(u)));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   int4 u = (int(2)).xxxx;
   uint a = uint(pack_clamp_s8(u));
 }
@@ -2309,7 +2404,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinDot4I8PackedPolyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
         b.Let("a", b.Call(ty.i32(), core::BuiltinFn::kDot4I8Packed, b.Load(u), u32(3_u)));
@@ -2317,10 +2412,11 @@ TEST_F(HlslWriterTest, BuiltinDot4I8PackedPolyfill) {
     });
 
     Options opts{};
-    opts.polyfill_dot_4x8_packed = true;
+    opts.entry_point_name = "main";
+    opts.extensions.polyfill_dot_4x8_packed = true;
     ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   uint v = u;
   uint4 v_1 = uint4(24u, 16u, 8u, 0u);
@@ -2335,7 +2431,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinDot4I8Packed) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
         b.Let("a", b.Call(ty.i32(), core::BuiltinFn::kDot4I8Packed, b.Load(u), u32(3_u)));
@@ -2344,7 +2440,7 @@ TEST_F(HlslWriterTest, BuiltinDot4I8Packed) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   uint u = 2u;
   int accumulator = int(0);
   int a = dot4add_i8packed(u, 3u, accumulator);
@@ -2354,7 +2450,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinAsinh) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", .25_f);
         b.Let("a", b.Call(ty.f32(), core::BuiltinFn::kAsinh, b.Load(u)));
@@ -2363,7 +2459,7 @@ TEST_F(HlslWriterTest, BuiltinAsinh) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float u = 0.25f;
   float v = u;
   float a = log((v + sqrt(((v * v) + 1.0f))));
@@ -2373,7 +2469,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinAcosh) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 1.25_h);
         b.Let("a", b.Call(ty.f16(), core::BuiltinFn::kAcosh, b.Load(u)));
@@ -2382,7 +2478,7 @@ TEST_F(HlslWriterTest, BuiltinAcosh) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float16_t u = float16_t(1.25h);
   float16_t v = u;
   float16_t a = log((v + sqrt(((v * v) - float16_t(1.0h)))));
@@ -2392,7 +2488,7 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinAtanh) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", .25_f);
         b.Let("a", b.Call(ty.f32(), core::BuiltinFn::kAtanh, b.Load(u)));
@@ -2401,7 +2497,7 @@ TEST_F(HlslWriterTest, BuiltinAtanh) {
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float u = 0.25f;
   float v = u;
   float a = (log(((1.0f + v) / (1.0f - v))) * 0.5f);
@@ -2411,17 +2507,17 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinSubgroupBallot) {
-    auto* func = b.ComputeFunction("foo");
+    auto* func = b.ComputeFunction("main");
 
     b.Append(func->Block(), [&] {
-        b.Let("x", b.Call(ty.vec4<u32>(), core::BuiltinFn::kSubgroupBallot, true));
+        b.Let("x", b.Call(ty.vec4u(), core::BuiltinFn::kSubgroupBallot, true));
         b.Return(func);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 [numthreads(1, 1, 1)]
-void foo() {
+void main() {
   uint4 x = WaveActiveBallot(true);
 }
 
@@ -2432,16 +2528,15 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_1d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k1d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k1d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* coords = b.Value(1_f);
 
@@ -2455,7 +2550,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_1d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture1D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float4 x = v.Sample(v_1, 1.0f);
 }
 
@@ -2466,18 +2561,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -2489,7 +2583,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float4 x = v.Sample(v_1, float2(1.0f, 2.0f));
 }
 
@@ -2500,18 +2594,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
@@ -2524,7 +2617,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float4 x = v.Sample(v_1, float2(1.0f, 2.0f), int2(int(4), int(5)));
 }
 
@@ -2535,18 +2628,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -2559,7 +2651,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float4 x = v.Sample(v_1, float3(v_2, float(4u)));
 }
@@ -2571,18 +2663,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
@@ -2597,7 +2688,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d_Array_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float4 x = v.Sample(v_1, float3(v_2, float(4u)), int2(int(4), int(5)));
 }
@@ -2609,18 +2700,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_3d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -2632,7 +2722,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_3d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float4 x = v.Sample(v_1, float3(1.0f, 2.0f, 3.0f));
 }
 
@@ -2643,18 +2733,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_3d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* offset = b.Composite<vec3<i32>>(4_i, 5_i, 6_i);
 
         auto* t = b.Load(tex);
@@ -2667,7 +2756,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_3d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float4 x = v.Sample(v_1, float3(1.0f, 2.0f, 3.0f), int3(int(4), int(5), int(6)));
 }
 
@@ -2678,18 +2767,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCube, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCube, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -2701,7 +2789,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Cube) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float4 x = v.Sample(v_1, float3(1.0f, 2.0f, 3.0f));
 }
 
@@ -2712,18 +2800,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCubeArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -2736,7 +2823,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Cube_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
   float4 x = v.Sample(v_1, float4(v_2, float(4u)));
 }
@@ -2748,18 +2835,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -2771,9 +2857,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.SampleBias(v_1, v_2, clamp(3.0f, -16.0f, 15.9899997711181640625f));
+void main() {
+  float4 x = v.SampleBias(v_1, float2(1.0f, 2.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -2783,18 +2868,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
@@ -2808,9 +2892,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.SampleBias(v_1, v_2, clamp(3.0f, -16.0f, 15.9899997711181640625f), int2(int(4), int(5)));
+void main() {
+  float4 x = v.SampleBias(v_1, float2(1.0f, 2.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f), int2(int(4), int(5)));
 }
 
 )");
@@ -2820,18 +2903,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -2845,10 +2927,9 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
-  float v_3 = clamp(3.0f, -16.0f, 15.9899997711181640625f);
-  float4 x = v.SampleBias(v_1, float3(v_2, float(4u)), v_3);
+  float4 x = v.SampleBias(v_1, float3(v_2, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -2858,18 +2939,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
@@ -2884,10 +2964,9 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d_Array_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
-  float v_3 = clamp(3.0f, -16.0f, 15.9899997711181640625f);
-  float4 x = v.SampleBias(v_1, float3(v_2, float(4u)), v_3, int2(int(4), int(5)));
+  float4 x = v.SampleBias(v_1, float3(v_2, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f), int2(int(4), int(5)));
 }
 
 )");
@@ -2897,18 +2976,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_3d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -2920,9 +2998,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_3d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 x = v.SampleBias(v_1, v_2, clamp(3.0f, -16.0f, 15.9899997711181640625f));
+void main() {
+  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -2932,18 +3009,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_3d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* offset = b.Composite<vec3<i32>>(4_i, 5_i, 6_i);
 
         auto* t = b.Load(tex);
@@ -2957,9 +3033,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_3d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 x = v.SampleBias(v_1, v_2, clamp(3.0f, -16.0f, 15.9899997711181640625f), int3(int(4), int(5), int(6)));
+void main() {
+  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f), int3(int(4), int(5), int(6)));
 }
 
 )");
@@ -2969,18 +3044,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCube, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCube, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -2992,9 +3066,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_Cube) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 x = v.SampleBias(v_1, v_2, clamp(3.0f, -16.0f, 15.9899997711181640625f));
+void main() {
+  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -3004,18 +3077,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCubeArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -3029,10 +3101,9 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_Cube_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float v_3 = clamp(3.0f, -16.0f, 15.9899997711181640625f);
-  float4 x = v.SampleBias(v_1, float4(v_2, float(4u)), v_3);
+  float4 x = v.SampleBias(v_1, float4(v_2, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -3042,18 +3113,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3065,7 +3134,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float x = v.SampleCmp(v_1, float2(1.0f, 2.0f), 3.0f);
 }
 
@@ -3076,18 +3145,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
@@ -3100,7 +3167,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float x = v.SampleCmp(v_1, float2(1.0f, 2.0f), 3.0f, int2(int(4), int(5)));
 }
 
@@ -3111,18 +3178,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -3136,7 +3201,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float x = v.SampleCmp(v_1, float3(v_2, float(4u)), 3.0f);
 }
@@ -3148,18 +3213,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
@@ -3174,7 +3237,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d_Array_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float x = v.SampleCmp(v_1, float3(v_2, float(4u)), 3.0f, int2(int(4), int(5)));
 }
@@ -3186,18 +3249,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCube)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::kCube)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3209,7 +3270,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_Cube) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float x = v.SampleCmp(v_1, float3(1.0f, 2.0f, 3.0f), 3.0f);
 }
 
@@ -3220,18 +3281,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -3245,7 +3304,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_Cube_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
   float x = v.SampleCmp(v_1, float4(v_2, float(4u)), 3.0f);
 }
@@ -3257,18 +3316,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3280,7 +3337,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float x = v.SampleCmpLevelZero(v_1, float2(1.0f, 2.0f), 3.0f);
 }
 
@@ -3291,18 +3348,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
@@ -3316,7 +3371,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float x = v.SampleCmpLevelZero(v_1, float2(1.0f, 2.0f), 3.0f, int2(int(4), int(5)));
 }
 
@@ -3327,18 +3382,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -3352,7 +3405,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float x = v.SampleCmpLevelZero(v_1, float3(v_2, float(4u)), 3.0f);
 }
@@ -3364,18 +3417,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
@@ -3390,7 +3441,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float x = v.SampleCmpLevelZero(v_1, float3(v_2, float(4u)), 3.0f, int2(int(4), int(5)));
 }
@@ -3402,18 +3453,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCube)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::kCube)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3425,7 +3474,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_Cube) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float x = v.SampleCmpLevelZero(v_1, float3(1.0f, 2.0f, 3.0f), 3.0f);
 }
 
@@ -3436,18 +3485,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler = b.Var(ty.ptr(
-            handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kComparisonSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.comparison_sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -3461,7 +3508,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_Cube_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
   float x = v.SampleCmpLevelZero(v_1, float4(v_2, float(4u)), 3.0f);
 }
@@ -3473,20 +3520,19 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
-        auto* ddx = b.Construct(ty.vec2<f32>(), b.Value(3_f), b.Value(4_f));
-        auto* ddy = b.Construct(ty.vec2<f32>(), b.Value(5_f), b.Value(6_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
+        auto* ddx = b.Construct(ty.vec2f(), b.Value(3_f), b.Value(4_f));
+        auto* ddy = b.Construct(ty.vec2f(), b.Value(5_f), b.Value(6_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3498,7 +3544,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float2 v_3 = float2(3.0f, 4.0f);
   float4 x = v.SampleGrad(v_1, v_2, v_3, float2(5.0f, 6.0f));
@@ -3511,20 +3557,19 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
-        auto* ddx = b.Construct(ty.vec2<f32>(), b.Value(3_f), b.Value(4_f));
-        auto* ddy = b.Construct(ty.vec2<f32>(), b.Value(5_f), b.Value(6_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
+        auto* ddx = b.Construct(ty.vec2f(), b.Value(3_f), b.Value(4_f));
+        auto* ddy = b.Construct(ty.vec2f(), b.Value(5_f), b.Value(6_f));
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
@@ -3538,7 +3583,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float2 v_3 = float2(3.0f, 4.0f);
   float4 x = v.SampleGrad(v_1, v_2, v_3, float2(5.0f, 6.0f), int2(int(4), int(5)));
@@ -3551,20 +3596,19 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
-        auto* ddx = b.Construct(ty.vec2<f32>(), b.Value(3_f), b.Value(4_f));
-        auto* ddy = b.Construct(ty.vec2<f32>(), b.Value(5_f), b.Value(6_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
+        auto* ddx = b.Construct(ty.vec2f(), b.Value(3_f), b.Value(4_f));
+        auto* ddy = b.Construct(ty.vec2f(), b.Value(5_f), b.Value(6_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -3578,7 +3622,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float2 v_3 = float2(3.0f, 4.0f);
   float2 v_4 = float2(5.0f, 6.0f);
@@ -3592,21 +3636,20 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
-        auto* ddx = b.Construct(ty.vec2<f32>(), b.Value(3_f), b.Value(4_f));
-        auto* ddy = b.Construct(ty.vec2<f32>(), b.Value(5_f), b.Value(6_f));
+        auto* ddx = b.Construct(ty.vec2f(), b.Value(3_f), b.Value(4_f));
+        auto* ddy = b.Construct(ty.vec2f(), b.Value(5_f), b.Value(6_f));
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
@@ -3620,7 +3663,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d_Array_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float2 v_3 = float2(3.0f, 4.0f);
   float2 v_4 = float2(5.0f, 6.0f);
@@ -3634,20 +3677,19 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_3d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
-        auto* ddx = b.Construct(ty.vec3<f32>(), b.Value(3_f), b.Value(4_f), b.Value(5_f));
-        auto* ddy = b.Construct(ty.vec3<f32>(), b.Value(6_f), b.Value(7_f), b.Value(8_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* ddx = b.Construct(ty.vec3f(), b.Value(3_f), b.Value(4_f), b.Value(5_f));
+        auto* ddy = b.Construct(ty.vec3f(), b.Value(6_f), b.Value(7_f), b.Value(8_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3659,7 +3701,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_3d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
   float3 v_3 = float3(3.0f, 4.0f, 5.0f);
   float4 x = v.SampleGrad(v_1, v_2, v_3, float3(6.0f, 7.0f, 8.0f));
@@ -3672,20 +3714,19 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_3d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
-        auto* ddx = b.Construct(ty.vec3<f32>(), b.Value(3_f), b.Value(4_f), b.Value(5_f));
-        auto* ddy = b.Construct(ty.vec3<f32>(), b.Value(6_f), b.Value(7_f), b.Value(8_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* ddx = b.Construct(ty.vec3f(), b.Value(3_f), b.Value(4_f), b.Value(5_f));
+        auto* ddy = b.Construct(ty.vec3f(), b.Value(6_f), b.Value(7_f), b.Value(8_f));
         auto* offset = b.Composite<vec3<i32>>(4_i, 5_i, 6_i);
 
         auto* t = b.Load(tex);
@@ -3699,7 +3740,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_3d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
   float3 v_3 = float3(3.0f, 4.0f, 5.0f);
   float4 x = v.SampleGrad(v_1, v_2, v_3, float3(6.0f, 7.0f, 8.0f), int3(int(4), int(5), int(6)));
@@ -3712,20 +3753,19 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCube, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCube, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
-        auto* ddx = b.Construct(ty.vec3<f32>(), b.Value(3_f), b.Value(4_f), b.Value(5_f));
-        auto* ddy = b.Construct(ty.vec3<f32>(), b.Value(6_f), b.Value(7_f), b.Value(8_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* ddx = b.Construct(ty.vec3f(), b.Value(3_f), b.Value(4_f), b.Value(5_f));
+        auto* ddy = b.Construct(ty.vec3f(), b.Value(6_f), b.Value(7_f), b.Value(8_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3737,7 +3777,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_Cube) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
   float3 v_3 = float3(3.0f, 4.0f, 5.0f);
   float4 x = v.SampleGrad(v_1, v_2, v_3, float3(6.0f, 7.0f, 8.0f));
@@ -3750,21 +3790,20 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCubeArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* array_idx = b.Value(4_u);
-        auto* ddx = b.Construct(ty.vec3<f32>(), b.Value(3_f), b.Value(4_f), b.Value(5_f));
-        auto* ddy = b.Construct(ty.vec3<f32>(), b.Value(6_f), b.Value(7_f), b.Value(8_f));
+        auto* ddx = b.Construct(ty.vec3f(), b.Value(3_f), b.Value(4_f), b.Value(5_f));
+        auto* ddy = b.Construct(ty.vec3f(), b.Value(6_f), b.Value(7_f), b.Value(8_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3777,7 +3816,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_Cube_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
   float3 v_3 = float3(3.0f, 4.0f, 5.0f);
   float3 v_4 = float3(6.0f, 7.0f, 8.0f);
@@ -3791,18 +3830,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3814,7 +3851,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float x = v.Sample(v_1, float2(1.0f, 2.0f)).x;
 }
 
@@ -3825,18 +3862,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
@@ -3849,7 +3884,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float x = v.Sample(v_1, float2(1.0f, 2.0f), int2(int(4), int(5))).x;
 }
 
@@ -3860,18 +3895,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -3884,7 +3917,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float x = v.Sample(v_1, float3(v_2, float(4u))).x;
 }
@@ -3896,18 +3929,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
@@ -3921,7 +3952,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d_Array_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float x = v.Sample(v_1, float3(v_2, float(4u)), int2(int(4), int(5))).x;
 }
@@ -3933,18 +3964,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_DepthCube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -3957,7 +3986,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_DepthCube_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
   float x = v.Sample(v_1, float4(v_2, float(4u))).x;
 }
@@ -3969,18 +3998,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -3992,9 +4020,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.SampleLevel(v_1, v_2, float(3.0f));
+void main() {
+  float4 x = v.SampleLevel(v_1, float2(1.0f, 2.0f), 3.0f);
 }
 
 )");
@@ -4004,18 +4031,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
@@ -4029,9 +4055,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.SampleLevel(v_1, v_2, float(3.0f), int2(int(4), int(5)));
+void main() {
+  float4 x = v.SampleLevel(v_1, float2(1.0f, 2.0f), 3.0f, int2(int(4), int(5)));
 }
 
 )");
@@ -4041,18 +4066,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -4066,10 +4090,9 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
-  float3 v_3 = float3(v_2, float(4u));
-  float4 x = v.SampleLevel(v_1, v_3, float(3.0f));
+  float4 x = v.SampleLevel(v_1, float3(v_2, float(4u)), 3.0f);
 }
 
 )");
@@ -4079,18 +4102,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k2dArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
@@ -4105,10 +4127,9 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d_Array_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
-  float3 v_3 = float3(v_2, float(4u));
-  float4 x = v.SampleLevel(v_1, v_3, float(3.0f), int2(int(4), int(5)));
+  float4 x = v.SampleLevel(v_1, float3(v_2, float(4u)), 3.0f, int2(int(4), int(5)));
 }
 
 )");
@@ -4118,18 +4139,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_3d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -4141,9 +4161,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_3d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 x = v.SampleLevel(v_1, v_2, float(3.0f));
+void main() {
+  float4 x = v.SampleLevel(v_1, float3(1.0f, 2.0f, 3.0f), 3.0f);
 }
 
 )");
@@ -4153,18 +4172,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_3d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::k3d, ty.f32())));
+        tex =
+            b.Var(ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* offset = b.Composite<vec3<i32>>(4_i, 5_i, 6_i);
 
         auto* t = b.Load(tex);
@@ -4178,9 +4196,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_3d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 x = v.SampleLevel(v_1, v_2, float(3.0f), int3(int(4), int(5), int(6)));
+void main() {
+  float4 x = v.SampleLevel(v_1, float3(1.0f, 2.0f, 3.0f), 3.0f, int3(int(4), int(5), int(6)));
 }
 
 )");
@@ -4190,18 +4207,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Cube) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCube, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCube, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -4213,9 +4229,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Cube) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 x = v.SampleLevel(v_1, v_2, float(3.0f));
+void main() {
+  float4 x = v.SampleLevel(v_1, float3(1.0f, 2.0f, 3.0f), 3.0f);
 }
 
 )");
@@ -4225,18 +4240,17 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Cube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(handle, ty.Get<core::type::SampledTexture>(
-                                       core::type::TextureDimension::kCubeArray, ty.f32())));
+        tex = b.Var(
+            ty.ptr(handle, ty.sampled_texture(core::type::TextureDimension::kCubeArray, ty.f32())));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -4250,10 +4264,9 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Cube_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 v_3 = float4(v_2, float(4u));
-  float4 x = v.SampleLevel(v_1, v_3, float(3.0f));
+  float4 x = v.SampleLevel(v_1, float4(v_2, float(4u)), 3.0f);
 }
 
 )");
@@ -4263,18 +4276,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
@@ -4286,7 +4297,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float x = v.SampleLevel(v_1, v_2, float(int(3))).x;
 }
@@ -4298,18 +4309,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(
-            ty.ptr(handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2d)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2d)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
         auto* t = b.Load(tex);
@@ -4322,7 +4331,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float x = v.SampleLevel(v_1, v_2, float(int(3)), int2(int(4), int(5))).x;
 }
@@ -4334,18 +4343,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -4358,7 +4365,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float3 v_3 = float3(v_2, float(4u));
   float x = v.SampleLevel(v_1, v_3, float(3u)).x;
@@ -4371,18 +4378,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Array_Offset) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::k2dArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::k2dArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec2<f32>(), b.Value(1_f), b.Value(2_f));
+        auto* coords = b.Construct(ty.vec2f(), b.Value(1_f), b.Value(2_f));
         auto* array_idx = b.Value(4_u);
         auto* offset = b.Composite<vec2<i32>>(4_i, 5_i);
 
@@ -4397,7 +4402,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Array_Offset) {
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float2 v_2 = float2(1.0f, 2.0f);
   float3 v_3 = float3(v_2, float(4u));
   float x = v.SampleLevel(v_1, v_3, float(int(3)), int2(int(4), int(5))).x;
@@ -4410,18 +4415,16 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_DepthCube_Array) {
     core::ir::Var* tex = nullptr;
     core::ir::Var* sampler = nullptr;
     b.Append(b.ir.root_block, [&] {
-        tex = b.Var(ty.ptr(
-            handle, ty.Get<core::type::DepthTexture>(core::type::TextureDimension::kCubeArray)));
+        tex = b.Var(ty.ptr(handle, ty.depth_texture(core::type::TextureDimension::kCubeArray)));
         tex->SetBindingPoint(0, 0);
 
-        sampler =
-            b.Var(ty.ptr(handle, ty.Get<core::type::Sampler>(core::type::SamplerKind::kSampler)));
+        sampler = b.Var(ty.ptr(handle, ty.sampler()));
         sampler->SetBindingPoint(0, 1);
     });
 
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* coords = b.Construct(ty.vec3<f32>(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
+        auto* coords = b.Construct(ty.vec3f(), b.Value(1_f), b.Value(2_f), b.Value(3_f));
         auto* array_idx = b.Value(4_u);
 
         auto* t = b.Load(tex);
@@ -4434,7 +4437,7 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_DepthCube_Array) {
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerState v_1 : register(s1);
-void foo() {
+void main() {
   float3 v_2 = float3(1.0f, 2.0f, 3.0f);
   float4 v_3 = float4(v_2, float(4u));
   float x = v.SampleLevel(v_1, v_3, float(3u)).x;
@@ -4444,9 +4447,9 @@ void foo() {
 }
 
 TEST_F(HlslWriterTest, BuiltinReflect_Vec2f32_NoPolyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* vec_ty = ty.vec2<f32>();
+        auto* vec_ty = ty.vec2f();
         auto* x = b.Let("x", b.MatchWidth(1_f, vec_ty));
         auto* y = b.Let("y", b.MatchWidth(2_f, vec_ty));
 
@@ -4456,10 +4459,11 @@ TEST_F(HlslWriterTest, BuiltinReflect_Vec2f32_NoPolyfill) {
     });
 
     tint::hlsl::writer::Options options;
-    options.polyfill_reflect_vec2_f32 = false;
+    options.entry_point_name = "main";
+    options.workarounds.polyfill_reflect_vec2_f32 = false;
     ASSERT_TRUE(Generate(options)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float2 x = (1.0f).xx;
   float2 y = (2.0f).xx;
   float2 w = reflect(x, y);
@@ -4474,9 +4478,9 @@ void foo() {
 //      x - 2.0 * dot(x,y) * y
 // See crbug.com/tint/1798
 TEST_F(HlslWriterTest, BuiltinReflect_Vec2f32_Polyfill) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* vec_ty = ty.vec2<f32>();
+        auto* vec_ty = ty.vec2f();
         auto* x = b.Let("x", b.MatchWidth(1_f, vec_ty));
         auto* y = b.Let("y", b.MatchWidth(2_f, vec_ty));
 
@@ -4486,10 +4490,11 @@ TEST_F(HlslWriterTest, BuiltinReflect_Vec2f32_Polyfill) {
     });
 
     tint::hlsl::writer::Options options;
-    options.polyfill_reflect_vec2_f32 = true;
+    options.entry_point_name = "main";
+    options.workarounds.polyfill_reflect_vec2_f32 = true;
     ASSERT_TRUE(Generate(options)) << err_ << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
-void foo() {
+void main() {
   float2 x = (1.0f).xx;
   float2 y = (2.0f).xx;
   float2 w = (x + (float2(((-2.0f * dot(x, y))).xx) * y));

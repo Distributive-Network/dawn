@@ -36,8 +36,14 @@ namespace {
 TEST_F(GlslWriterTest, ConvertU32) {
     auto* f = b.Function("a", ty.u32());
     b.Append(f->Block(), [&] {
-        auto* v = b.Var("v", 2_i);
+        auto* v = b.Let("v", 2_i);
         b.Return(f, b.Convert(ty.u32(), v));
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Call(f));
+        b.Return(eb);
     });
 
     ASSERT_TRUE(Generate()) << err_ << output_.glsl;
@@ -48,6 +54,7 @@ uint a() {
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
+  uint x = a();
 }
 )");
 }

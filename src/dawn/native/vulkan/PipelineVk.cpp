@@ -34,20 +34,14 @@ VkPipelineLayout PipelineVk::GetVkLayout() const {
     return mVkPipelineLayout->Get();
 }
 
-uint32_t PipelineVk::GetInternalImmediateDataSize() const {
-    return mInternalImmediateDataSize;
-}
-
-MaybeError PipelineVk::InitializeBase(PipelineLayout* layout, uint32_t internalImmediateDataSize) {
-    mInternalImmediateDataSize = internalImmediateDataSize;
-
-    DAWN_TRY_ASSIGN(mVkPipelineLayout,
-                    layout->GetOrCreateVkLayoutObject(internalImmediateDataSize));
+MaybeError PipelineVk::InitializeBase(PipelineLayout* layout,
+                                      const ImmediateConstantMask& immediateConstantMask) {
+    DAWN_TRY_ASSIGN(mVkPipelineLayout, layout->GetOrCreateVkLayoutObject(immediateConstantMask));
 
     return {};
 }
 
-void PipelineVk::DestroyImpl() {
+void PipelineVk::DestroyImpl(DestroyReason reason) {
     mVkPipelineLayout = nullptr;
 }
 

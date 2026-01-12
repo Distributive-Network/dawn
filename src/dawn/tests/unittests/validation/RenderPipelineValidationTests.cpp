@@ -97,14 +97,14 @@ TEST_F(RenderPipelineValidationTest, DepthBiasParameterNotBeNaN) {
         device.CreateRenderPipeline(&descriptor);
     }
 
-    // Infinite depth bias clamp is valid
+    // Infinite depth bias clamp is invalid
     {
         utils::ComboRenderPipelineDescriptor descriptor;
         descriptor.vertex.module = vsModule;
         descriptor.cFragment.module = fsModule;
         wgpu::DepthStencilState* depthStencil = descriptor.EnableDepthStencil();
         depthStencil->depthBiasClamp = INFINITY;
-        device.CreateRenderPipeline(&descriptor);
+        ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&descriptor));
     }
     // NAN depth bias clamp is invalid
     {
@@ -116,14 +116,14 @@ TEST_F(RenderPipelineValidationTest, DepthBiasParameterNotBeNaN) {
         ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&descriptor));
     }
 
-    // Infinite depth bias slope is valid
+    // Infinite depth bias slope is invalid
     {
         utils::ComboRenderPipelineDescriptor descriptor;
         descriptor.vertex.module = vsModule;
         descriptor.cFragment.module = fsModule;
         wgpu::DepthStencilState* depthStencil = descriptor.EnableDepthStencil();
         depthStencil->depthBiasSlopeScale = INFINITY;
-        device.CreateRenderPipeline(&descriptor);
+        ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&descriptor));
     }
     // NAN depth bias slope is invalid
     {
@@ -537,30 +537,6 @@ class Float32BlendableValidationTest : public RenderPipelineValidationTest {
 
 // Tests that the float32 color formats are blendable only with the float32-blendable feature.
 TEST_F(Float32BlendableValidationTest, Float32BlendableFormatsWithFeatureEnabled) {
-    for (const auto f32Format : {wgpu::TextureFormat::R32Float, wgpu::TextureFormat::RG32Float,
-                                 wgpu::TextureFormat::RGBA32Float}) {
-        utils::ComboRenderPipelineDescriptor descriptor;
-        descriptor.vertex.module = vsModule;
-        descriptor.cFragment.module = fsModule;
-        descriptor.cTargets[0].blend = &descriptor.cBlends[0];
-        descriptor.cTargets[0].format = f32Format;
-
-        device.CreateRenderPipeline(&descriptor);
-    }
-}
-
-class Float32FilterableValidationTest : public RenderPipelineValidationTest {
-  protected:
-    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
-        return {wgpu::FeatureName::Float32Filterable};
-    }
-};
-
-// TODO(crbug.com/364987733): Remove this test once float filterable texture types
-// are not considered blendable.
-// Tests that blending a float32 color formats without the float32-blendable feature
-// is still valid with the float32-filterable feature.
-TEST_F(Float32FilterableValidationTest, Float32BlendableFormatsWithoutFeature) {
     for (const auto f32Format : {wgpu::TextureFormat::R32Float, wgpu::TextureFormat::RG32Float,
                                  wgpu::TextureFormat::RGBA32Float}) {
         utils::ComboRenderPipelineDescriptor descriptor;
@@ -1937,7 +1913,7 @@ TEST_F(RenderPipelineValidationTest, RenderPipelineColorAttachmentBytesPerSample
         for (size_t i = 0; i < kMaxColorAttachments; i++) {
             if (i < formats.size()) {
                 std::ostringstream type;
-                type << "vec4<" << utils::GetWGSLColorTextureComponentType(formats.at(i)) << ">";
+                type << "vec4<" << utils::GetWGSLColorTextureComponentTypeStr(formats.at(i)) << ">";
                 bindings << "@location(" << i << ") o" << i << " : " << type.str() << ", ";
                 outputs << type.str() << "(1), ";
             } else {
@@ -2052,6 +2028,51 @@ TEST_F(RenderPipelineValidationTest, PointLineDepthBias) {
 
         ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&descriptor));
     }
+}
+
+// Regression test for 377530684 where we try to access the current pipeline in
+// CommandBufferStateTracker even after the pass is ended because a validation failure in End() made
+// the RenderPass only partially closed, and further commands could keep pass the TryEncode
+// validation.
+TEST_F(RenderPipelineValidationTest, DrawAfterEndShouldNotAccessPipeline) {
+    // A pipeline and texture used for rendering.
+    utils::ComboRenderPipelineDescriptor pDesc;
+    pDesc.vertex.module = vsModule;
+    pDesc.cFragment.module = fsModule;
+    pDesc.cFragment.targetCount = 1;
+    pDesc.cTargets[0].format = wgpu::TextureFormat::RGBA8Unorm;
+    wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&pDesc);
+
+    wgpu::TextureDescriptor tDesc;
+    tDesc.format = wgpu::TextureFormat::RGBA8Unorm;
+    tDesc.size = {1, 1};
+    tDesc.usage = wgpu::TextureUsage::RenderAttachment;
+    wgpu::Texture texture = device.CreateTexture(&tDesc);
+
+    // The issue was found with DrawIndirect that gets the currently bound pipeline to know if
+    // vertex duplication is necessary.
+    wgpu::BufferDescriptor bDesc;
+    bDesc.size = 64;
+    bDesc.usage = wgpu::BufferUsage::Indirect;
+    wgpu::Buffer buffer = device.CreateBuffer(&bDesc);
+
+    // Cause an End() validation failure with maxDrawCount
+    utils::ComboRenderPassDescriptor rpDesc{{texture.CreateView()}};
+    wgpu::RenderPassMaxDrawCount maxDrawCount;
+    maxDrawCount.maxDrawCount = 1;
+    rpDesc.nextInChain = &maxDrawCount;
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&rpDesc);
+    pass.SetPipeline(pipeline);
+    pass.DrawIndirect(buffer, 0);
+    pass.DrawIndirect(buffer, 0);
+    pass.End();
+
+    // This call shouldn't access any CommandBufferStateTracker state but prior to the fix, it would
+    // and cause an ASSERT() to trigger.
+    pass.DrawIndirect(buffer, 0);
+    ASSERT_DEVICE_ERROR(encoder.Finish());
 }
 
 class DepthClipControlValidationTest : public RenderPipelineValidationTest {
@@ -2349,109 +2370,6 @@ TEST_F(InterStageVariableMatchingValidationTest, DifferentInterpolationAttribute
             CheckCreatingRenderPipeline(vertexModule, fragmentModule, shouldSuccess);
         }
     }
-}
-
-class RenderPipelineTransientAttachmentValidationTest : public RenderPipelineValidationTest {
-  protected:
-    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
-        return {wgpu::FeatureName::ShaderF16, wgpu::FeatureName::TransientAttachments};
-    }
-};
-
-// Test case where creation should succeed.
-TEST_F(RenderPipelineTransientAttachmentValidationTest, CreationSuccess) {
-    constexpr wgpu::TextureFormat kColorFormat = wgpu::TextureFormat::RGBA8Unorm;
-
-    wgpu::TextureDescriptor textureDescriptor;
-    textureDescriptor.usage =
-        wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TransientAttachment;
-    textureDescriptor.format = kColorFormat;
-    textureDescriptor.size.width = 4;
-    textureDescriptor.size.height = 4;
-
-    wgpu::Texture transientTexture = device.CreateTexture(&textureDescriptor);
-    utils::ComboRenderPassDescriptor renderPassDescriptor({transientTexture.CreateView()});
-
-    // Set load and store ops to supported values with transient attachments.
-    renderPassDescriptor.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
-    renderPassDescriptor.cColorAttachments[0].loadOp = wgpu::LoadOp::Clear;
-
-    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-    wgpu::RenderPassEncoder renderPass = encoder.BeginRenderPass(&renderPassDescriptor);
-
-    utils::ComboRenderPipelineDescriptor pipelineDescriptor;
-    pipelineDescriptor.vertex.module = vsModule;
-    pipelineDescriptor.cFragment.module = fsModule;
-    wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&pipelineDescriptor);
-
-    renderPass.SetPipeline(pipeline);
-    renderPass.End();
-
-    encoder.Finish();
-}
-
-// Creation of a pipeline that stores into a transient attachment should cause
-// an error.
-TEST_F(RenderPipelineTransientAttachmentValidationTest, StoreCausesError) {
-    constexpr wgpu::TextureFormat kColorFormat = wgpu::TextureFormat::RGBA8Unorm;
-
-    wgpu::TextureDescriptor textureDescriptor;
-    textureDescriptor.usage =
-        wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TransientAttachment;
-    textureDescriptor.format = kColorFormat;
-    textureDescriptor.size.width = 4;
-    textureDescriptor.size.height = 4;
-
-    wgpu::Texture transientTexture = device.CreateTexture(&textureDescriptor);
-    utils::ComboRenderPassDescriptor renderPassDescriptor({transientTexture.CreateView()});
-
-    renderPassDescriptor.cColorAttachments[0].storeOp = wgpu::StoreOp::Store;
-    renderPassDescriptor.cColorAttachments[0].loadOp = wgpu::LoadOp::Clear;
-
-    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-    wgpu::RenderPassEncoder renderPass = encoder.BeginRenderPass(&renderPassDescriptor);
-
-    utils::ComboRenderPipelineDescriptor pipelineDescriptor;
-    pipelineDescriptor.vertex.module = vsModule;
-    pipelineDescriptor.cFragment.module = fsModule;
-    wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&pipelineDescriptor);
-
-    renderPass.SetPipeline(pipeline);
-    renderPass.End();
-
-    ASSERT_DEVICE_ERROR(encoder.Finish());
-}
-
-// Creation of a pipeline that loads from a transient attachment should cause
-// an error.
-TEST_F(RenderPipelineTransientAttachmentValidationTest, LoadCausesError) {
-    constexpr wgpu::TextureFormat kColorFormat = wgpu::TextureFormat::RGBA8Unorm;
-
-    wgpu::TextureDescriptor textureDescriptor;
-    textureDescriptor.usage =
-        wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TransientAttachment;
-    textureDescriptor.format = kColorFormat;
-    textureDescriptor.size.width = 4;
-    textureDescriptor.size.height = 4;
-
-    wgpu::Texture transientTexture = device.CreateTexture(&textureDescriptor);
-    utils::ComboRenderPassDescriptor renderPassDescriptor({transientTexture.CreateView()});
-
-    renderPassDescriptor.cColorAttachments[0].storeOp = wgpu::StoreOp::Discard;
-    renderPassDescriptor.cColorAttachments[0].loadOp = wgpu::LoadOp::Load;
-
-    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-    wgpu::RenderPassEncoder renderPass = encoder.BeginRenderPass(&renderPassDescriptor);
-
-    utils::ComboRenderPipelineDescriptor pipelineDescriptor;
-    pipelineDescriptor.vertex.module = vsModule;
-    pipelineDescriptor.cFragment.module = fsModule;
-    wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&pipelineDescriptor);
-
-    renderPass.SetPipeline(pipeline);
-    renderPass.End();
-
-    ASSERT_DEVICE_ERROR(encoder.Finish());
 }
 
 class LoadResolveTexturePipelineDescriptorValidationTest : public RenderPipelineValidationTest {
@@ -2988,10 +2906,10 @@ TEST_F(DualSourceBlendingFeatureTest, FeatureEnumsValidWithFeatureEnabled) {
 // Test that rendering to multiple render targets while using dual source blending results in an
 // error.
 TEST_F(DualSourceBlendingFeatureTest, MultipleRenderTargetsNotAllowed) {
-    wgpu::SupportedLimits limits;
+    wgpu::Limits limits;
     device.GetLimits(&limits);
 
-    for (uint32_t location = 1; location < limits.limits.maxColorAttachments; location++) {
+    for (uint32_t location = 1; location < limits.maxColorAttachments; location++) {
         std::ostringstream sstream;
         sstream << R"(
                 enable dual_source_blending;
@@ -3536,6 +3454,129 @@ TEST_F(ClipDistancesValidationTest, ClipDistancesAgainstMaxInterStageLocation) {
             }
         }
     }
+}
+
+// Tests that kTier1AdditionalRenderableFormats are not renderable without feature.
+TEST_F(RenderPipelineValidationTest, NotRenderableWithoutTier1) {
+    for (const auto format : utils::kTier1AdditionalRenderableFormats) {
+        SCOPED_TRACE(absl::StrFormat("Test format: %s", format));
+        utils::ComboRenderPipelineDescriptor descriptor;
+        descriptor.vertex.module = vsModule;
+        descriptor.cFragment.module = fsModule;
+        descriptor.cTargets[0].format = format;
+        ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&descriptor));
+    }
+}
+
+// Tests that kTier1AdditionalRenderableFormats are not blendable without feature.
+TEST_F(RenderPipelineValidationTest, NotBlendableWithoutTier1) {
+    for (const auto format : utils::kTier1AdditionalRenderableFormats) {
+        SCOPED_TRACE(absl::StrFormat("Test format: %s", format));
+        utils::ComboRenderPipelineDescriptor descriptor;
+        descriptor.vertex.module = vsModule;
+        descriptor.cFragment.module = fsModuleUint;
+        descriptor.cTargets[0].blend = &descriptor.cBlends[0];
+        descriptor.cTargets[0].format = format;
+        ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&descriptor));
+    }
+}
+
+// Tests that kTier1AdditionalRenderableFormats can not support multisampling without feature.
+TEST_F(RenderPipelineValidationTest, NoMultisampleSupportWithoutTier1) {
+    for (const auto format : utils::kTier1AdditionalRenderableFormats) {
+        SCOPED_TRACE(absl::StrFormat("Test format: %s", format));
+        utils::ComboRenderPipelineDescriptor descriptor;
+        descriptor.vertex.module = vsModule;
+        descriptor.cFragment.module = fsModule;
+        descriptor.cTargets[0].format = format;
+        descriptor.multisample.count = 4;
+        ASSERT_DEVICE_ERROR(device.CreateRenderPipeline(&descriptor));
+    }
+}
+
+class TextureFormatsTier1PipelineTest : public RenderPipelineValidationTest {
+  protected:
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        return {wgpu::FeatureName::TextureFormatsTier1};
+    }
+};
+
+// Tests that kTier1AdditionalRenderableFormats must be renderable when the feature
+// TextureFormatsTier1 is enabled.
+TEST_F(TextureFormatsTier1PipelineTest, RenderableWithTier1) {
+    for (const auto format : utils::kTier1AdditionalRenderableFormats) {
+        SCOPED_TRACE(absl::StrFormat("Test format: %s", format));
+        utils::ComboRenderPipelineDescriptor descriptor;
+        descriptor.vertex.module = vsModule;
+        descriptor.cFragment.module = fsModule;
+        descriptor.cTargets[0].format = format;
+        wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&descriptor);
+    }
+}
+
+// Tests that kTier1AdditionalRenderableFormats must be blendable when the feature
+// TextureFormatsTier1 is enabled.
+TEST_F(TextureFormatsTier1PipelineTest, BlendableWithTier1) {
+    for (const auto format : utils::kTier1AdditionalRenderableFormats) {
+        SCOPED_TRACE(absl::StrFormat("Test format: %s", format));
+        utils::ComboRenderPipelineDescriptor descriptor;
+        descriptor.vertex.module = vsModule;
+        descriptor.cFragment.module = fsModule;
+        descriptor.cTargets[0].blend = &descriptor.cBlends[0];
+        descriptor.cTargets[0].format = format;
+        device.CreateRenderPipeline(&descriptor);
+    }
+}
+
+// Tests that kTier1AdditionalRenderableFormats must support multisampling when the
+// TextureFormatsTier1 feature is enabled.
+TEST_F(TextureFormatsTier1PipelineTest, MultisampleSupportWithTier1) {
+    for (const auto format : utils::kTier1AdditionalRenderableFormats) {
+        SCOPED_TRACE(absl::StrFormat("Test format: %s", format));
+        utils::ComboRenderPipelineDescriptor descriptor;
+        descriptor.vertex.module = vsModule;
+        descriptor.cFragment.module = fsModule;
+        descriptor.cTargets[0].format = format;
+        descriptor.multisample.count = 4;
+        device.CreateRenderPipeline(&descriptor);
+    }
+}
+
+class RG11B10UfloatRenderablePipelineTest : public RenderPipelineValidationTest {
+  protected:
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        return {wgpu::FeatureName::RG11B10UfloatRenderable};
+    }
+};
+
+// Tests that rg11b10ufloat must be renderable when the feature RG11B10UfloatRenderable is enabled.
+TEST_F(RG11B10UfloatRenderablePipelineTest, RenderableWithFeatureEnabled) {
+    utils::ComboRenderPipelineDescriptor descriptor;
+    descriptor.vertex.module = vsModule;
+    descriptor.cFragment.module = fsModule;
+    descriptor.cTargets[0].format = wgpu::TextureFormat::RG11B10Ufloat;
+    wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&descriptor);
+}
+
+// Tests that rg11b10ufloat must be blendable when the feature RG11B10UfloatRenderable is enabled.
+TEST_F(RG11B10UfloatRenderablePipelineTest, BlendableWithFeatureEnabled) {
+    utils::ComboRenderPipelineDescriptor descriptor;
+    descriptor.vertex.module = vsModule;
+    descriptor.cFragment.module = fsModule;
+    descriptor.cTargets[0].blend = &descriptor.cBlends[0];
+    descriptor.cTargets[0].format = wgpu::TextureFormat::RG11B10Ufloat;
+    device.CreateRenderPipeline(&descriptor);
+}
+
+// Tests that rg11b10ufloat must support multisampling when the RG11B10UfloatRenderable feature is
+// enabled.
+TEST_F(RG11B10UfloatRenderablePipelineTest, MultisampleSupportWithFeatureEnabled) {
+    utils::ComboRenderPipelineDescriptor descriptor;
+    descriptor.vertex.module = vsModule;
+    descriptor.cFragment.module = fsModule;
+    descriptor.cTargets[0].format = wgpu::TextureFormat::RG11B10Ufloat;
+    descriptor.multisample.count = 4;
+    device.CreateRenderPipeline(&descriptor);
 }
 
 }  // anonymous namespace

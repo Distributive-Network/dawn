@@ -54,17 +54,14 @@ Result<core::ir::Module> WgslToIR(const Source::File* file, const Options& optio
     return ProgramToLoweredIR(program);
 }
 
-tint::Result<core::ir::Module> ProgramToLoweredIR(const Program& program) {
-    auto ir = ProgramToIR(program);
-    if (ir != Success) {
-        return ir.Failure();
-    }
+Result<core::ir::Module> ProgramToLoweredIR(const Program& program,
+                                            InternalCompilerErrorCallback ice_callback) {
+    TINT_CHECK_RESULT_UNWRAP(ir, ProgramToIR(program));
+    ir.ice_callback = ice_callback;
 
     // Lower from WGSL-dialect to core-dialect
-    auto res = Lower(ir.Get());
-    if (res != Success) {
-        return res.Failure();
-    }
+    TINT_CHECK_RESULT(Lower(ir));
+
     return ir;
 }
 
@@ -72,7 +69,6 @@ bool IsUnsupportedByIR(const ast::Enable* enable) {
     for (auto ext : enable->extensions) {
         switch (ext->name) {
             case tint::wgsl::Extension::kChromiumExperimentalFramebufferFetch:
-            case tint::wgsl::Extension::kChromiumInternalRelaxedUniformLayout:
                 return true;
             default:
                 break;

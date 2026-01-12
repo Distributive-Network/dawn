@@ -115,7 +115,7 @@ std::string ConstructFragmentShader(DeviceBase* device,
     clearValueUniformBufferDeclarationStream << "struct ClearColors {\n";
 
     // Only generate the assignments we need.
-    for (auto i : IterateBitSet(key.colorTargetsToApplyClearColorValue)) {
+    for (auto i : key.colorTargetsToApplyClearColorValue) {
         wgpu::TextureFormat currentFormat = key.colorTargetFormats[i];
         DAWN_ASSERT(currentFormat != wgpu::TextureFormat::Undefined);
 
@@ -283,7 +283,7 @@ ResultOrError<Ref<BufferBase>> CreateUniformBufferWithClearValues(
 
     std::array<uint8_t, sizeof(uint32_t) * 4 * kMaxColorAttachments> clearValues = {};
     uint32_t offset = 0;
-    for (auto i : IterateBitSet(key.colorTargetsToApplyClearColorValue)) {
+    for (auto i : key.colorTargetsToApplyClearColorValue) {
         const Format& format = colorAttachments[i].view->GetFormat();
         TextureComponentType baseType = format.GetAspectInfo(Aspect::Color).baseType;
 
@@ -407,10 +407,10 @@ bool GetKeyOfApplyClearColorValueWithDrawPipelines(
         return false;
     }
 
-    key->colorAttachmentCount = renderPassDescriptor->colorAttachmentCount;
+    key->colorAttachmentCount = static_cast<uint8_t>(renderPassDescriptor->colorAttachmentCount);
 
     auto colorAttachments = ityp::SpanFromUntyped<ColorAttachmentIndex>(
-        renderPassDescriptor->colorAttachments, renderPassDescriptor->colorAttachmentCount);
+        renderPassDescriptor->colorAttachments, key->colorAttachmentCount);
 
     key->colorTargetFormats.fill(wgpu::TextureFormat::Undefined);
     for (auto [i, attachment] : Enumerate(colorAttachments)) {
@@ -472,7 +472,7 @@ ColorAttachmentMask ClearWithDrawHelper::GetAppliedColorAttachments(
     const DeviceBase* device,
     BeginRenderPassCmd* renderPass) {
     ColorAttachmentMask mask;
-    for (auto i : IterateBitSet(renderPass->attachmentState->GetColorAttachmentsMask())) {
+    for (auto i : renderPass->attachmentState->GetColorAttachmentsMask()) {
         const auto clearValue = renderPass->colorAttachments[i].clearColor;
         std::array<double, 4> clearValueInArray = {
             {clearValue.r, clearValue.g, clearValue.b, clearValue.a}};

@@ -38,11 +38,6 @@
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/disassembler.h"
 #include "src/tint/lang/core/ir/validator.h"
-#include "src/tint/lang/core/type/array.h"
-#include "src/tint/lang/core/type/depth_texture.h"
-#include "src/tint/lang/core/type/matrix.h"
-#include "src/tint/lang/core/type/multisampled_texture.h"
-#include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/spirv/writer/common/spv_dump_test.h"
 #include "src/tint/lang/spirv/writer/writer.h"
@@ -63,7 +58,8 @@ enum TestElementType {
     kF32,
     kF16,
 };
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, TestElementType type) {
     switch (type) {
         case kBool:
@@ -103,6 +99,12 @@ class SpirvWriterTestHelperBase : public BASE {
     /// SPIR-V output.
     std::string output_;
 
+    /// Workgroup info
+    Output::WorkgroupInfo workgroup_info;
+
+    /// Subgroup Matrix Info
+    SubgroupMatrixInfo subgroup_matrix_info;
+
     /// @returns the error string from the validation
     std::string Error() const { return err_; }
 
@@ -111,9 +113,13 @@ class SpirvWriterTestHelperBase : public BASE {
     /// storage class with OpConstantNull
     /// @returns true if generation and validation succeeded
     bool Generate(Options options = {}) {
+        if (options.entry_point_name.empty()) {
+            options.entry_point_name = "main";
+        }
+
         auto result = writer::Generate(mod, options);
         if (result != Success) {
-            err_ = result.Failure().reason.Str();
+            err_ = result.Failure().reason;
             return false;
         }
 
@@ -124,6 +130,9 @@ class SpirvWriterTestHelperBase : public BASE {
         if (!Validate(result->spirv)) {
             return false;
         }
+        workgroup_info = result->workgroup_info;
+        subgroup_matrix_info = result->subgroup_matrix_info;
+
         return true;
     }
 
@@ -218,7 +227,7 @@ class SpirvWriterTestHelperBase : public BASE {
             case kI32:
                 return b.Composite(MakeVectorType(type), 42_i, -10_i);
             case kU32:
-                return b.Composite(MakeVectorType(type), 42_u, 10_u);
+                return b.Composite(MakeVectorType(type), 31_u, 10_u);
             case kF32:
                 return b.Composite(MakeVectorType(type), 42_f, -0.5_f);
             case kF16:

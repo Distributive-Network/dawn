@@ -102,11 +102,11 @@ add_library(dawn_node STATIC
     $<TARGET_OBJECTS:dawn_proc>
     $<TARGET_OBJECTS:dawn_wgpu_utils>
     $<TARGET_OBJECTS:dawn_platform>
+    $<TARGET_OBJECTS:dawn_system_utils>
     # $<TARGET_OBJECTS:dawn_warnings_config>
 
     $<TARGET_OBJECTS:absl::strings>
     $<TARGET_OBJECTS:absl::hash>
-    $<TARGET_OBJECTS:absl::string_view>
     $<TARGET_OBJECTS:absl::str_format_internal>
     $<TARGET_OBJECTS:absl::log_severity>
     $<TARGET_OBJECTS:absl::raw_logging_internal>
@@ -124,7 +124,7 @@ add_library(dawn_node STATIC
     $<TARGET_OBJECTS:absl::demangle_rust>
     $<TARGET_OBJECTS:absl::demangle_internal>
     $<TARGET_OBJECTS:absl::int128>
-    $<TARGET_OBJECTS:absl::string_view>
+    # $<TARGET_OBJECTS:absl::string_view>
     $<TARGET_OBJECTS:absl::strings>
     $<TARGET_OBJECTS:absl::symbolize>
     $<TARGET_OBJECTS:absl::exponential_biased>
@@ -134,15 +134,15 @@ add_library(dawn_node STATIC
     $<TARGET_OBJECTS:absl::kernel_timeout_internal>
     $<TARGET_OBJECTS:absl::synchronization>
     $<TARGET_OBJECTS:absl::hashtablez_sampler>
-    $<TARGET_OBJECTS:absl::bad_variant_access>
-    $<TARGET_OBJECTS:absl::bad_optional_access>
+    # $<TARGET_OBJECTS:absl::bad_variant_access>
+    # $<TARGET_OBJECTS:absl::bad_optional_access>
     $<TARGET_OBJECTS:absl::crc_cpu_detect>
     $<TARGET_OBJECTS:absl::crc_internal>
     $<TARGET_OBJECTS:absl::str_format_internal>
     $<TARGET_OBJECTS:absl::crc32c>
     $<TARGET_OBJECTS:absl::crc_cord_state>
     $<TARGET_OBJECTS:absl::city>
-    $<TARGET_OBJECTS:absl::low_level_hash>
+    # $<TARGET_OBJECTS:absl::low_level_hash>
     $<TARGET_OBJECTS:absl::hash>
     $<TARGET_OBJECTS:absl::cord_internal>
     $<TARGET_OBJECTS:absl::cordz_functions>
@@ -161,6 +161,9 @@ add_library(dawn_node STATIC
     $<TARGET_OBJECTS:tint_lang_core_ir_analysis>
     $<TARGET_OBJECTS:tint_lang_core_ir_transform>
     $<TARGET_OBJECTS:tint_lang_core_ir_type>
+    $<TARGET_OBJECTS:tint_lang_null_writer>
+    $<TARGET_OBJECTS:tint_lang_null_writer_common>
+    $<TARGET_OBJECTS:tint_lang_null_writer_raise>
     $<TARGET_OBJECTS:tint_lang_hlsl_writer_common>
     $<TARGET_OBJECTS:tint_lang_wgsl>
     $<TARGET_OBJECTS:tint_lang_wgsl_ast>
@@ -169,7 +172,7 @@ add_library(dawn_node STATIC
     $<TARGET_OBJECTS:tint_lang_wgsl_sem>
     $<TARGET_OBJECTS:tint_lang_wgsl_intrinsic>
     $<TARGET_OBJECTS:tint_lang_wgsl_resolver>
-    $<TARGET_OBJECTS:tint_lang_wgsl_ast_transform>
+    # $<TARGET_OBJECTS:tint_lang_wgsl_ast_transform>
     $<TARGET_OBJECTS:tint_lang_wgsl_writer_ir_to_program>
     $<TARGET_OBJECTS:tint_lang_wgsl_inspector>
     $<TARGET_OBJECTS:tint_lang_wgsl_ir>
@@ -180,7 +183,7 @@ add_library(dawn_node STATIC
     $<TARGET_OBJECTS:tint_lang_wgsl_writer_ast_printer>
     $<TARGET_OBJECTS:tint_lang_wgsl_writer_ir_to_program>
     $<TARGET_OBJECTS:tint_lang_wgsl_writer_raise>
-    $<TARGET_OBJECTS:tint_lang_wgsl_writer_syntax_tree_printer>
+    # $<TARGET_OBJECTS:tint_lang_wgsl_writer_syntax_tree_printer>
     $<TARGET_OBJECTS:tint_lang_wgsl_writer>
     $<TARGET_OBJECTS:tint_lang_glsl>
     $<TARGET_OBJECTS:tint_lang_glsl_intrinsic>
@@ -195,9 +198,9 @@ add_library(dawn_node STATIC
     $<TARGET_OBJECTS:tint_lang_spirv_type>
     $<TARGET_OBJECTS:tint_lang_spirv_intrinsic>
     $<TARGET_OBJECTS:tint_lang_spirv_ir>
-    $<TARGET_OBJECTS:tint_lang_spirv_reader_ast_lower>
+    # $<TARGET_OBJECTS:tint_lang_spirv_reader_ast_lower>
     $<TARGET_OBJECTS:tint_lang_spirv_reader_common>
-    $<TARGET_OBJECTS:tint_lang_spirv_reader_ast_parser>
+    # $<TARGET_OBJECTS:tint_lang_spirv_reader_ast_parser>
     $<TARGET_OBJECTS:tint_lang_spirv_reader_lower>
     $<TARGET_OBJECTS:tint_lang_spirv_validate>
     $<TARGET_OBJECTS:tint_lang_spirv_reader_parser>

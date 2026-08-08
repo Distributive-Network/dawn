@@ -125,10 +125,12 @@ target_include_directories(dawn_node SYSTEM
         "${NODE_ADDON_API_DIR}"
         "${NODE_API_HEADERS_DIR}/include"
 )
-target_link_options(dawn_node PRIVATE
-  -static-libgcc
-  -static-libstdc++
-)
+if (not APPLE)
+    target_link_options(dawn_node PRIVATE
+        -static-libgcc
+        -static-libstdc++
+    )
+endif()
 
 # To reduce the build dependencies for compiling the dawn.node targets, we do
 # not use cmake-js for building, but instead just depend on node_api_headers.

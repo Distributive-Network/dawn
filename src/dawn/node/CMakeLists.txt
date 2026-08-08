@@ -125,7 +125,7 @@ target_include_directories(dawn_node SYSTEM
         "${NODE_ADDON_API_DIR}"
         "${NODE_API_HEADERS_DIR}/include"
 )
-if (not APPLE)
+if(NOT APPLE)
     target_link_options(dawn_node PRIVATE
         -static-libgcc
         -static-libstdc++

@@ -143,6 +143,12 @@ if(ANDROID)
     target_link_options(dawn_node PRIVATE "-Wl,-z,undefs")
     # The Android NDK toolchain injects -Wl,--no-undefined into the linker flags by default. We must strip it from the NDK linker flags.
     string(REPLACE "-Wl,--no-undefined " "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
+
+    # Injecting DT_NEEDED entry for libnode.so into dawn.node
+    add_custom_command(
+        TARGET dawn_node POST_BUILD
+        COMMAND patchelf --add-needed libnode.so $<TARGET_FILE:dawn_node>
+    )
 endif()
 
 # To reduce the build dependencies for compiling the dawn.node targets, we do

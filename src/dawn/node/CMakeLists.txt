@@ -132,6 +132,19 @@ if(NOT APPLE)
     )
 endif()
 
+# Android’s dynamic linker (Bionic) does not handle weak symbols like standard desktop Linux (glibc),
+#   because Bionic deliberately implements a "first-match-wins" resolution policy and avoids cross-library dynamic symbol preemption.
+# As a result, Bionic would always resolve symbols to dawn.node's own internal table first if a matching symbol definition exists, even if marked weak.
+# It would bind calls directly to these local stub bodies, triggering UNREACHABLE(... is a weak stub, and should have been runtime replaced by the node implementation).
+if(ANDROID)
+    # So we could solve it by removing the weak function definitions
+    target_compile_definitions(dawn_node PRIVATE "NAPI_SYMBOL_WEAK_DECL_ONLY")
+    # Allow undefined symbols
+    target_link_options(dawn_node PRIVATE "-Wl,-z,undefs")
+    # The Android NDK toolchain injects -Wl,--no-undefined into the linker flags by default. We must strip it from the NDK linker flags.
+    string(REPLACE "-Wl,--no-undefined " "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
+endif()
+
 # To reduce the build dependencies for compiling the dawn.node targets, we do
 # not use cmake-js for building, but instead just depend on node_api_headers.
 # As the name suggests, node_api_headers contains just the *headers* of Napi,

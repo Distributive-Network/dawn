@@ -25,24 +25,27 @@
 //* OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 //* OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+{% from 'dawn/cpp_macros.tmpl' import as_annotated_dawnType, as_dawnType with context %}
+
 // Command handlers & doers
 {% for command in cmd_records["command"] %}
     {% set Suffix = command.name.CamelCase() %}
+    {% set CmdName = Suffix + "Cmd" %}
     WireResult Handle{{Suffix}}(DeserializeBuffer* deserializeBuffer);
     WireResult Do{{Suffix}}(
-        {%- for member in command.members -%}
+        {%- for member in command.members if not member.is_length -%}
+            {%- if not loop.first -%}, {% endif %}
             {%- if member.is_return_value -%}
                 {%- if member.handle_type -%}
                     {{as_cType(member.handle_type.name)}}* {{as_varName(member.name)}}
                 {%- else -%}
-                    {{as_cType(member.type.name)}}* {{as_varName(member.name)}}
+                    {{as_dawnType(member.type)}}* {{as_varName(member.name)}}
                 {%- endif -%}
             {%- elif member.id_type != None -%}
                 Known<WGPU{{member.id_type.name.CamelCase()}}> {{member.name.camelCase()}}
             {%- else -%}
-                {{as_annotated_cType(member)}}
+                {{as_annotated_dawnType(member, is_volatile=is_wire_data_only(member))}}
             {%- endif -%}
-            {%- if not loop.last -%}, {% endif %}
         {%- endfor -%}
     );
 

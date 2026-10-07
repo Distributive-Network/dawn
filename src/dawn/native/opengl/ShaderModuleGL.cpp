@@ -25,28 +25,30 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/ShaderModuleGL.h"
+#include "src/dawn/native/opengl/ShaderModuleGL.h"
 
 #include <sstream>
 #include <unordered_map>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
-#include "dawn/common/Enumerator.h"
-#include "dawn/common/MatchVariant.h"
-#include "dawn/native/Adapter.h"
-#include "dawn/native/BindGroupLayoutInternal.h"
-#include "dawn/native/CacheRequest.h"
-#include "dawn/native/Pipeline.h"
-#include "dawn/native/TintUtils.h"
-#include "dawn/native/opengl/BindGroupLayoutGL.h"
-#include "dawn/native/opengl/DeviceGL.h"
-#include "dawn/native/opengl/PipelineGL.h"
-#include "dawn/native/opengl/PipelineLayoutGL.h"
-#include "dawn/native/opengl/UtilsGL.h"
 #include "dawn/platform/DawnPlatform.h"
-#include "dawn/platform/tracing/TraceEvent.h"
-#include "tint/api/common/binding_point.h"
+#include "src/dawn/common/Enumerator.h"
+#include "src/dawn/common/MatchVariant.h"
+#include "src/dawn/native/Adapter.h"
+#include "src/dawn/native/BindGroupLayoutInternal.h"
+#include "src/dawn/native/CacheRequest.h"
+#include "src/dawn/native/Pipeline.h"
+#include "src/dawn/native/TintUtils.h"
+#include "src/dawn/native/opengl/BindGroupLayoutGL.h"
+#include "src/dawn/native/opengl/DeviceGL.h"
+#include "src/dawn/native/opengl/ImmediatesLayoutGL.h"
+#include "src/dawn/native/opengl/PipelineGL.h"
+#include "src/dawn/native/opengl/PipelineLayoutGL.h"
+#include "src/dawn/native/opengl/UtilsGL.h"
+#include "src/dawn/platform/tracing/TraceEvent.h"
+#include "src/utils/numeric.h"
+#include "tint/tint.h"
 
 namespace dawn::native::opengl {
 namespace {
@@ -65,7 +67,9 @@ using InterstageLocationAndName = std::pair<uint32_t, std::string>;
 DAWN_MAKE_CACHE_REQUEST(GLSLCompilationRequest, GLSL_COMPILATION_REQUEST_MEMBERS);
 #undef GLSL_COMPILATION_REQUEST_MEMBERS
 
-#define GLSL_COMPILATION_MEMBERS(X) X(std::string, glsl)
+#define GLSL_COMPILATION_MEMBERS(X) \
+    X(std::string, glsl)            \
+    X(Extent3D, workgroupSize)
 DAWN_SERIALIZABLE(struct, GLSLCompilation, GLSL_COMPILATION_MEMBERS) {
     static ResultOrError<GLSLCompilation> FromValidatedBlob(Blob blob);
 };
@@ -122,7 +126,7 @@ void GenerateCombinedSamplerInfo(
         // Dawn takes BindGroupIndex + BindingIndex.
         BindGroupIndex group;
         BindingIndex index;
-        BindingIndex shaderArraySize = BindingIndex(1);
+        BindingIndex shaderArraySize = BindingIndex(1u);
 
         // Tint takes the post-remapping binding point.
         tint::BindingPoint remappedBinding;
@@ -193,17 +197,23 @@ void GenerateCombinedSamplerInfo(
         // This is an external texture, add planes individually.
         const auto& bindingLayout = std::get<ExternalTextureBindingInfo>(bindingInfo.bindingLayout);
 
+        auto& tint_data = bindings.external_texture.at(ToTint(use.texture));
+        DAWN_ASSERT(std::holds_alternative<tint::ExternalMultiplanarTexture>(tint_data));
+
+        tint::ExternalMultiplanarTexture mp_data =
+            std::get<tint::ExternalMultiplanarTexture>(tint_data);
+
         CombinedBindingInfo plane0 = {
             .group = use.texture.group,
             .index = bindingLayout.plane0,
-            .remappedBinding = bindings.external_texture.at(ToTint(use.texture)).plane0,
+            .remappedBinding = mp_data.plane0,
         };
         AddCombinedSampler(plane0, sampler, false);
 
         CombinedBindingInfo plane1 = {
             .group = use.texture.group,
             .index = bindingLayout.plane1,
-            .remappedBinding = bindings.external_texture.at(ToTint(use.texture)).plane1,
+            .remappedBinding = mp_data.plane1,
         };
         AddCombinedSampler(plane1, sampler, true);
     }
@@ -221,7 +231,7 @@ void GenerateTextureBuiltinFromUniformData(
     if (!metadata.textureQueries.empty()) {
         textureBuiltinsFromUniform->ubo_binding = {
             .group = 0,
-            .binding = uint32_t(layout->GetInternalTextureBuiltinsUniformBinding()),
+            .binding = uint32_t{layout->GetInternalTextureBuiltinsUniformBinding()},
         };
     }
 
@@ -261,48 +271,23 @@ void GenerateTextureBuiltinFromUniformData(
     }
 }
 
-bool GenerateArrayLengthFromuniformData(
+void GenerateArrayLengthFromImmediateData(
     const BindingInfoArray& moduleBindingInfo,
-    const PipelineLayout* layout,
-    tint::glsl::writer::ArrayLengthFromUniformOptions& options) {
-    const PipelineLayout::BindingIndexInfo& indexInfo = layout->GetBindingIndexInfo();
-
-    for (BindGroupIndex group : layout->GetBindGroupLayoutsMask()) {
-        const BindGroupLayoutInternalBase* bgl = layout->GetBindGroupLayout(group);
-
-        for (BindingIndex binding : bgl->GetBufferIndices()) {
-            const BindingInfo& bindingInfo = bgl->GetBindingInfo(binding);
-
-            switch (std::get<BufferBindingInfo>(bindingInfo.bindingLayout).type) {
-                case wgpu::BufferBindingType::Storage:
-                case kInternalStorageBufferBinding:
-                case wgpu::BufferBindingType::ReadOnlyStorage:
-                case kInternalReadOnlyStorageBufferBinding: {
-                    // Use ssbo index as the indices for the buffer size lookups
-                    // in the array length from uniform transform.
-                    tint::BindingPoint srcBindingPoint = {uint32_t(group),
-                                                          uint32_t(bindingInfo.binding)};
-                    FlatBindingIndex ssboIndex = indexInfo[group][binding];
-                    options.bindpoint_to_size_index.emplace(srcBindingPoint, uint32_t(ssboIndex));
-                    break;
-                }
-                default:
-                    break;
+    const StorageBufferSizeImmediateInfo& storageBufferSizeInfo,
+    tint::glsl::writer::ArrayLengthFromImmediateOptions& options) {
+    for (auto [group, bindingInfos] : Enumerate(storageBufferSizeInfo.bindings)) {
+        for (const auto& bindingInfo : bindingInfos) {
+            if (!moduleBindingInfo[group].contains(bindingInfo.bindingNumber)) {
+                continue;
             }
+            tint::BindingPoint srcBindingPoint = {uint32_t{group},
+                                                  uint32_t{bindingInfo.bindingNumber}};
+            options.bindpoint_to_size_index.emplace(srcBindingPoint, bindingInfo.sizeIndex);
         }
     }
-
-    return options.bindpoint_to_size_index.size() > 0;
 }
 
 }  // namespace
-
-std::string GetBindingName(BindGroupIndex group, BindingNumber bindingNumber) {
-    std::ostringstream o;
-    o << "dawn_binding_" << static_cast<uint32_t>(group) << "_"
-      << static_cast<uint32_t>(bindingNumber);
-    return o.str();
-}
 
 bool operator<(const CombinedSamplerElement& a, const CombinedSamplerElement& b) {
     return std::tie(a.group, a.index, a.shaderArraySize) <
@@ -343,19 +328,18 @@ ShaderModule::ShaderModule(Device* device,
                            std::vector<tint::wgsl::Extension> internalExtensions)
     : ShaderModuleBase(device, descriptor, std::move(internalExtensions)) {}
 
-ResultOrError<GLuint> ShaderModule::CompileShader(
+ResultOrValError<std::string> ShaderModule::CompileShader(
     const OpenGLFunctions& gl,
     const ProgrammableStage& programmableStage,
     SingleShaderStage stage,
-    bool usesVertexIndex,
-    bool usesInstanceIndex,
-    bool usesFragDepth,
+    const ImmediateMask& pipelineImmediateMask,
     VertexAttributeMask bgraSwizzleAttributes,
     std::vector<CombinedSampler>* combinedSamplersOut,
     const PipelineLayout* layout,
+    const StorageBufferSizeImmediateInfo& storageBufferSizeInfo,
     EmulatedTextureBuiltinRegistrar* emulatedTextureBuiltins,
-    bool* needsSSBOLengthUniformBuffer) {
-    TRACE_EVENT0(GetDevice()->GetPlatform(), General, "TranslateToGLSL");
+    Extent3D* workgroupSize) {
+    TRACE_EVENT(DAWN_TRACE_CATEGORY(), "TranslateToGLSL");
 
     const OpenGLVersion& version = gl.GetVersion();
 
@@ -374,7 +358,7 @@ ResultOrError<GLuint> ShaderModule::CompileShader(
         GenerateBindingRemapping(layout, stage, [&](BindGroupIndex group, BindingIndex index) {
             return tint::BindingPoint{
                 .group = 0,
-                .binding = uint32_t(layout->GetBindingIndexInfo()[group][index]),
+                .binding = uint32_t{layout->GetBindingIndexInfo()[group][index]},
             };
         });
 
@@ -406,21 +390,16 @@ ResultOrError<GLuint> ShaderModule::CompileShader(
     req.adapterSupportedLimits = UnsafeUnserializedValue(
         LimitsForCompilationRequest::Create(GetDevice()->GetAdapter()->GetLimits().v1));
 
-    if (GetDevice()->IsToggleEnabled(Toggle::GLUseArrayLengthFromUniform)) {
-        *needsSSBOLengthUniformBuffer = GenerateArrayLengthFromuniformData(
-            moduleBindingInfo, layout, req.tintOptions.array_length_from_uniform);
-        if (*needsSSBOLengthUniformBuffer) {
-            req.tintOptions.use_array_length_from_uniform = true;
-            req.tintOptions.array_length_from_uniform.ubo_binding = {
-                .group = kMaxBindGroups + 2,
-                .binding = 0,
-            };
-            bindings.uniform.emplace(
-                req.tintOptions.array_length_from_uniform.ubo_binding,
-                tint::BindingPoint{
-                    .group = 0,
-                    .binding = uint32_t(layout->GetInternalArrayLengthUniformBinding()),
-                });
+    if (GetDevice()->IsToggleEnabled(Toggle::GLUseArrayLengthFromImmediate)) {
+        GenerateArrayLengthFromImmediateData(moduleBindingInfo, storageBufferSizeInfo,
+                                             req.tintOptions.array_length_from_immediate);
+        if (!req.tintOptions.array_length_from_immediate.bindpoint_to_size_index.empty()) {
+            req.tintOptions.array_length_from_immediate.buffer_sizes_offset =
+                stage == SingleShaderStage::Compute
+                    ? GetImmediateByteOffsetInPipeline(&ComputeImmediates::storageBufferSizes,
+                                                       pipelineImmediateMask)
+                    : GetImmediateByteOffsetInPipeline(&RenderImmediates::storageBufferSizes,
+                                                       pipelineImmediateMask);
         }
     }
 
@@ -438,18 +417,33 @@ ResultOrError<GLuint> ShaderModule::CompileShader(
     req.tintOptions.disable_workgroup_init =
         GetDevice()->IsToggleEnabled(Toggle::DisableWorkgroupInit);
 
-    if (usesVertexIndex) {
-        req.tintOptions.first_vertex_offset = 4 * PipelineLayout::ImmediateLocation::FirstVertex;
+    // If the size or alignment of the vertex and fragment stage immediate variables differ (e.g.,
+    // the vertex shader immediates contain a vec4 and the fragment shader do not), the generated
+    // structs may have differing alignment or size, and GLSL will give an error at link time. Count
+    // the actual used slots, round up to the widest possible alignment (4 u32s), multiply by the
+    // element byte size and pass that to Tint.
+    auto immediateCount = RoundUp(pipelineImmediateMask.count(), 4u);
+
+    req.tintOptions.minimum_immediate_size =
+        checked_cast<uint32_t>(immediateCount * kImmediateElementByteSize);
+    if (stage != SingleShaderStage::Compute &&
+        HasImmediates(&RenderImmediates::firstVertex, pipelineImmediateMask)) {
+        req.tintOptions.first_vertex_offset = GetImmediateByteOffsetInPipelineIfAny(
+            &RenderImmediates::firstVertex, pipelineImmediateMask);
     }
 
-    if (usesInstanceIndex) {
-        req.tintOptions.first_instance_offset =
-            4 * PipelineLayout::ImmediateLocation::FirstInstance;
+    if (stage != SingleShaderStage::Compute &&
+        HasImmediates(&RenderImmediates::firstInstance, pipelineImmediateMask)) {
+        req.tintOptions.first_instance_offset = GetImmediateByteOffsetInPipelineIfAny(
+            &RenderImmediates::firstInstance, pipelineImmediateMask);
     }
 
-    if (usesFragDepth) {
-        req.tintOptions.depth_range_offsets = {4 * PipelineLayout::ImmediateLocation::MinDepth,
-                                               4 * PipelineLayout::ImmediateLocation::MaxDepth};
+    if (stage != SingleShaderStage::Compute &&
+        HasImmediates(&RenderImmediates::clampFragDepth, pipelineImmediateMask)) {
+        uint32_t offsetStartBytes = GetImmediateByteOffsetInPipeline(
+            &RenderImmediates::clampFragDepth, pipelineImmediateMask);
+        req.tintOptions.depth_range_offsets = {offsetStartBytes,
+                                               offsetStartBytes + kImmediateElementByteSize};
     }
 
     if (stage == SingleShaderStage::Vertex) {
@@ -475,22 +469,29 @@ ResultOrError<GLuint> ShaderModule::CompileShader(
     req.tintOptions.disable_integer_range_analysis =
         !GetDevice()->IsToggleEnabled(Toggle::EnableIntegerRangeAnalysisInRobustness);
 
-    req.tintOptions.use_uniform_buffers =
-        !GetDevice()->IsToggleEnabled(Toggle::DecomposeUniformBuffers);
+    req.tintOptions.has_gl_ext_conservative_depth =
+        gl.IsGLExtensionSupported("GL_EXT_conservative_depth");
 
     CacheResult<GLSLCompilation> compilationResult;
     DAWN_TRY_LOAD_OR_RUN(
         compilationResult, GetDevice(), std::move(req), GLSLCompilation::FromValidatedBlob,
         [](GLSLCompilationRequest r) -> ResultOrError<GLSLCompilation> {
             // Requires Tint Program here right before actual using.
-            auto inputProgram = r.inputProgram.UnsafeGetValue()->GetTintProgram();
+            auto shaderModule = r.inputProgram.UnsafeGetValue();
+            auto inputProgram = shaderModule->GetTintProgram();
+            auto device = shaderModule->GetDevice();
             const tint::Program* tintInputProgram = &(inputProgram->program);
             // Convert the AST program to an IR module.
             tint::Result<tint::core::ir::Module> ir;
             {
                 SCOPED_DAWN_HISTOGRAM_TIMER_MICROS(r.platform.UnsafeGetValue(),
                                                    "ShaderModuleProgramToIR");
-                ir = tint::wgsl::reader::ProgramToLoweredIR(*tintInputProgram);
+                tint::wgsl::reader::IROptions irOptions{
+                    .dump_ir_when_validating = device->IsToggleEnabled(Toggle::DumpTintIR),
+                    .enable_validation_asserts =
+                        device->IsToggleEnabled(Toggle::EnableTintIRValidationAsserts),
+                };
+                ir = tint::wgsl::reader::ProgramToLoweredIR(*tintInputProgram, irOptions);
                 DAWN_INVALID_IF(ir != tint::Success,
                                 "An error occurred while generating Tint IR\n%s",
                                 ir.Failure().reason);
@@ -507,23 +508,26 @@ ResultOrError<GLuint> ShaderModule::CompileShader(
                                 result.Failure().reason);
             }
 
+            GLSLCompilation compResult{{.glsl = std::move(result->glsl)}};
             // Workgroup validation has to come after `Generate` because it may require
             // overrides to have been substituted.
             if (r.stage == SingleShaderStage::Compute) {
                 // Validate workgroup size after program runs transforms.
-                Extent3D _;
-                DAWN_TRY_ASSIGN(_,
-                                ValidateComputeStageWorkgroupSize(
-                                    result->workgroup_info.x, result->workgroup_info.y,
-                                    result->workgroup_info.z, result->workgroup_info.storage_size,
-                                    /* usesSubgroupMatrix */ false,
-                                    /* maxSubgroupSize, GL backend not support */ 0, r.limits,
-                                    r.adapterSupportedLimits.UnsafeGetValue()));
+                // Subgroups are not supported on OpenGL backend.
+                Extent3D workgroupSize;
+                DAWN_TRY_ASSIGN(workgroupSize, ValidateComputeStageWorkgroupSize(
+                                                   result->workgroup_info,
+                                                   /*usesSubgroupMatrix=*/false,
+                                                   /*maxSubgroupSize=*/0, r.limits,
+                                                   r.adapterSupportedLimits.UnsafeGetValue()));
+                compResult.workgroupSize = workgroupSize;
             }
 
-            return GLSLCompilation{{std::move(result->glsl)}};
+            return compResult;
         },
         "OpenGL.CompileShaderToGLSL");
+
+    *workgroupSize = compilationResult->workgroupSize;
 
     if (GetDevice()->IsToggleEnabled(Toggle::DumpShaders)) {
         std::ostringstream dumpedMsg;
@@ -532,8 +536,15 @@ ResultOrError<GLuint> ShaderModule::CompileShader(
         GetDevice()->EmitLog(wgpu::LoggingType::Info, dumpedMsg.str().c_str());
     }
 
+    GetDevice()->GetBlobCache()->EnsureStored(compilationResult);
+    return compilationResult->glsl;
+}
+
+ResultOrError<GLuint> ShaderModule::CreateGLShaderObject(const OpenGLFunctions& gl,
+                                                         SingleShaderStage stage,
+                                                         const std::string& glslSrc) {
     GLuint shader = DAWN_GL_TRY(gl, CreateShader(GLShaderType(stage)));
-    const char* source = compilationResult->glsl.c_str();
+    const char* source = glslSrc.c_str();
     {
         SCOPED_DAWN_HISTOGRAM_TIMER_MICROS(GetDevice()->GetPlatform(), "GLSL.CompileShader");
 
@@ -551,12 +562,10 @@ ResultOrError<GLuint> ShaderModule::CompileShader(
             std::vector<char> buffer(infoLogLength);
             DAWN_GL_TRY(gl, GetShaderInfoLog(shader, infoLogLength, nullptr, &buffer[0]));
             DAWN_GL_TRY(gl, DeleteShader(shader));
-            return DAWN_VALIDATION_ERROR("%s\nProgram compilation failed:\n%s", source,
-                                         buffer.data());
+            return DAWN_PIPELINE_UNCATEGORIZED_ERROR("%s\nProgram compilation failed:\n%s", source,
+                                                     buffer.data());
         }
     }
-
-    GetDevice()->GetBlobCache()->EnsureStored(compilationResult);
 
     return shader;
 }

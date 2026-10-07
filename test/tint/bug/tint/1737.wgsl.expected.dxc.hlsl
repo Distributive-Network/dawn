@@ -18,7 +18,6 @@ void f_inner(uint tint_local_index) {
       {
         v = (v_1 + 1u);
       }
-      continue;
     }
   }
   {
@@ -33,12 +32,11 @@ void f_inner(uint tint_local_index) {
       {
         v_2 = (v_3 + 1u);
       }
-      continue;
     }
   }
   GroupMemoryBarrierWithGroupSync();
-  float x = a[0u];
-  float y = b[0u];
+  float x = a[int(0)];
+  float y = b[int(0)];
 }
 
 [numthreads(1, 1, 1)]

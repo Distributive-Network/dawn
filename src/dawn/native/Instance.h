@@ -36,21 +36,22 @@
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
-#include "dawn/common/MutexProtected.h"
-#include "dawn/common/Ref.h"
-#include "dawn/common/RefCounted.h"
-#include "dawn/common/ityp_array.h"
-#include "dawn/common/ityp_bitset.h"
-#include "dawn/native/Adapter.h"
-#include "dawn/native/BackendConnection.h"
-#include "dawn/native/ErrorSink.h"
-#include "dawn/native/EventManager.h"
-#include "dawn/native/Features.h"
-#include "dawn/native/Forward.h"
-#include "dawn/native/Toggles.h"
-#include "dawn/native/dawn_platform.h"
 #include "partition_alloc/pointers/raw_ptr.h"
-#include "tint/lang/wgsl/enums.h"
+#include "src/dawn/common/MutexProtected.h"
+#include "src/dawn/common/Ref.h"
+#include "src/dawn/common/RefCounted.h"
+#include "src/dawn/common/ityp_array.h"
+#include "src/dawn/common/ityp_bitset.h"
+#include "src/dawn/native/Adapter.h"
+#include "src/dawn/native/BackendConnection.h"
+#include "src/dawn/native/ErrorSink.h"
+#include "src/dawn/native/EventManager.h"
+#include "src/dawn/native/Features.h"
+#include "src/dawn/native/Forward.h"
+#include "src/dawn/native/Toggles.h"
+#include "src/dawn/native/dawn_platform.h"
+#include "src/utils/span.h"
+#include "tint/tint.h"
 
 namespace dawn::platform {
 class Platform;
@@ -88,13 +89,37 @@ class InstanceBase final : public ErrorSink, public RefCounted {
 
     void EmitLog(WGPULoggingType type, const std::string_view message) const;
 
+    // TODO(crbug.com/536639352): When `UnknownError` is available, determine if we can combine
+    // these overloads into a single one taking the UnknownError class.
+    //
     // Consume an error and log its warning at most once. This is useful for
     // physical device creation errors that happen because the backend is not
     // supported or doesn't meet the required capabilities.
-    bool ConsumedErrorAndWarnOnce(MaybeError maybeError);
-
     template <typename T>
-    [[nodiscard]] bool ConsumedErrorAndWarnOnce(ResultOrError<T> resultOrError, T* result) {
+        requires(IsMaybeConcreteError<T>)
+    bool ConsumedErrorAndWarnOnce(T maybeError) {
+        if (!maybeError.IsError()) {
+            return false;
+        }
+        return ConsumedErrorAndWarnOnce(maybeError.AcquireError());
+    }
+
+    // Consume an error and log its warning at most once. This is useful for
+    // physical device creation errors that happen because the backend is not
+    // supported or doesn't meet the required capabilities.
+    template <typename T>
+        requires(IsConcreteError<T>)
+    bool ConsumedErrorAndWarnOnce(std::unique_ptr<T> error) {
+        std::string message = error->GetFormattedMessage();
+        if (mWarningMessages.insert(message).second) {
+            EmitLog(WGPULoggingType_Warning, message);
+        }
+        return true;
+    }
+
+    template <typename E, typename T>
+        requires(IsResultOrConcreteError<E, T>)
+    [[nodiscard]] bool ConsumedErrorAndWarnOnce(E resultOrError, T* result) {
         if (resultOrError.IsError()) [[unlikely]] {
             return ConsumedErrorAndWarnOnce(resultOrError.AcquireError());
         }
@@ -125,7 +150,7 @@ class InstanceBase final : public ErrorSink, public RefCounted {
 
     // Testing only API that is NOT thread-safe.
     uint64_t GetDeprecationWarningCountForTesting();
-    void EmitDeprecationWarning(const std::string& warning);
+    void EmitDeprecationWarning(const std::string& message);
 
     uint64_t GetDeviceCountForTesting() const;
     void AddDevice(DeviceBase* device);
@@ -149,13 +174,17 @@ class InstanceBase final : public ErrorSink, public RefCounted {
     // Dawn API
     Surface* APICreateSurface(const SurfaceDescriptor* descriptor);
     void APIProcessEvents();
-    [[nodiscard]] wgpu::WaitStatus APIWaitAny(size_t count,
-                                              FutureWaitInfo* futures,
-                                              uint64_t timeoutNS);
+    [[nodiscard]] wgpu::WaitStatus APIWaitAny(Span<FutureWaitInfo> futures, uint64_t timeoutNS);
     bool APIHasWGSLLanguageFeature(wgpu::WGSLLanguageFeatureName feature) const;
     void APIGetWGSLLanguageFeatures(SupportedWGSLLanguageFeatures* features) const;
 
     void DisconnectDawnPlatform();
+
+    // ErrorSink implementation
+    void ConsumeError(std::unique_ptr<UnrecoverableError> error,
+                      InternalErrorType additionalAllowedErrors = InternalErrorType::None) override;
+    void ConsumeError(std::unique_ptr<ValidationError> error,
+                      InternalErrorType additionalAllowedErrors = InternalErrorType::None) override;
 
   private:
     explicit InstanceBase(const TogglesState& instanceToggles);
@@ -186,10 +215,6 @@ class InstanceBase final : public ErrorSink, public RefCounted {
 
     void GatherWGSLFeatures(const DawnWGSLBlocklist* wgslBlocklist);
 
-    // ErrorSink implementation
-    void ConsumeError(std::unique_ptr<ErrorData> error,
-                      InternalErrorType additionalAllowedErrors = InternalErrorType::None) override;
-
     absl::flat_hash_set<std::string> mWarningMessages;
 
     std::vector<std::string> mRuntimeSearchPaths;
@@ -207,6 +232,8 @@ class InstanceBase final : public ErrorSink, public RefCounted {
 
     TogglesState mToggles;
     TogglesInfo mTogglesInfo;
+
+    InstanceLimits mLimits;
 
     absl::flat_hash_set<wgpu::InstanceFeatureName> mInstanceFeatures;
     absl::flat_hash_set<wgpu::WGSLLanguageFeatureName> mWGSLFeatures;

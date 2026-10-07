@@ -31,13 +31,14 @@
 #include <memory>
 #include <vector>
 
-#include "dawn/common/LRUCache.h"
-#include "dawn/common/SerialQueue.h"
-#include "dawn/common/Sha3.h"
-#include "dawn/native/d3d/DeviceD3D.h"
-#include "dawn/native/d3d11/CommandRecordingContextD3D11.h"
-#include "dawn/native/d3d11/DeviceInfoD3D11.h"
-#include "dawn/native/d3d11/Forward.h"
+#include "src/dawn/common/LRUCache.h"
+#include "src/dawn/common/MutexProtected.h"
+#include "src/dawn/common/SerialQueue.h"
+#include "src/dawn/common/Sha3.h"
+#include "src/dawn/native/d3d/DeviceD3D.h"
+#include "src/dawn/native/d3d11/CommandRecordingContextD3D11.h"
+#include "src/dawn/native/d3d11/DeviceInfoD3D11.h"
+#include "src/dawn/native/d3d11/Forward.h"
 
 namespace dawn::native::d3d {
 struct CompiledShader;
@@ -97,6 +98,12 @@ class Device final : public d3d::Device {
 
     bool ReduceMemoryUsageImpl() override;
 
+    std::optional<DeviceGuard> UseGuardForCreateBindGroup() override;
+    std::optional<DeviceGuard> UseGuardForCreateBindGroupLayout() override;
+    std::optional<DeviceGuard> UseGuardForCreateBuffer() override;
+    std::optional<DeviceGuard> UseGuardForCreateSampler() override;
+    std::optional<DeviceGuard> UseGuardForCreateTexture() override;
+
     uint32_t GetUAVSlotCount() const;
 
     ResultOrError<TextureViewBase*> GetOrCreateCachedImplicitPixelLocalStorageAttachment(
@@ -111,6 +118,11 @@ class Device final : public d3d::Device {
         uint64_t size);
     void ReturnStagingBuffer(Ref<BufferBase>&& buffer);
 
+    // Size of the buffer returned by GetZeroBuffer().
+    static constexpr size_t kZeroBufferSize = 1024 * 1024;
+    // Get a cached buffer of kZeroBufferSize bytes filled with zeros.
+    ResultOrError<ID3D11Buffer*> GetZeroBuffer();
+
     ResultOrError<ComPtr<ID3D11VertexShader>> GetOrCreateVertexShader(
         const d3d::CompiledShader& args);
     ResultOrError<ComPtr<ID3D11PixelShader>> GetOrCreatePixelShader(
@@ -118,13 +130,15 @@ class Device final : public d3d::Device {
     ResultOrError<ComPtr<ID3D11ComputeShader>> GetOrCreateComputeShader(
         const d3d::CompiledShader& args);
 
+    void DeferUnmapDestroyedBuffer(ComPtr<ID3D11Buffer> buffer);
+
   private:
     using Base = d3d::Device;
     Device(AdapterBase* adapter,
            const UnpackedPtr<DeviceDescriptor>& descriptor,
            const TogglesState& deviceToggles,
            Ref<DeviceBase::DeviceLostEvent>&& lostEvent);
-    static constexpr uint64_t kMaxStagingBufferSize = 512 * 1024;
+    static constexpr uint64_t kMaxStagingBufferSize = 512ULL * 1024;
 
     ResultOrError<Ref<BindGroupBase>> CreateBindGroupImpl(
         const UnpackedPtr<BindGroupDescriptor>& descriptor) override;
@@ -159,14 +173,16 @@ class Device final : public d3d::Device {
     void InitializeRenderPipelineAsyncImpl(Ref<CreateRenderPipelineAsyncEvent> event) override;
 
     ResultOrError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
-        const SharedTextureMemoryDescriptor* descriptor) override;
+        UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) override;
     ResultOrError<Ref<SharedFenceBase>> ImportSharedFenceImpl(
-        const SharedFenceDescriptor* descriptor) override;
+        UnpackedPtr<SharedFenceDescriptor> unpacked) override;
 
     void DestroyImpl(DestroyReason reason) override;
     MaybeError CheckDebugLayerAndGenerateErrors();
     void AppendDebugLayerMessages(ErrorData* error) override;
     void AppendDeviceLostMessage(ErrorData* error) override;
+
+    void UnmapDestroyedBuffers();
 
     ComPtr<ID3D11Device> mD3d11Device;
     bool mIsDebugLayerEnabled = false;
@@ -181,6 +197,9 @@ class Device final : public d3d::Device {
     std::vector<Ref<BufferBase>> mStagingBuffers;
     uint64_t mTotalStagingBufferSize = 0;
 
+    // The cached zero-filled buffer.
+    ComPtr<ID3D11Buffer> mZeroBuffer;
+
     // The cached shader objects:
     // We use the SHA3 hash of the shader blob as the key because it's computed based on the
     // shader blob's hash. SHA3 is a cryptographic hash function, hence it's extremely unlikely
@@ -188,6 +207,14 @@ class Device final : public d3d::Device {
     LRUCache<Sha3_256::Output, ComPtr<ID3D11VertexShader>, Sha3CacheFuncs> mVertexShaderCache;
     LRUCache<Sha3_256::Output, ComPtr<ID3D11PixelShader>, Sha3CacheFuncs> mPixelShaderCache;
     LRUCache<Sha3_256::Output, ComPtr<ID3D11ComputeShader>, Sha3CacheFuncs> mComputeShaderCache;
+
+    // List of D3D11 buffers that were still mapped when destroyed and need to be unmapped.
+    // This allows Buffer::DestroyImpl to defer the unmap operation to avoid acquiring the
+    // CommandContext lock during destruction. The unmapping is performed later when
+    // Tick() or ReduceMemoryUsage() is called.
+    // MutexProtected is required because in the future Buffer::DestroyImpl might no longer be
+    // protected by the device guard, making concurrent access possible from multiple threads.
+    MutexProtected<std::vector<ComPtr<ID3D11Buffer>>> mPendingDestroyedBufferUnmaps;
 };
 
 }  // namespace dawn::native::d3d11

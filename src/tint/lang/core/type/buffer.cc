@@ -33,8 +33,12 @@ TINT_INSTANTIATE_TYPEINFO(tint::core::type::Buffer);
 
 namespace tint::core::type {
 
+const core::type::Flags sizedFlags{Flag::kHostShareable, Flag::kFixedFootprint};
+const core::type::Flags unsizedFlags{Flag::kHostShareable};
+
 Buffer::Buffer(const ArrayCount* size)
-    : Base(Hash(tint::TypeCode::Of<Buffer>().bits, size), core::type::Flags{Flag::kHostShareable}),
+    : Base(Hash(tint::TypeCode::Of<Buffer>().bits, size),
+           (size->Is<RuntimeArrayCount>() ? unsizedFlags : sizedFlags)),
       count_(size) {}
 
 Buffer::~Buffer() = default;
@@ -59,6 +63,16 @@ std::string Buffer::FriendlyName() const {
     auto count_str = count_->FriendlyName();
     if (!count_str.empty()) {
         out << "<" << count_str << ">";
+    }
+    return out.str();
+}
+
+std::string Buffer::IdentifierName() const {
+    StringStream out;
+    out << "buffer";
+    auto count_str = count_->FriendlyName();
+    if (!count_str.empty()) {
+        out << "_" << count_str;
     }
     return out.str();
 }

@@ -28,10 +28,9 @@
 #include <iostream>
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
-
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 namespace dawn {
 namespace {
@@ -138,6 +137,14 @@ TEST_P(MultiDrawIndirectTest, Uint32) {
     Test({3, 1, 0, 0, 3, 1, 3, 0}, 0, 2, filled, filled);
 }
 
+// Non-zero firstInstance is not allowed because `IndirectFirstInstance` is not requested in
+// `MultiDrawIndirectTest`.
+TEST_P(MultiDrawIndirectTest, FirstInstanceRequiresFeature) {
+    DAWN_TEST_UNSUPPORTED_IF(HasToggleEnabled("skip_validation"));
+
+    Test({3, 1, 0, 1, 3, 1, 3, 0}, 0, 2, notFilled, filled);
+}
+
 // The basic triangle draw with various drawCount.
 TEST_P(MultiDrawIndirectTest, DrawCount) {
     // TODO(crbug.com/356461286): NVIDIA Drivers for Vulkan Linux are drawing more than
@@ -168,10 +175,7 @@ TEST_P(MultiDrawIndirectTest, IndirectOffset) {
 }
 
 // TODO(crbug.com/462151798): Implement MultiDraw*Indirect for WebGPU backend.
-DAWN_INSTANTIATE_TEST(MultiDrawIndirectTest,
-                      VulkanBackend(),
-                      D3D12Backend(),
-                      MetalBackend());
+DAWN_INSTANTIATE_TEST(MultiDrawIndirectTest, VulkanBackend(), D3D12Backend(), MetalBackend());
 
 class MultiDrawIndirectUsingFirstVertexTest : public DawnTest {
   protected:
@@ -293,10 +297,11 @@ DAWN_INSTANTIATE_TEST(MultiDrawIndirectUsingFirstVertexTest,
 class MultiDrawIndirectUsingInstanceIndexTest : public MultiDrawIndirectUsingFirstVertexTest {
   protected:
     std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
-        if (!SupportsFeatures({wgpu::FeatureName::MultiDrawIndirect})) {
+        if (!SupportsFeatures(
+                {wgpu::FeatureName::MultiDrawIndirect, wgpu::FeatureName::IndirectFirstInstance})) {
             return {};
         }
-        return {wgpu::FeatureName::MultiDrawIndirect};
+        return {wgpu::FeatureName::MultiDrawIndirect, wgpu::FeatureName::IndirectFirstInstance};
     }
 
     void SetupShaderModule() override {
@@ -317,12 +322,6 @@ class MultiDrawIndirectUsingInstanceIndexTest : public MultiDrawIndirectUsingFir
             @fragment fn main() -> @location(0) vec4f {
                 return vec4f(0.0, 1.0, 0.0, 1.0);
             })");
-    }
-
-    void SetUp() override {
-        DawnTest::SetUp();
-        DAWN_TEST_UNSUPPORTED_IF(!device.HasFeature(wgpu::FeatureName::MultiDrawIndirect));
-        GeneralSetup();
     }
 };
 

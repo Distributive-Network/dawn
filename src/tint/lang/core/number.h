@@ -29,6 +29,7 @@
 #define SRC_TINT_LANG_CORE_NUMBER_H_
 
 #include <stdint.h>
+
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -166,6 +167,7 @@ struct Number : NumberBase<Number<T>> {
     /// Constructor.
     /// @param v the value to initialize this Number to
     template <typename U>
+        requires(std::is_arithmetic_v<U> || std::is_enum_v<U>)
     explicit Number(U v) : value(static_cast<T>(v)) {}
 
     /// Constructor.
@@ -175,6 +177,7 @@ struct Number : NumberBase<Number<T>> {
 
     /// Conversion operator
     /// @returns the value as T
+    // NOLINTNEXTLINE(google-explicit-constructor)
     operator T() const { return value; }
 
     /// Negation operator
@@ -234,6 +237,7 @@ struct Number<tint::core::detail::NumberKindF16>
     /// Constructor.
     /// @param v the value to initialize this Number to
     template <typename U>
+        requires(std::is_arithmetic_v<U>)
     explicit Number(U v) : value(Quantize(static_cast<type>(v))) {}
 
     /// Constructor.
@@ -243,6 +247,7 @@ struct Number<tint::core::detail::NumberKindF16>
 
     /// Conversion operator
     /// @returns the value as the internal representation type of F16
+    // NOLINTNEXTLINE(google-explicit-constructor)
     operator float() const { return value; }
 
     /// Negation operator
@@ -291,6 +296,8 @@ using i8 = Number<int8_t>;
 using i32 = Number<int32_t>;
 /// `u8` is a type alias to `Number<uint8_t>`.
 using u8 = Number<uint8_t>;
+/// `u16` is a type alias to `Number<uint16_t>`.
+using u16 = Number<uint16_t>;
 /// `u32` is a type alias to `Number<uint32_t>`.
 using u32 = Number<uint32_t>;
 /// `u64` is a type alias to `Number<uint64_t>`.
@@ -322,6 +329,8 @@ const char* FriendlyName() {
         return "abstract-float";
     } else if constexpr (std::is_same_v<T, i32>) {
         return "i32";
+    } else if constexpr (std::is_same_v<T, u16>) {
+        return "u16";
     } else if constexpr (std::is_same_v<T, u32>) {
         return "u32";
     } else if constexpr (std::is_same_v<T, f32>) {
@@ -370,7 +379,7 @@ tint::Result<TO, ConversionFailure> CheckedConvert(Number<FROM> num) {
     // Use the highest-precision integer or floating-point type to perform the comparisons.
     using T = std::conditional_t<IsFloatingPoint<UnwrapNumber<TO>> || IsFloatingPoint<FROM>,
                                  AFloat::type, AInt::type>;
-    const auto value = static_cast<T>(num.value);
+    const auto value = static_cast<T>(num.value);  // NOLINT(bugprone-signed-char-misuse)
     // Float to integral conversions clamp to the target range.
     // https://gpuweb.github.io/gpuweb/wgsl/#scalar-floating-point-to-integral-conversion
     constexpr auto float_to_integral = IsFloatingPoint<FROM> && IsIntegral<UnwrapNumber<TO>>;
@@ -427,8 +436,8 @@ bool operator==(Number<A> a, Number<B> b) {
     // Use the highest-precision integer or floating-point type to perform the comparisons.
     using T =
         std::conditional_t<IsFloatingPoint<A> || IsFloatingPoint<B>, AFloat::type, AInt::type>;
-    auto va = static_cast<T>(a.value);
-    auto vb = static_cast<T>(b.value);
+    auto va = static_cast<T>(a.value);  // NOLINT(bugprone-signed-char-misuse)
+    auto vb = static_cast<T>(b.value);  // NOLINT(bugprone-signed-char-misuse)
     return std::equal_to<T>()(va, vb);
 }
 

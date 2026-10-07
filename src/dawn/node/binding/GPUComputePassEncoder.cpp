@@ -34,6 +34,8 @@
 #include "src/dawn/node/binding/GPUBuffer.h"
 #include "src/dawn/node/binding/GPUComputePipeline.h"
 #include "src/dawn/node/binding/GPUQuerySet.h"
+#include "src/dawn/node/binding/GPUResourceTable.h"
+#include "src/utils/compiler.h"
 
 namespace wgpu::binding {
 
@@ -94,26 +96,14 @@ void GPUComputePassEncoder::setBindGroup(
     Converter conv(env);
 
     wgpu::BindGroup bg{};
-    if (!conv(bg, bindGroup)) {
+    std::span<const uint32_t> offsets;
+    if (!conv(bg, bindGroup) ||
+        !ConvertDynamicOffsetsToSpan(env, &offsets, dynamicOffsetsData, dynamicOffsetsDataStart,
+                                     dynamicOffsetsDataLength)) {
         return;
     }
 
-    if (dynamicOffsetsDataStart > dynamicOffsetsData.ElementLength()) {
-        Napi::RangeError::New(env, "dynamicOffsetsDataStart is out of bound of dynamicOffsetData")
-            .ThrowAsJavaScriptException();
-        return;
-    }
-
-    if (dynamicOffsetsDataLength > dynamicOffsetsData.ElementLength() - dynamicOffsetsDataStart) {
-        Napi::RangeError::New(env,
-                              "dynamicOffsetsDataLength + dynamicOffsetsDataStart is out of "
-                              "bound of dynamicOffsetData")
-            .ThrowAsJavaScriptException();
-        return;
-    }
-
-    enc_.SetBindGroup(index, bg, dynamicOffsetsDataLength,
-                      dynamicOffsetsData.Data() + dynamicOffsetsDataStart);
+    enc_.SetBindGroup(index, bg, offsets.size(), offsets.data());
 }
 
 void GPUComputePassEncoder::setImmediates(Napi::Env env,
@@ -127,6 +117,19 @@ void GPUComputePassEncoder::setImmediates(Napi::Env env,
     }
 
     enc_.SetImmediates(rangeOffset, dataSpan.data(), dataSpan.size());
+}
+
+void GPUComputePassEncoder::setResourceTable(
+    Napi::Env env,
+    std::optional<interop::Interface<interop::GPUResourceTable>> table) {
+    Converter conv(env);
+
+    wgpu::ResourceTable resourceTable{};
+    if (!conv(resourceTable, table)) {
+        return;
+    }
+
+    enc_.SetResourceTable(resourceTable);
 }
 
 void GPUComputePassEncoder::pushDebugGroup(Napi::Env, std::string groupLabel) {

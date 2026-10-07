@@ -38,9 +38,12 @@ using namespace tint::core::number_suffixes;  // NOLINT
 namespace tint::msl::writer::raise {
 namespace {
 
-using MslWriter_ValidateSubgroupMatrixTest = core::ir::transform::TransformTest;
+struct MslWriter_ValidateSubgroupMatrixTest : public core::ir::transform::TransformTest {
+  protected:
+    void SetUp() override { mod.properties.Add(core::ir::Property::kAllow16BitFloats); }
+};
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, F16_8x8) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_F16_8x8) {
     auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {  //
         b.Var("v", ty.ptr(function, ty.subgroup_matrix_left(ty.f16(), 8u, 8u)));
@@ -57,14 +60,10 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, F16_8x8) {
 )";
     EXPECT_EQ(src, str());
 
-    auto* expect = src;
-
-    Run(ValidateSubgroupMatrix);
-
-    EXPECT_EQ(expect, str());
+    Run(ValidateSubgroupMatrix, false);
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, F32_8x8) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_F32_8x8) {
     auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {  //
         b.Var("v", ty.ptr(function, ty.subgroup_matrix_left(ty.f32(), 8u, 8u)));
@@ -81,14 +80,10 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, F32_8x8) {
 )";
     EXPECT_EQ(src, str());
 
-    auto* expect = src;
-
-    Run(ValidateSubgroupMatrix);
-
-    EXPECT_EQ(expect, str());
+    Run(ValidateSubgroupMatrix, false);
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, Left8x2) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_Left8x2) {
     auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {  //
         b.Var("v", ty.ptr(function, ty.subgroup_matrix_left(ty.f32(), 8u, 2u)));
@@ -105,13 +100,14 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, Left8x2) {
 )";
     EXPECT_EQ(src, str());
 
-    auto result = RunWithFailure(ValidateSubgroupMatrix);
+    auto result = RunWithFailure(ValidateSubgroupMatrix, false);
     ASSERT_NE(result, Success);
-    EXPECT_EQ(result.Failure().reason,
-              R"(error: subgroup_matrix requires dimensions of 8x8 for the selected device)");
+    EXPECT_EQ(
+        result.Failure().reason,
+        R"(error: Pipeline uses subgroup matrix dimensions that are not supported by the device (2x8))");
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, Right2x8) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_Right2x8) {
     auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {  //
         b.Var("v", ty.ptr(function, ty.subgroup_matrix_right(ty.f32(), 2u, 8u)));
@@ -128,13 +124,14 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, Right2x8) {
 )";
     EXPECT_EQ(src, str());
 
-    auto result = RunWithFailure(ValidateSubgroupMatrix);
+    auto result = RunWithFailure(ValidateSubgroupMatrix, false);
     ASSERT_NE(result, Success);
-    EXPECT_EQ(result.Failure().reason,
-              R"(error: subgroup_matrix requires dimensions of 8x8 for the selected device)");
+    EXPECT_EQ(
+        result.Failure().reason,
+        R"(error: Pipeline uses subgroup matrix dimensions that are not supported by the device (8x2))");
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, Result8x2) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_Result8x2) {
     auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {  //
         b.Var("v", ty.ptr(function, ty.subgroup_matrix_result(ty.f32(), 8u, 2u)));
@@ -151,13 +148,14 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, Result8x2) {
 )";
     EXPECT_EQ(src, str());
 
-    auto result = RunWithFailure(ValidateSubgroupMatrix);
+    auto result = RunWithFailure(ValidateSubgroupMatrix, false);
     ASSERT_NE(result, Success);
-    EXPECT_EQ(result.Failure().reason,
-              R"(error: subgroup_matrix requires dimensions of 8x8 for the selected device)");
+    EXPECT_EQ(
+        result.Failure().reason,
+        R"(error: Pipeline uses subgroup matrix dimensions that are not supported by the device (2x8))");
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, i8) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_i8) {
     auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {  //
         b.Var("v", ty.ptr(function, ty.subgroup_matrix_left(ty.i8(), 8u, 8u)));
@@ -174,14 +172,14 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, i8) {
 )";
     EXPECT_EQ(src, str());
 
-    auto result = RunWithFailure(ValidateSubgroupMatrix);
+    auto result = RunWithFailure(ValidateSubgroupMatrix, false);
     ASSERT_NE(result, Success);
     EXPECT_EQ(
         result.Failure().reason,
         R"(error: subgroup_matrix requires a type of `f32` or `f16` for the selected device)");
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, FunctionParam) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_FunctionParam) {
     auto* f2 = b.Function("f", ty.void_());
     f2->AppendParam(b.FunctionParam("p", ty.subgroup_matrix_left(ty.f32(), 8u, 8u)));
     b.Append(f2->Block(), [&] {  //
@@ -212,14 +210,10 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, FunctionParam) {
 )";
     EXPECT_EQ(src, str());
 
-    auto* expect = src;
-
-    Run(ValidateSubgroupMatrix);
-
-    EXPECT_EQ(expect, str());
+    Run(ValidateSubgroupMatrix, false);
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, InvalidFunctionParam_i8) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_InvalidFunctionParam_i8) {
     auto* f2 = b.Function("f", ty.void_());
     auto* p = b.FunctionParam("p", ty.subgroup_matrix_left(ty.i8(), 8u, 8u));
     f2->AppendParam(p);
@@ -251,17 +245,17 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, InvalidFunctionParam_i8) {
 )";
     EXPECT_EQ(src, str());
 
-    auto result = RunWithFailure(ValidateSubgroupMatrix);
+    auto result = RunWithFailure(ValidateSubgroupMatrix, false);
     ASSERT_NE(result, Success);
     EXPECT_EQ(
         result.Failure().reason,
         R"(error: subgroup_matrix requires a type of `f32` or `f16` for the selected device)");
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, FunctionReturn) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_FunctionReturn) {
     auto* f2 = b.Function("f", ty.subgroup_matrix_left(ty.f32(), 8u, 8u));
     b.Append(f2->Block(), [&] {  //
-        b.Return(f2, b.Composite(ty.subgroup_matrix_left(ty.f32(), 8u, 8u), 5_f));
+        b.Return(f2, b.Construct(ty.subgroup_matrix_left(ty.f32(), 8u, 8u), 5_f));
     });
 
     auto* func = b.ComputeFunction("main");
@@ -273,30 +267,27 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, FunctionReturn) {
     auto* src = R"(
 %f = func():subgroup_matrix_left<f32, 8, 8> {
   $B1: {
-    ret subgroup_matrix_left<f32, 8, 8>(5.0f)
+    %2:subgroup_matrix_left<f32, 8, 8> = construct 5.0f
+    ret %2
   }
 }
 %main = @compute @workgroup_size(1u, 1u, 1u) func():void {
   $B2: {
-    %3:subgroup_matrix_left<f32, 8, 8> = call %f
-    %v:subgroup_matrix_left<f32, 8, 8> = let %3
+    %4:subgroup_matrix_left<f32, 8, 8> = call %f
+    %v:subgroup_matrix_left<f32, 8, 8> = let %4
     ret
   }
 }
 )";
     EXPECT_EQ(src, str());
 
-    auto* expect = src;
-
-    Run(ValidateSubgroupMatrix);
-
-    EXPECT_EQ(expect, str());
+    Run(ValidateSubgroupMatrix, false);
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, InvalidFunctionReturn_i32) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_InvalidFunctionReturn_i32) {
     auto* f2 = b.Function("f", ty.subgroup_matrix_left(ty.i32(), 8u, 8u));
     b.Append(f2->Block(), [&] {  //
-        b.Return(f2, b.Composite(ty.subgroup_matrix_left(ty.i32(), 8u, 8u), 5_i));
+        b.Return(f2, b.Construct(ty.subgroup_matrix_left(ty.i32(), 8u, 8u), 5_i));
     });
 
     auto* func = b.ComputeFunction("main");
@@ -309,27 +300,28 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, InvalidFunctionReturn_i32) {
     auto* src = R"(
 %f = func():subgroup_matrix_left<i32, 8, 8> {
   $B1: {
-    ret subgroup_matrix_left<i32, 8, 8>(5i)
+    %2:subgroup_matrix_left<i32, 8, 8> = construct 5i
+    ret %2
   }
 }
 %main = @compute @workgroup_size(1u, 1u, 1u) func():void {
   $B2: {
-    %3:subgroup_matrix_left<i32, 8, 8> = call %f
-    %v:subgroup_matrix_left<i32, 8, 8> = let %3
+    %4:subgroup_matrix_left<i32, 8, 8> = call %f
+    %v:subgroup_matrix_left<i32, 8, 8> = let %4
     ret
   }
 }
 )";
     EXPECT_EQ(src, str());
 
-    auto result = RunWithFailure(ValidateSubgroupMatrix);
+    auto result = RunWithFailure(ValidateSubgroupMatrix, false);
     ASSERT_NE(result, Success);
     EXPECT_EQ(
         result.Failure().reason,
         R"(error: subgroup_matrix requires a type of `f32` or `f16` for the selected device)");
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, InStruct_F32_8x8) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_InStruct_F32_8x8) {
     auto* s = ty.Struct(mod.symbols.New("S"),
                         {
                             {mod.symbols.New("a"), ty.subgroup_matrix_left(ty.f32(), 8u, 8u)},
@@ -355,14 +347,10 @@ S = struct @align(4) {
 )";
     EXPECT_EQ(src, str());
 
-    auto* expect = src;
-
-    Run(ValidateSubgroupMatrix);
-
-    EXPECT_EQ(expect, str());
+    Run(ValidateSubgroupMatrix, false);
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, InStruct_8x2) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_InStruct_8x2) {
     auto* s = ty.Struct(mod.symbols.New("S"),
                         {
                             {mod.symbols.New("a"), ty.subgroup_matrix_left(ty.f32(), 8u, 2u)},
@@ -388,13 +376,14 @@ S = struct @align(4) {
 )";
     EXPECT_EQ(src, str());
 
-    auto result = RunWithFailure(ValidateSubgroupMatrix);
+    auto result = RunWithFailure(ValidateSubgroupMatrix, false);
     ASSERT_NE(result, Success);
-    EXPECT_EQ(result.Failure().reason,
-              R"(error: subgroup_matrix requires dimensions of 8x8 for the selected device)");
+    EXPECT_EQ(
+        result.Failure().reason,
+        R"(error: Pipeline uses subgroup matrix dimensions that are not supported by the device (2x8))");
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, Nested_F32_8x8) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_Nested_F32_8x8) {
     auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {  //
         auto* if_ = b.If(true);
@@ -420,14 +409,10 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, Nested_F32_8x8) {
 )";
     EXPECT_EQ(src, str());
 
-    auto* expect = src;
-
-    Run(ValidateSubgroupMatrix);
-
-    EXPECT_EQ(expect, str());
+    Run(ValidateSubgroupMatrix, false);
 }
 
-TEST_F(MslWriter_ValidateSubgroupMatrixTest, Nested_F32_8x2) {
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, SimdgroupMatrix_Nested_F32_8x2) {
     auto* func = b.ComputeFunction("main");
     b.Append(func->Block(), [&] {  //
         auto* if_ = b.If(true);
@@ -453,10 +438,204 @@ TEST_F(MslWriter_ValidateSubgroupMatrixTest, Nested_F32_8x2) {
 )";
     EXPECT_EQ(src, str());
 
-    auto result = RunWithFailure(ValidateSubgroupMatrix);
+    auto result = RunWithFailure(ValidateSubgroupMatrix, false);
+    ASSERT_NE(result, Success);
+    EXPECT_EQ(
+        result.Failure().reason,
+        R"(error: Pipeline uses subgroup matrix dimensions that are not supported by the device (2x8))");
+}
+
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, Tensors_F32_32x32x32) {
+    auto* func = b.ComputeFunction("main");
+    b.Append(func->Block(), [&] {  //
+        b.Var("lhs", ty.ptr(function, ty.subgroup_matrix_left(ty.f32(), 32u, 32u)));
+        b.Var("rhs", ty.ptr(function, ty.subgroup_matrix_right(ty.f32(), 32u, 32u)));
+        b.Var("acc", ty.ptr(function, ty.subgroup_matrix_result(ty.f32(), 32u, 32u)));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%main = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %lhs:ptr<function, subgroup_matrix_left<f32, 32, 32>, read_write> = var undef
+    %rhs:ptr<function, subgroup_matrix_right<f32, 32, 32>, read_write> = var undef
+    %acc:ptr<function, subgroup_matrix_result<f32, 32, 32>, read_write> = var undef
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    Run(ValidateSubgroupMatrix, true);
+}
+
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, Tensors_F16_32x16x16) {
+    auto* func = b.ComputeFunction("main");
+    b.Append(func->Block(), [&] {  //
+        b.Var("lhs", ty.ptr(function, ty.subgroup_matrix_left(ty.f16(), 16u, 32u)));
+        b.Var("rhs", ty.ptr(function, ty.subgroup_matrix_right(ty.f16(), 16u, 16u)));
+        b.Var("acc", ty.ptr(function, ty.subgroup_matrix_result(ty.f16(), 16u, 32u)));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%main = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %lhs:ptr<function, subgroup_matrix_left<f16, 16, 32>, read_write> = var undef
+    %rhs:ptr<function, subgroup_matrix_right<f16, 16, 16>, read_write> = var undef
+    %acc:ptr<function, subgroup_matrix_result<f16, 16, 32>, read_write> = var undef
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    Run(ValidateSubgroupMatrix, true);
+}
+
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, Tensors_Left8x8) {
+    auto* func = b.ComputeFunction("main");
+    b.Append(func->Block(), [&] {  //
+        b.Var("v", ty.ptr(function, ty.subgroup_matrix_left(ty.f32(), 8u, 8u)));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%main = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %v:ptr<function, subgroup_matrix_left<f32, 8, 8>, read_write> = var undef
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto result = RunWithFailure(ValidateSubgroupMatrix, true);
+    ASSERT_NE(result, Success);
+    EXPECT_EQ(
+        result.Failure().reason,
+        R"(error: Pipeline uses subgroup matrix dimensions that are not supported by the device (8x8))");
+}
+
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, Tensors_Right8x8) {
+    auto* func = b.ComputeFunction("main");
+    b.Append(func->Block(), [&] {  //
+        b.Var("v", ty.ptr(function, ty.subgroup_matrix_right(ty.f32(), 8u, 8u)));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%main = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %v:ptr<function, subgroup_matrix_right<f32, 8, 8>, read_write> = var undef
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto result = RunWithFailure(ValidateSubgroupMatrix, true);
+    ASSERT_NE(result, Success);
+    EXPECT_EQ(
+        result.Failure().reason,
+        R"(error: Pipeline uses subgroup matrix dimensions that are not supported by the device (8x8))");
+}
+
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, Tensors_Result8x8) {
+    auto* func = b.ComputeFunction("main");
+    b.Append(func->Block(), [&] {  //
+        b.Var("v", ty.ptr(function, ty.subgroup_matrix_result(ty.f32(), 8u, 8u)));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%main = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %v:ptr<function, subgroup_matrix_result<f32, 8, 8>, read_write> = var undef
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto result = RunWithFailure(ValidateSubgroupMatrix, true);
+    ASSERT_NE(result, Success);
+    EXPECT_EQ(
+        result.Failure().reason,
+        R"(error: Pipeline uses subgroup matrix dimensions that are not supported by the device (8x8))");
+}
+
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, Tensors_Multiply_16x16x16) {
+    auto* func = b.ComputeFunction("main");
+    b.Append(func->Block(), [&] {  //
+        auto* lhs = b.Var("lhs", ty.ptr(function, ty.subgroup_matrix_left(ty.f16(), 16u, 16u)));
+        auto* rhs = b.Var("rhs", ty.ptr(function, ty.subgroup_matrix_right(ty.f16(), 16u, 16u)));
+        auto* acc = b.Var("acc", ty.ptr(function, ty.subgroup_matrix_result(ty.f16(), 16u, 16u)));
+        auto* lhs_load = b.Load(lhs);
+        auto* rhs_load = b.Load(rhs);
+        auto* acc_load = b.Load(acc);
+        b.Call(acc_load->Result()->Type(), core::BuiltinFn::kSubgroupMatrixMultiplyAccumulate,
+               lhs_load, rhs_load, acc_load);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%main = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %lhs:ptr<function, subgroup_matrix_left<f16, 16, 16>, read_write> = var undef
+    %rhs:ptr<function, subgroup_matrix_right<f16, 16, 16>, read_write> = var undef
+    %acc:ptr<function, subgroup_matrix_result<f16, 16, 16>, read_write> = var undef
+    %5:subgroup_matrix_left<f16, 16, 16> = load %lhs
+    %6:subgroup_matrix_right<f16, 16, 16> = load %rhs
+    %7:subgroup_matrix_result<f16, 16, 16> = load %acc
+    %8:subgroup_matrix_result<f16, 16, 16> = subgroupMatrixMultiplyAccumulate %5, %6, %7
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto result = RunWithFailure(ValidateSubgroupMatrix, true);
+    ASSERT_NE(result, Success);
+    EXPECT_EQ(
+        result.Failure().reason,
+        R"(error: Pipeline uses subgroup matrix multiply shape that is not supported by the device (16x16x16))");
+}
+
+TEST_F(MslWriter_ValidateSubgroupMatrixTest, MixedPrecisionRejected) {
+    auto* func = b.ComputeFunction("main");
+    b.Append(func->Block(), [&] {  //
+        auto* lhs = b.Var("lhs", ty.ptr(function, ty.subgroup_matrix_left(ty.f16(), 8u, 8u)));
+        auto* rhs = b.Var("rhs", ty.ptr(function, ty.subgroup_matrix_right(ty.f16(), 8u, 8u)));
+        auto* acc = b.Var("acc", ty.ptr(function, ty.subgroup_matrix_result(ty.f32(), 8u, 8u)));
+        auto* lhs_load = b.Load(lhs);
+        auto* rhs_load = b.Load(rhs);
+        auto* acc_load = b.Load(acc);
+        b.Call(acc_load->Result()->Type(), core::BuiltinFn::kSubgroupMatrixMultiplyAccumulate,
+               lhs_load, rhs_load, acc_load);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%main = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %lhs:ptr<function, subgroup_matrix_left<f16, 8, 8>, read_write> = var undef
+    %rhs:ptr<function, subgroup_matrix_right<f16, 8, 8>, read_write> = var undef
+    %acc:ptr<function, subgroup_matrix_result<f32, 8, 8>, read_write> = var undef
+    %5:subgroup_matrix_left<f16, 8, 8> = load %lhs
+    %6:subgroup_matrix_right<f16, 8, 8> = load %rhs
+    %7:subgroup_matrix_result<f32, 8, 8> = load %acc
+    %8:subgroup_matrix_result<f32, 8, 8> = subgroupMatrixMultiplyAccumulate %5, %6, %7
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto result = RunWithFailure(ValidateSubgroupMatrix, false);
     ASSERT_NE(result, Success);
     EXPECT_EQ(result.Failure().reason,
-              R"(error: subgroup_matrix requires dimensions of 8x8 for the selected device)");
+              R"(error: Mixed precision subgroup matrix multiply is not supported by the device)");
 }
 
 }  // namespace

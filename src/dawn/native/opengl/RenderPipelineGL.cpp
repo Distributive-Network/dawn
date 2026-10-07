@@ -25,12 +25,17 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/RenderPipelineGL.h"
+#include "src/dawn/native/opengl/RenderPipelineGL.h"
 
-#include "dawn/native/opengl/DeviceGL.h"
-#include "dawn/native/opengl/Forward.h"
-#include "dawn/native/opengl/PersistentPipelineStateGL.h"
-#include "dawn/native/opengl/UtilsGL.h"
+#include <set>
+#include <string>
+#include <unordered_map>
+
+#include "src/dawn/native/opengl/DeviceGL.h"
+#include "src/dawn/native/opengl/Forward.h"
+#include "src/dawn/native/opengl/ImmediatesLayoutGL.h"
+#include "src/dawn/native/opengl/PersistentPipelineStateGL.h"
+#include "src/dawn/native/opengl/UtilsGL.h"
 
 namespace dawn::native::opengl {
 
@@ -222,30 +227,72 @@ RenderPipeline::RenderPipeline(Device* device,
       mGlPrimitiveTopology(GLPrimitiveTopology(GetPrimitiveTopology())) {}
 
 MaybeError RenderPipeline::InitializeImpl() {
+    if (UsesVertexIndex()) {
+        mImmediateMask |= GetImmediateBlockBits(offsetof(RenderImmediates, firstVertex),
+                                                kImmediateElementByteSize);
+    }
+    if (UsesInstanceIndex()) {
+        mImmediateMask |= GetImmediateBlockBits(offsetof(RenderImmediates, firstInstance),
+                                                kImmediateElementByteSize);
+    }
+    if (UsesFragDepth()) {
+        mImmediateMask |= GetImmediateBlockBits(offsetof(RenderImmediates, clampFragDepth),
+                                                sizeof(ClampFragDepthArgs));
+    }
+
     VertexAttributeMask bgraSwizzleAttributes = {};
     for (VertexAttributeLocation i : GetAttributeLocationsUsed()) {
         bgraSwizzleAttributes.set(i, GetAttribute(i).format == wgpu::VertexFormat::Unorm8x4BGRA);
     }
 
-    auto gl = ToBackend(GetDevice())->GetGL();
-    DAWN_TRY(InitializeBase(gl, ToBackend(GetLayout()), GetAllStages(), UsesVertexIndex(),
-                            UsesInstanceIndex(), UsesFragDepth(), bgraSwizzleAttributes));
-    DAWN_TRY(CreateVAOForVertexState(gl));
-    return {};
+    auto layout = ToBackend(GetLayout());
+    std::set<CombinedSampler> combinedSamplers;
+    std::unordered_map<SingleShaderStage, std::string> shaders;
+    DAWN_TRY(InitializeShaders(ToBackend(GetDevice())->GetGL(false), layout, GetAllStages(),
+                               mImmediateMask, bgraSwizzleAttributes, nullptr, &combinedSamplers,
+                               &shaders));
+
+    return ToBackend(GetDevice())
+        ->EnqueueGL([self = Ref<RenderPipeline>(this), combinedSamplers,
+                     shaders](const OpenGLFunctions& gl) -> MaybeError {
+            DAWN_TRY(self->InitializeBase(gl, ToBackend(self->GetLayout()), self->GetAllStages(),
+                                          self->mImmediateMask, combinedSamplers, shaders));
+            DAWN_TRY(self->CreateVAOForVertexState(gl));
+            return {};
+        });
 }
 
 RenderPipeline::~RenderPipeline() = default;
 
 void RenderPipeline::DestroyImpl(DestroyReason reason) {
     RenderPipelineBase::DestroyImpl(reason);
-    const OpenGLFunctions& gl = ToBackend(GetDevice())->GetGL();
-    DAWN_GL_TRY_IGNORE_ERRORS(gl, DeleteVertexArrays(1, &mVertexArrayObject));
-    DAWN_GL_TRY_IGNORE_ERRORS(gl, BindVertexArray(0));
-    DeleteProgram(gl);
+    IgnoreErrors(ToBackend(GetDevice())
+                     ->EnqueueDestroyGL(this, &RenderPipeline::GetVertexArrayObject, reason,
+                                        [](const OpenGLFunctions& gl, GLuint vao) -> MaybeError {
+                                            DAWN_GL_TRY_IGNORE_ERRORS(gl,
+                                                                      DeleteVertexArrays(1, &vao));
+                                            DAWN_GL_TRY_IGNORE_ERRORS(gl, BindVertexArray(0));
+                                            return {};
+                                        }));
+    IgnoreErrors(
+        ToBackend(GetDevice())
+            ->EnqueueDestroyGL(this, &RenderPipeline::GetProgramHandle, reason,
+                               [](const OpenGLFunctions& gl, GLuint program) -> MaybeError {
+                                   DAWN_GL_TRY_IGNORE_ERRORS(gl, DeleteProgram(program));
+                                   return {};
+                               }));
 }
 
 GLenum RenderPipeline::GetGLPrimitiveTopology() const {
     return mGlPrimitiveTopology;
+}
+
+GLuint RenderPipeline::GetProgramHandle() const {
+    return mProgram;
+}
+
+GLuint RenderPipeline::GetVertexArrayObject() const {
+    return mVertexArrayObject;
 }
 
 VertexAttributeMask RenderPipeline::GetAttributesUsingVertexBuffer(VertexBufferSlot slot) const {
@@ -305,7 +352,7 @@ MaybeError RenderPipeline::ApplyNow(const OpenGLFunctions& gl,
 
     if (IsDepthBiasEnabled()) {
         DAWN_GL_TRY(gl, Enable(GL_POLYGON_OFFSET_FILL));
-        float depthBias = GetDepthBias();
+        float depthBias = static_cast<float>(GetDepthBias());
         if (GetDevice()->IsToggleEnabled(Toggle::GLDepthBiasModifier)) {
             // There is an ambiguity in the GL and Vulkan specs with respect to
             // depthBias: If a depth value lies between 2^n and 2^(n+1), is the

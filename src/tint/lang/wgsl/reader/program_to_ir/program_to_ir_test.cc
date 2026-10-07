@@ -25,6 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include "gmock/gmock.h"
 #include "src/tint/lang/core/constant/scalar.h"
 #include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/fluent_types.h"
@@ -137,6 +138,16 @@ TEST_F(IR_FromProgramTest, EntryPoint) {
     ASSERT_EQ(m, Success);
 
     EXPECT_EQ(m->functions[0]->Stage(), core::ir::Function::PipelineStage::kFragment);
+    EXPECT_FALSE(m->properties.Contains(core::ir::Property::kAllowMultipleEntryPoints));
+}
+
+TEST_F(IR_FromProgramTest, MultipleEntryPoints) {
+    Func("ep1", tint::Empty, ty.void_(), tint::Empty, Vector{Stage(ast::PipelineStage::kFragment)});
+    Func("ep2", tint::Empty, ty.void_(), tint::Empty, Vector{Stage(ast::PipelineStage::kFragment)});
+
+    auto m = Build();
+    ASSERT_EQ(m, Success);
+    EXPECT_TRUE(m->properties.Contains(core::ir::Property::kAllowMultipleEntryPoints));
 }
 
 TEST_F(IR_FromProgramTest, IfStatement) {
@@ -1193,6 +1204,8 @@ TEST_F(IR_FromProgramTest, OverrideNoInitializer) {
 }
 
 )");
+
+    EXPECT_TRUE(m.properties.Contains(core::ir::Property::kAllowOverrides));
 }
 
 TEST_F(IR_FromProgramTest, OverrideWithConstantInitializer) {
@@ -1552,6 +1565,96 @@ fn b() {
   }
 }
 )");
+}
+
+TEST_F(IR_FromProgramTest, OverrideSizedBuffer) {
+    auto* src = R"(
+override x = 1;
+
+var<workgroup> b : buffer<x>;
+
+fn foo(p : ptr<workgroup, buffer<x>>) {
+}
+
+fn bar() {
+  foo(&b);
+}
+)";
+
+    auto res = Build(src);
+    ASSERT_EQ(res, Success);
+
+    auto m = res.Move();
+    EXPECT_EQ(Dis(m), R"($B1: {  # root
+  %x:i32 = override 1i @id(0)
+  %b:ptr<workgroup, buffer<%x>, read_write> = var undef
+}
+
+%foo = func(%p:ptr<workgroup, buffer<%x>, read_write>):void {
+  $B2: {
+    ret
+  }
+}
+%bar = func():void {
+  $B3: {
+    %6:void = call %foo, %b
+    ret
+  }
+}
+)");
+}
+
+TEST_F(IR_FromProgramTest, Array_ExcessiveNumberOfElementsZeroConstructor) {
+    // array<i32, 40000u>();
+    auto* tc = Call<array<i32, 40000>>();
+    WrapInFunction(tc);
+
+    auto m = Build();
+    ASSERT_NE(m, Success);
+    EXPECT_EQ(m.Failure().reason,
+              R"(:3:42 error: let: result type size (160000) exceeds maximum allowed (65536)
+    %tint_symbol:array<i32, 40000> = let array<i32, 40000>(0i)
+                                         ^^^^^^^^^^^^^^^^^^^^^
+
+:2:3 note: in block
+  $B1: {
+  ^^^
+
+:3:42 error: let: operand size (160000) exceeds maximum allowed (65536)
+    %tint_symbol:array<i32, 40000> = let array<i32, 40000>(0i)
+                                         ^^^^^^^^^^^^^^^^^^^^^
+
+:2:3 note: in block
+  $B1: {
+  ^^^
+
+note: # Disassembly
+%test_function = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %tint_symbol:array<i32, 40000> = let array<i32, 40000>(0i)
+    ret
+  }
+}
+)");
+}
+
+TEST_F(IR_FromProgramTest, Array_ExcessiveNumberOfElementsExplicitConstructor) {
+    // array<i32, 40000u>(0i, 2i, 3i, ..., 39999i);
+    SetSource(Source::Location({12, 34}));
+    Vector<const ast::IntLiteralExpression*, 40000> elements;
+    for (uint32_t i = 0; i < 40000; i++) {
+        elements.Push(Expr(i32(i)));
+    }
+    auto* tc = Call<array<i32, 40000>>(std::move(elements));
+    WrapInFunction(tc);
+
+    auto m = Build();
+    ASSERT_NE(m, Success);
+    // Not performing full string matching, since the failure reason includes the full 40,000
+    // element constructor
+    EXPECT_THAT(m.Failure().reason,
+                testing::HasSubstr(
+                    ":3:42 error: let: result type size (160000) exceeds maximum allowed (65536)"));
 }
 
 }  // namespace

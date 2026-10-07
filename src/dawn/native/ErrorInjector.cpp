@@ -25,12 +25,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/ErrorInjector.h"
+#include "src/dawn/native/ErrorInjector.h"
 
-#include "dawn/common/Assert.h"
 #include "dawn/native/DawnNative.h"
+#include "src/utils/assert.h"
 
 namespace dawn::native {
+
+#if defined(DAWN_ENABLE_ERROR_INJECTION)
 
 namespace {
 
@@ -79,5 +81,7 @@ void InjectErrorAt(uint64_t index) {
     sInjectedFailureIndex = index;
     sHasPendingInjectedError = true;
 }
+
+#endif  // defined(DAWN_ENABLE_ERROR_INJECTION)
 
 }  // namespace dawn::native

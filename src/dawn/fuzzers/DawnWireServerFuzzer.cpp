@@ -25,7 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/fuzzers/DawnWireServerFuzzer.h"
+#include "src/dawn/fuzzers/DawnWireServerFuzzer.h"
 
 #include <webgpu/webgpu_cpp.h>
 
@@ -33,20 +33,17 @@
 #include <memory>
 #include <vector>
 
-#include "dawn/common/Assert.h"
-#include "dawn/common/DynamicLib.h"
-#include "dawn/common/Log.h"
-#include "dawn/common/StringViewUtils.h"
-#include "dawn/common/SystemUtils.h"
 #include "dawn/dawn_proc.h"
 #include "dawn/native/DawnNative.h"
-#include "dawn/utils/SystemUtils.h"
 #include "dawn/wire/WireServer.h"
-
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/439062058): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
+#include "src/dawn/common/DynamicLib.h"
+#include "src/dawn/common/StringViewUtils.h"
+#include "src/dawn/common/SystemUtils.h"
+#include "src/dawn/utils/SystemUtils.h"
+#include "src/utils/assert.h"
+#include "src/utils/compiler.h"
+#include "src/utils/log.h"
+#include "src/utils/span.h"
 
 namespace {
 
@@ -54,13 +51,14 @@ class DevNull : public dawn::wire::CommandSerializer {
   public:
     size_t GetMaximumAllocationSize() const override {
         // Some fuzzer bots have a 2GB allocation limit. Pick a value reasonably below that.
-        return 1024 * 1024 * 1024;
+        return 1024ULL * 1024 * 1024;
     }
-    void* GetCmdSpace(size_t size) override {
+    std::optional<std::span<volatile std::byte>> GetCommandSpace(size_t size) override {
         if (size > buf.size()) {
             buf.resize(size);
         }
-        return buf.data();
+        return DAWN_UNSAFE_TODO(
+            std::span<volatile std::byte>(reinterpret_cast<volatile std::byte*>(buf.data()), size));
     }
     bool Flush() override { return true; }
 
@@ -91,7 +89,7 @@ int DawnWireServerFuzzer::Initialize(int* argc, char*** argv) {
 int DawnWireServerFuzzer::Run(const uint8_t* data,
                               size_t size,
                               bool (*AdapterSupported)(const wgpu::Adapter&),
-                              bool supportsErrorInjection) {
+                              bool useErrorInjectionIfSupported) {
     std::unique_ptr<dawn::native::Instance> instance = std::make_unique<dawn::native::Instance>();
 
     // We require at least the injected error index.
@@ -99,18 +97,24 @@ int DawnWireServerFuzzer::Run(const uint8_t* data,
         return 0;
     }
 
-    // Get and consume the injected error index.
-    uint64_t injectedErrorIndex = *reinterpret_cast<const uint64_t*>(data);
-    data += sizeof(uint64_t);
-    size -= sizeof(uint64_t);
+    // SAFETY: |data| is provided by the fuzzer and is assumed to be valid.
+    dawn::Span<const std::byte> DAWN_UNSAFE_BUFFERS(
+        commands{reinterpret_cast<const std::byte*>(data), size});
 
-    if (supportsErrorInjection) {
+    // Get and consume the injected error index.
+    [[maybe_unused]] uint64_t injectedErrorIndex =
+        dawn::ReinterpretSpan<const uint64_t>(commands.TakeFirst(sizeof(uint64_t)))[0];
+
+    if (useErrorInjectionIfSupported) {
+        // If error injection is not enabled in the build we'll just fuzz without it.
+#if defined(DAWN_ENABLE_ERROR_INJECTION)
         dawn::native::EnableErrorInjector();
 
         // Clear the error injector since it has the previous run's call counts.
         dawn::native::ClearErrorInjector();
 
         dawn::native::InjectErrorAt(injectedErrorIndex);
+#endif
     }
 
     sAdapterSupported = AdapterSupported;
@@ -147,9 +151,10 @@ int DawnWireServerFuzzer::Run(const uint8_t* data,
     dawn::wire::WireServerDescriptor serverDesc = {};
     serverDesc.procs = &procs;
     serverDesc.serializer = &devNull;
+    serverDesc.useSpontaneousCallbacks = true;
 
     std::unique_ptr<dawn::wire::WireServer> wireServer(new dawn::wire::WireServer(serverDesc));
     wireServer->InjectInstance(instance->Get(), {1, 0});
-    wireServer->HandleCommands(reinterpret_cast<const char*>(data), size);
+    wireServer->HandleCommands(commands);
     return 0;
 }

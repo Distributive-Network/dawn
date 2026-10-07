@@ -26,6 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/type/pointer.h"
+
 #include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/type/f32.h"
 #include "src/tint/lang/core/type/helper_test.h"
@@ -89,6 +90,18 @@ TEST_F(PointerTest, FriendlyNameWithAddressSpace) {
     Manager ty;
     auto* r = ty.ptr(core::AddressSpace::kWorkgroup, ty.i32(), core::Access::kRead);
     EXPECT_EQ(r->FriendlyName(), "ptr<workgroup, i32, read>");
+}
+
+TEST_F(PointerTest, IdentifierName) {
+    Manager ty;
+    auto* r = ty.ptr(core::AddressSpace::kUndefined, ty.i32(), core::Access::kRead);
+    EXPECT_EQ(r->IdentifierName(), "ptr_i32_read");
+}
+
+TEST_F(PointerTest, FIdentifierNameWithAddressSpace) {
+    Manager ty;
+    auto* r = ty.ptr(core::AddressSpace::kWorkgroup, ty.i32(), core::Access::kRead);
+    EXPECT_EQ(r->IdentifierName(), "ptr_workgroup_i32_read");
 }
 
 TEST_F(PointerTest, Clone) {

@@ -27,10 +27,12 @@
 
 #include "src/tint/lang/core/ir/transform/signed_integer_polyfill.h"
 
+#include <vector>
+
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/core_binary.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 using namespace tint::core::fluent_types;  // NOLINT
 
@@ -48,16 +50,16 @@ struct State {
 
     /// Process the module.
     void Process() {
-        Vector<core::ir::Unary*, 4> signed_int_negate_worklist;
-        Vector<core::ir::CoreBinary*, 4> signed_integer_arithmetic_worklist;
-        Vector<core::ir::CoreBinary*, 4> signed_integer_leftshift_worklist;
+        std::vector<std::function<void()>> worklist;
+        worklist.reserve(128);
+
         for (auto* inst : ir.Instructions()) {
             if (auto* unary = inst->As<core::ir::Unary>()) {
                 auto op = unary->Op();
                 auto* type = unary->Val()->Type();
                 if (cfg.signed_negation && op == core::UnaryOp::kNegation &&
                     type->IsSignedIntegerScalarOrVector()) {
-                    signed_int_negate_worklist.Push(unary);
+                    worklist.push_back([this, unary] { SignedIntegerNegation(unary); });
                 }
             } else if (auto* binary = inst->As<core::ir::CoreBinary>()) {
                 auto op = binary->Op();
@@ -66,23 +68,16 @@ struct State {
                     (op == core::BinaryOp::kAdd || op == core::BinaryOp::kMultiply ||
                      op == core::BinaryOp::kSubtract) &&
                     lhs_type->IsSignedIntegerScalarOrVector()) {
-                    signed_integer_arithmetic_worklist.Push(binary);
+                    worklist.push_back([this, binary] { SignedIntegerArithmetic(binary); });
                 } else if (cfg.signed_shiftleft && op == core::BinaryOp::kShiftLeft &&
                            lhs_type->IsSignedIntegerScalarOrVector()) {
-                    signed_integer_leftshift_worklist.Push(binary);
+                    worklist.push_back([this, binary] { SignedIntegerShiftLeft(binary); });
                 }
             }
         }
 
-        // Replace the instructions that we found.
-        for (auto* signed_int_negate : signed_int_negate_worklist) {
-            SignedIntegerNegation(signed_int_negate);
-        }
-        for (auto* signed_arith : signed_integer_arithmetic_worklist) {
-            SignedIntegerArithmetic(signed_arith);
-        }
-        for (auto* signed_shift_left : signed_integer_leftshift_worklist) {
-            SignedIntegerShiftLeft(signed_shift_left);
+        for (auto& cb : worklist) {
+            cb();
         }
     }
 
@@ -97,7 +92,7 @@ struct State {
             auto* complement = b.Complement(unsigned_value);
             auto* plus_one = b.Add(complement, b.MatchWidth(u32(1), unsigned_type));
             auto* result = b.Bitcast(signed_type, plus_one);
-            unary->Result()->ReplaceAllUsesWith(result->Result());
+            unary->Result()->ReplaceAllUsesWith(result);
         });
         unary->Destroy();
     }
@@ -117,7 +112,7 @@ struct State {
             auto* uint_rhs = b.Bitcast(unsigned_rhs_ty, binary->RHS());
             auto* uint_binary = b.Binary(binary->Op(), unsigned_result_ty, uint_lhs, uint_rhs);
             auto* bitcast = b.Bitcast(signed_result_ty, uint_binary);
-            binary->Result()->ReplaceAllUsesWith(bitcast->Result());
+            binary->Result()->ReplaceAllUsesWith(bitcast);
         });
         binary->Destroy();
     }
@@ -135,7 +130,7 @@ struct State {
             auto* unsigned_binary =
                 b.Binary(binary->Op(), unsigned_ty, unsigned_lhs, binary->RHS());
             auto* bitcast = b.Bitcast(signed_ty, unsigned_binary);
-            binary->Result()->ReplaceAllUsesWith(bitcast->Result());
+            binary->Result()->ReplaceAllUsesWith(bitcast);
         });
         binary->Destroy();
     }
@@ -145,22 +140,7 @@ struct State {
 
 Result<SuccessType> SignedIntegerPolyfill(core::ir::Module& ir,
                                           const SignedIntegerPolyfillConfig& cfg) {
-    TINT_CHECK_RESULT(
-        ValidateAndDumpIfNeeded(ir, "ir.SignedIntegerPolyfill",
-                                core::ir::Capabilities{
-                                    core::ir::Capability::kAllowDuplicateBindings,
-                                    core::ir::Capability::kAllow8BitIntegers,
-                                    core::ir::Capability::kAllow64BitIntegers,
-                                    core::ir::Capability::kAllowPointSizeBuiltin,
-                                    core::ir::Capability::kAllowVectorElementPointer,
-                                    core::ir::Capability::kAllowHandleVarsWithoutBindings,
-                                    core::ir::Capability::kAllowClipDistancesOnF32ScalarAndVector,
-                                    core::ir::Capability::kAllowAnyLetType,
-                                    core::ir::Capability::kMslAllowEntryPointInterface,
-                                    core::ir::Capability::kAllowModuleScopeLets,
-                                    core::ir::Capability::kAllowAnyInputAttachmentIndexType,
-                                    core::ir::Capability::kAllowNonCoreTypes,
-                                }));
+    AssertValid(ir, "before ir.SignedIntegerPolyfill");
 
     State{ir, cfg}.Process();
 

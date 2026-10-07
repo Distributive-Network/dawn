@@ -33,8 +33,9 @@
 #include "src/tint/lang/core/ir/analysis/integer_range_analysis.h"
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/type/depth_texture.h"
+#include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/texture.h"
 
@@ -70,6 +71,7 @@ struct State {
         Vector<ir::StoreVectorElement*, 64> vector_stores;
         Vector<ir::CoreBuiltinCall*, 64> subgroup_matrix_calls;
         Vector<ir::CoreBuiltinCall*, 64> texture_calls;
+        Vector<ir::CoreBuiltinCall*, 64> buffer_view_calls;
 
         if (config.use_integer_range_analysis) {
             integer_range_analysis.emplace(&ir);
@@ -80,7 +82,7 @@ struct State {
                 inst,  //
                 [&](ir::Access* access) {
                     // Check if accesses into this object should be clamped.
-                    if (access->Object()->Type()->Is<type::Pointer>()) {
+                    if (access->Object()->Type()->Is<core::type::Pointer>()) {
                         if (ShouldClamp(access->Object())) {
                             accesses.Push(access);
                         }
@@ -113,6 +115,13 @@ struct State {
                         call->Func() == core::BuiltinFn::kSubgroupMatrixStore) {
                         subgroup_matrix_calls.Push(call);
                     }
+                    // Check if this is a buffer view builtin that needs to be clamped.
+                    if (call->Func() == core::BuiltinFn::kBufferView ||
+                        call->Func() == core::BuiltinFn::kBufferArrayView) {
+                        if (ShouldClamp(call->Args()[0])) {
+                            buffer_view_calls.Push(call);
+                        }
+                    }
                 });
         }
 
@@ -125,7 +134,7 @@ struct State {
 
         // Clamp load-vector-element instructions.
         for (auto* lve : vector_loads) {
-            auto* vec = lve->From()->Type()->UnwrapPtr()->As<type::Vector>();
+            auto* vec = lve->From()->Type()->UnwrapPtr()->As<core::type::Vector>();
             b.InsertBefore(lve, [&] {  //
                 ClampOperand(lve, LoadVectorElement::kIndexOperandOffset,
                              b.Constant(u32(vec->Width() - 1u)));
@@ -134,7 +143,7 @@ struct State {
 
         // Clamp store-vector-element instructions.
         for (auto* sve : vector_stores) {
-            auto* vec = sve->To()->Type()->UnwrapPtr()->As<type::Vector>();
+            auto* vec = sve->To()->Type()->UnwrapPtr()->As<core::type::Vector>();
             b.InsertBefore(sve, [&] {  //
                 ClampOperand(sve, StoreVectorElement::kIndexOperandOffset,
                              b.Constant(u32(vec->Width() - 1u)));
@@ -148,10 +157,17 @@ struct State {
             });
         }
 
-        // Predicate subgroup matrix loads and stores based on their offset and stride.
+        // Clamp subgroup matrix loads and stores based on their offset and stride.
         for (auto* call : subgroup_matrix_calls) {
             b.InsertBefore(call, [&] {  //
-                PredicateSubgroupMatrixCall(call);
+                ClampSubgroupMatrixCall(call);
+            });
+        }
+
+        // Clamp offset and size for buffer[Array]View calls.
+        for (auto* call : buffer_view_calls) {
+            b.InsertBefore(call, [&] {  //
+                ClampBufferViewArgs(call);
             });
         }
     }
@@ -160,7 +176,7 @@ struct State {
     /// @param value the value to check. The value's type must be type::Pointer.
     /// @returns true if pointer accesses in @p param should be clamped
     bool ShouldClamp(Value* value) {
-        auto* ptr = value->Type()->As<type::Pointer>();
+        auto* ptr = value->Type()->As<core::type::Pointer>();
         TINT_IR_ASSERT(ir, ptr);
         switch (ptr->AddressSpace()) {
             case AddressSpace::kFunction:
@@ -191,11 +207,11 @@ struct State {
             return value;
         }
 
-        const type::Type* type = ty.u32();
-        if (auto* vec = value->Type()->As<type::Vector>()) {
+        const core::type::Type* type = ty.u32();
+        if (auto* vec = value->Type()->As<core::type::Vector>()) {
             type = ty.vec(type, vec->Width());
         }
-        return b.Convert(type, value)->Result();
+        return b.Convert(type, value);
     }
 
     /// Clamp operand @p op_idx of @p inst to ensure it is within @p limit.
@@ -204,17 +220,11 @@ struct State {
     /// @param limit the limit to clamp to
     void ClampOperand(ir::Instruction* inst, size_t op_idx, ir::Value* limit) {
         auto* idx = inst->Operands()[op_idx];
-        auto* const_idx = idx->As<ir::Constant>();
-        auto* const_limit = limit->As<ir::Constant>();
 
         ir::Value* clamped_idx = nullptr;
-        if (const_idx && const_limit) {
-            TINT_IR_ASSERT(ir, const_idx->Value()->ValueAs<uint32_t>() <=
-                                   const_limit->Value()->ValueAs<uint32_t>());
-            clamped_idx = b.Constant(u32(const_idx->Value()->ValueAs<uint32_t>()));
-        } else if (IndexMayOutOfBound(idx, limit)) {
+        if (IndexMayOutOfBound(idx, limit)) {
             // Clamp it to the dynamic limit.
-            clamped_idx = b.Min(CastToU32(idx), limit)->Result();
+            clamped_idx = b.Min(CastToU32(idx), limit);
         }
 
         if (clamped_idx != nullptr) {
@@ -223,47 +233,59 @@ struct State {
         }
     }
 
+    /// Get the range of @p value as non-negative bounds, using integer range analysis.
+    /// @param value the value to get the range of
+    /// @returns the inclusive [min, max] range, or std::nullopt if the analysis is disabled, the
+    /// range is unknown, or the value may be negative (which would wrap when bitcast to a u32)
+    std::optional<ir::analysis::IntegerRangeInfo::UnsignedIntegerRange> GetNonNegativeRange(
+        ir::Value* value) {
+        if (!integer_range_analysis.has_value()) {
+            return std::nullopt;
+        }
+
+        using SignedIntegerRange = ir::analysis::IntegerRangeInfo::SignedIntegerRange;
+        using UnsignedIntegerRange = ir::analysis::IntegerRangeInfo::UnsignedIntegerRange;
+
+        const auto& integer_range = integer_range_analysis->GetInfo(value);
+        if (!integer_range.IsValid()) {
+            return std::nullopt;
+        }
+
+        if (std::holds_alternative<UnsignedIntegerRange>(integer_range.range)) {
+            return std::get<UnsignedIntegerRange>(integer_range.range);
+        }
+
+        const auto& range = std::get<SignedIntegerRange>(integer_range.range);
+        if (range.min_bound < 0) {
+            return std::nullopt;
+        }
+        return UnsignedIntegerRange{static_cast<uint64_t>(range.min_bound),
+                                    static_cast<uint64_t>(range.max_bound)};
+    }
+
     /// Check if operand @p idx may be less than 0 or greater than @p limit with integer range
     /// analysis algorithm.
     /// @param idx the index to check
     /// @param limit the upper limit @idx to compare with.
     /// @returns true when @idx may be out of bound, false otherwise
     bool IndexMayOutOfBound(ir::Value* idx, ir::Value* limit) {
-        // Return true when integer range analysis is disabled.
-        if (!integer_range_analysis.has_value()) {
-            return true;
-        }
-
         // Return true when `limit` is not a constant value.
         auto* const_limit = limit->As<ir::Constant>();
         if (!const_limit) {
             return true;
         }
 
-        // Return true when we cannot get a valid range for `idx`.
-        const auto& integer_range = integer_range_analysis->GetInfo(idx);
-        if (!integer_range.IsValid()) {
+        // Return true when we cannot get a valid non-negative range for `idx`.
+        auto range = GetNonNegativeRange(idx);
+        if (!range.has_value()) {
             return true;
         }
 
-        TINT_IR_ASSERT(ir, const_limit->Value()->Type()->Is<type::U32>());
+        TINT_IR_ASSERT(ir, const_limit->Value()->Type()->Is<core::type::U32>());
         uint32_t const_limit_value = const_limit->Value()->ValueAs<uint32_t>();
 
-        using SignedIntegerRange = ir::analysis::IntegerRangeInfo::SignedIntegerRange;
-        using UnsignedIntegerRange = ir::analysis::IntegerRangeInfo::UnsignedIntegerRange;
-
-        // Return true when `idx` may be negative or the upper bound of `idx` is greater than
-        // `limit`.
-        if (std::holds_alternative<UnsignedIntegerRange>(integer_range.range)) {
-            UnsignedIntegerRange range = std::get<UnsignedIntegerRange>(integer_range.range);
-            return range.max_bound > static_cast<uint64_t>(const_limit_value);
-        } else {
-            SignedIntegerRange range = std::get<SignedIntegerRange>(integer_range.range);
-            if (range.min_bound < 0) {
-                return true;
-            }
-            return range.max_bound > static_cast<int64_t>(const_limit_value);
-        }
+        // Return true when the upper bound of `idx` is greater than `limit`.
+        return range->max_bound > static_cast<uint64_t>(const_limit_value);
     }
 
     /// Clamp the indices of an access instruction to ensure they are within the limits of the types
@@ -272,24 +294,24 @@ struct State {
     void ClampAccessIndices(ir::Access* access) {
         auto* type = access->Object()->Type()->UnwrapPtr();
         auto indices = access->Indices();
-        for (size_t i = 0; i < indices.Length(); i++) {
+        for (size_t i = 0; i < indices.size(); i++) {
             auto* idx = indices[i];
             auto* const_idx = idx->As<ir::Constant>();
 
             // Determine the limit of the type being indexed into.
-            auto limit = tint::Switch(
+            auto maxAllowedIndex = tint::Switch(
                 type,  //
-                [&](const type::Vector* vec) -> ir::Value* {
+                [&](const core::type::Vector* vec) -> ir::Value* {
                     return b.Constant(u32(vec->Width() - 1u));
                 },
-                [&](const type::Matrix* mat) -> ir::Value* {
+                [&](const core::type::Matrix* mat) -> ir::Value* {
                     return b.Constant(u32(mat->Columns() - 1u));
                 },
-                [&](const type::Array* arr) -> ir::Value* {
+                [&](const core::type::Array* arr) -> ir::Value* {
                     if (arr->ConstantCount()) {
                         return b.Constant(u32(arr->ConstantCount().value() - 1u));
                     }
-                    TINT_IR_ASSERT(ir, arr->Count()->Is<type::RuntimeArrayCount>());
+                    TINT_IR_ASSERT(ir, arr->Count()->Is<core::type::RuntimeArrayCount>());
 
                     // Skip clamping runtime-sized array indices if requested.
                     if (config.disable_runtime_sized_array_index_clamping) {
@@ -300,21 +322,22 @@ struct State {
                     if (i > 0) {
                         // Generate a pointer to the runtime-sized array if it isn't the base of
                         // this access instruction.
-                        auto* base_ptr = object->Type()->As<type::Pointer>();
+                        auto* base_ptr = object->Type()->As<core::type::Pointer>();
                         TINT_IR_ASSERT(ir, base_ptr != nullptr);
                         TINT_IR_ASSERT(ir, i == 1);
                         auto* arr_ptr = ty.ptr(base_ptr->AddressSpace(), arr, base_ptr->Access());
-                        object = b.Access(arr_ptr, object, indices[0])->Result();
+                        object = b.Access(arr_ptr, object, indices[0]);
                     }
 
                     // Use the `arrayLength` builtin to get the limit of a runtime-sized array.
+                    // Subtract 1 to get the max allowed index. (Array size is always at least 1.)
                     auto* length = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, object);
-                    return b.Subtract(length, b.Constant(1_u))->Result();
+                    return b.Subtract(length, b.Constant(1_u));
                 });
 
             // If there's a dynamic limit that needs enforced, clamp the index operand.
-            if (limit) {
-                ClampOperand(access, ir::Access::kIndicesOperandOffset + i, limit);
+            if (maxAllowedIndex) {
+                ClampOperand(access, ir::Access::kIndicesOperandOffset + i, maxAllowedIndex);
             }
 
             // Get the type that this index produces.
@@ -328,7 +351,7 @@ struct State {
     /// @param call the texture builtin call instruction
     void ClampTextureCallArgs(ir::CoreBuiltinCall* call) {
         const auto& args = call->Args();
-        auto* texture = args[0]->Type()->As<type::Texture>();
+        auto* texture = args[0]->Type()->As<core::type::Texture>();
 
         // Helper for clamping the level argument.
         // Keep hold of the clamped value to use for clamping the coordinates.
@@ -336,21 +359,21 @@ struct State {
         auto clamp_level = [&](uint32_t idx) {
             auto* num_levels = b.Call(ty.u32(), core::BuiltinFn::kTextureNumLevels, args[0]);
             auto* limit = b.Subtract(num_levels, 1_u);
-            clamped_level = b.Min(CastToU32(args[idx]), limit)->Result();
+            clamped_level = b.Min(CastToU32(args[idx]), limit);
             call->SetOperand(CoreBuiltinCall::kArgsOperandOffset + idx, clamped_level);
         };
 
         // Helper for clamping the coordinates.
         auto clamp_coords = [&](uint32_t idx) {
             auto* arg_ty = args[idx]->Type();
-            const type::Type* type = ty.MatchWidth(ty.u32(), arg_ty);
+            const core::type::Type* type = ty.MatchWidth(ty.u32(), arg_ty);
             auto* one = b.MatchWidth(1_u, arg_ty);
             auto* dims = clamped_level ? b.Call(type, core::BuiltinFn::kTextureDimensions, args[0],
                                                 clamped_level)
                                        : b.Call(type, core::BuiltinFn::kTextureDimensions, args[0]);
             auto* limit = b.Subtract(dims, one);
             call->SetOperand(CoreBuiltinCall::kArgsOperandOffset + idx,
-                             b.Min(CastToU32(args[idx]), limit)->Result());
+                             b.Min(CastToU32(args[idx]), limit));
         };
 
         // Helper for clamping the array index.
@@ -358,33 +381,38 @@ struct State {
             auto* num_layers = b.Call(ty.u32(), core::BuiltinFn::kTextureNumLayers, args[0]);
             auto* limit = b.Subtract(num_layers, 1_u);
             call->SetOperand(CoreBuiltinCall::kArgsOperandOffset + idx,
-                             b.Min(CastToU32(args[idx]), limit)->Result());
+                             b.Min(CastToU32(args[idx]), limit));
+        };
+
+        // Helper for clamping the sample index.
+        auto clamp_sample_index = [&](uint32_t idx) {
+            auto* num_samples = b.Call(ty.u32(), core::BuiltinFn::kTextureNumSamples, args[0]);
+            auto* limit = b.Subtract(num_samples, 1_u);
+            call->SetOperand(CoreBuiltinCall::kArgsOperandOffset + idx,
+                             b.Min(CastToU32(args[idx]), limit));
         };
 
         // Select which arguments to clamp based on the function overload.
         switch (call->Func()) {
             case core::BuiltinFn::kTextureDimensions: {
-                if (args.Length() > 1) {
+                if (args.size() > 1) {
                     clamp_level(1u);
                 }
                 break;
             }
             case core::BuiltinFn::kTextureLoad: {
                 uint32_t next_arg = 2u;
-                if (type::IsTextureArray(texture->Dim())) {
+                if (core::type::IsTextureArray(texture->Dim())) {
                     clamp_array_index(next_arg++);
                 }
-                if (texture->IsAnyOf<type::SampledTexture, type::DepthTexture>()) {
+                if (texture->IsAnyOf<core::type::SampledTexture, core::type::DepthTexture>()) {
                     clamp_level(next_arg++);
                 }
-                clamp_coords(1u);  // Must run after clamp_level
-                break;
-            }
-            case core::BuiltinFn::kTextureStore: {
-                clamp_coords(1u);
-                if (type::IsTextureArray(texture->Dim())) {
-                    clamp_array_index(2u);
+                if (texture->IsAnyOf<core::type::MultisampledTexture,
+                                     core::type::DepthMultisampledTexture>()) {
+                    clamp_sample_index(next_arg++);
                 }
+                clamp_coords(1u);  // Must run after clamp_level
                 break;
             }
             default:
@@ -395,125 +423,252 @@ struct State {
     /// Clamp the indices and coordinates of a texture builtin call instruction to ensure they are
     /// within the limits of the texture that they are accessing.
     /// @param call the texture builtin call instruction
-    void PredicateSubgroupMatrixCall(ir::CoreBuiltinCall* call) {
+    void ClampSubgroupMatrixCall(ir::CoreBuiltinCall* call) {
         const auto& args = call->Args();
+
+        TINT_IR_ASSERT(ir, (call->Func() == BuiltinFn::kSubgroupMatrixLoad &&
+                            call->ExplicitTemplateParams().Length() == 2) ||
+                               (call->Func() == BuiltinFn::kSubgroupMatrixStore &&
+                                call->ExplicitTemplateParams().Length() == 1));
 
         // Extract the arguments from the call.
         auto* arr = args[0];
         auto* offset = args[1];
-        Value* col_major = nullptr;
+        bool col_major = true;
         Value* stride = nullptr;
         uint32_t stride_index = 0;
-        const type::SubgroupMatrix* matrix_ty = nullptr;
+        const core::type::SubgroupMatrix* matrix_ty = nullptr;
         if (call->Func() == BuiltinFn::kSubgroupMatrixLoad) {
-            col_major = args[2];
+            TINT_IR_ASSERT(
+                ir, std::holds_alternative<core::Majorness>(call->ExplicitTemplateParams()[1]));
+            col_major = std::get<core::Majorness>(call->ExplicitTemplateParams()[1]) ==
+                        core::Majorness::kColMajor;
+            stride = args[2];
+            stride_index = 2;
+            matrix_ty = call->Result()->Type()->As<core::type::SubgroupMatrix>();
+        } else if (call->Func() == BuiltinFn::kSubgroupMatrixStore) {
+            matrix_ty = args[2]->Type()->As<core::type::SubgroupMatrix>();
+            TINT_IR_ASSERT(
+                ir, std::holds_alternative<core::Majorness>(call->ExplicitTemplateParams()[0]));
+            col_major = std::get<core::Majorness>(call->ExplicitTemplateParams()[0]) ==
+                        core::Majorness::kColMajor;
             stride = args[3];
             stride_index = 3;
-            matrix_ty = call->Result()->Type()->As<type::SubgroupMatrix>();
-        } else if (call->Func() == BuiltinFn::kSubgroupMatrixStore) {
-            matrix_ty = args[2]->Type()->As<type::SubgroupMatrix>();
-            col_major = args[3];
-            stride = args[4];
-            stride_index = 4;
         } else {
             TINT_IR_UNREACHABLE(ir);
         }
+
+        auto* arr_ty = arr->Type()->UnwrapPtr()->As<core::type::Array>();
+        const uint32_t arr_stride = arr_ty->ImplicitStride();
 
         // Determine the minimum valid stride, and the value that we will multiply the stride by to
         // determine the number of elements in memory that will be accessed.
         uint32_t min_stride = 0;
         uint32_t major_dim = 0;
-        if (col_major->As<Constant>()->Value()->ValueAs<bool>()) {
+        if (col_major) {
             min_stride = matrix_ty->Rows();
             major_dim = matrix_ty->Columns();
         } else {
             min_stride = matrix_ty->Columns();
             major_dim = matrix_ty->Rows();
         }
+        // Offset and stride are counted in array stride.
+        // Note: max comes from situations like 8x8 u8 accessed from an array of vec4u.
+        min_stride = std::max(min_stride * matrix_ty->Type()->Size() / arr_stride, 1u);
 
-        // Increase the stride so that it is at least `min_stride` if necessary.
-        if (auto* const_stride = stride->As<Constant>()) {
-            if (const_stride->Value()->ValueAs<uint32_t>() < min_stride) {
-                stride = b.Constant(u32(min_stride));
-            }
-        } else {
-            stride = b.Max(stride, u32(min_stride))->Result();
+        // Query the ranges before any clamping instructions are inserted.
+        auto stride_range = GetNonNegativeRange(stride);
+        auto offset_range = GetNonNegativeRange(offset);
+
+        // Skip the stride clamp if the stride is known to be at least the minimum valid stride.
+        if (!stride_range.has_value() || stride_range->min_bound < min_stride) {
+            stride = b.InsertBitcastIfNeeded(ty.u32(), stride);
+            stride = b.Max(stride, u32(min_stride));
+            call->SetArg(stride_index, stride);
         }
-        call->SetArg(stride_index, stride);
 
-        // If we are not predicating, then clamping the stride is all we need to do.
-        if (!config.predicate_subgroup_matrix) {
+        // If we are not doing full clamping, then clamping the stride is all we need to do.
+        if (!config.clamp_subgroup_matrix) {
+            return;
+        }
+        // Storage accesses that the implementation bounds checks do not need clamping.
+        if (arr->Type()->As<core::type::Pointer>()->AddressSpace() ==
+                core::AddressSpace::kStorage &&
+            (!config.clamp_storage_subgroup_matrix || IsRootVarIgnored(arr))) {
             return;
         }
 
-        // Some matrix components types are packed together into a single array element.
-        // Take that into account here by scaling the array length to number of components.
-        uint32_t components_per_element = 0;
-        if (matrix_ty->Type()->IsAnyOf<type::I8, type::U8>()) {
-            components_per_element = 4;
-        } else {
-            TINT_IR_ASSERT(
-                ir, (matrix_ty->Type()->IsAnyOf<type::F16, type::F32, type::I32, type::U32>()));
-            components_per_element = 1;
-        }
-
-        // Get the length of the array (in terms of matrix elements).
-        auto* arr_ty = arr->Type()->UnwrapPtr()->As<core::type::Array>();
+        // Get the length of the array.
         TINT_IR_ASSERT(ir, arr_ty);
         Value* array_length = nullptr;
         if (arr_ty->ConstantCount()) {
-            array_length =
-                b.Constant(u32(arr_ty->ConstantCount().value() * components_per_element));
+            // Skip the bounds check if the ranges prove that the whole access is in bounds.
+            if (stride_range.has_value() && offset_range.has_value()) {
+                // The stride used is at least `min_stride` after the clamp above.
+                uint64_t max_stride =
+                    std::max(stride_range->max_bound, static_cast<uint64_t>(min_stride));
+                // The beginning of the last row/column is at `offset + (major_dim - 1) * stride`.
+                // We then add another `min_stride` elements to get to the end of the accessed
+                // memory.
+                uint64_t end = offset_range->max_bound + max_stride * (major_dim - 1) +
+                               static_cast<uint64_t>(min_stride);
+                if (end <= arr_ty->ConstantCount().value()) {
+                    return;
+                }
+            }
+            array_length = b.Constant(u32(arr_ty->ConstantCount().value()));
         } else {
-            TINT_IR_ASSERT(ir, arr_ty->Count()->Is<type::RuntimeArrayCount>());
-            array_length = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, arr)->Result(0);
-            if (components_per_element > 1) {
-                array_length = b.Multiply(array_length, u32(components_per_element))->Result();
-            }
+            TINT_IR_ASSERT(ir, arr_ty->Count()->Is<core::type::RuntimeArrayCount>());
+            array_length = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, arr);
         }
 
-        // If the array length, offset, and stride are all constants, then we can determine if the
-        // call is in bounds now and skip any predication if so.
-        if (array_length->Is<Constant>() && stride->Is<Constant>() && offset->Is<Constant>()) {
-            uint32_t const_length = array_length->As<Constant>()->Value()->ValueAs<uint32_t>();
-            uint32_t const_stride = stride->As<Constant>()->Value()->ValueAs<uint32_t>();
-            uint32_t const_offset = offset->As<Constant>()->Value()->ValueAs<uint32_t>();
-            uint32_t const_end = const_offset + (const_stride * (major_dim - 1)) + min_stride;
-            if (const_end <= const_length) {
-                return;
-            }
-        }
-
-        // Predicate the builtin call depending on whether it is in bounds.
-        auto insertion_point = call->next;
-        call->Remove();
-        b.InsertBefore(insertion_point, [&] {
+        // Binding size is guaranteed to hold enough for `min_stride` matrix. So check if the
+        // array length is sufficient for the given parameters and, if not, use 0 offset and
+        // minimum stride.
+        b.InsertBefore(call, [&] {
             // The beginning of the last row/column is at `offset + (major_dim-1)*stride`.
-            // We then add another `min_stride` elements to get to the end of the accessed memory.
-            auto* last_slice = b.Add(offset, b.Multiply(stride, u32(major_dim - 1)));
-            auto* end = b.Add(last_slice, u32(min_stride));
+            // We then add another `min_stride` elements to get to the end of the accessed
+            // memory.
+            offset = b.InsertBitcastIfNeeded(ty.u32(), offset);
+            stride = b.InsertBitcastIfNeeded(ty.u32(), stride);
+            auto* last_slice =
+                b.Call(ty.u32(), BuiltinFn::kAddSat, offset,
+                       b.Call(ty.u32(), BuiltinFn::kMulSat, stride, u32(major_dim - 1)));
+            auto* end = b.Call(ty.u32(), BuiltinFn::kAddSat, last_slice, u32(min_stride));
             auto* in_bounds = b.LessThanEqual(end, array_length);
-            if (call->Func() == BuiltinFn::kSubgroupMatrixLoad) {
-                // Declare a variable to hold the result of the load, or a zero-initialized matrix.
-                auto* result = b.Var(ty.ptr<function>(matrix_ty));
-                auto* load_result = b.InstructionResult(matrix_ty);
-                call->Result()->ReplaceAllUsesWith(load_result);
+            offset = b.Call(ty.u32(), BuiltinFn::kSelect, 0_u, offset, in_bounds);
+            stride = b.Call(ty.u32(), BuiltinFn::kSelect, u32(min_stride), stride, in_bounds);
+            call->SetArg(1, offset);
+            call->SetArg(stride_index, stride);
+        });
+    }
 
-                auto* if_ = b.If(in_bounds);
-                b.Append(if_->True(), [&] {  //
-                    if_->True()->Append(call);
-                    b.Store(result, call->Result());
-                    b.ExitIf(if_);
-                });
-                b.LoadWithResult(load_result, result);
-            } else if (call->Func() == BuiltinFn::kSubgroupMatrixStore) {
-                auto* if_ = b.If(in_bounds);
-                b.Append(if_->True(), [&] {  //
-                    if_->True()->Append(call);
-                    b.ExitIf(if_);
-                });
+    uint32_t MaxSubgroupMatrixSizeUse(const CoreBuiltinCall* arrayView) {
+        TINT_IR_ASSERT(ir, arrayView->Func() == BuiltinFn::kBufferArrayView);
+
+        uint32_t size = 0;
+        Vector<Usage, 4> worklist;
+        for (auto& u : arrayView->Result()->UsagesUnsorted()) {
+            worklist.Push(u);
+        }
+
+        while (!worklist.IsEmpty()) {
+            auto use = worklist.Pop();
+
+            // Since we're starting at bufferArrayView call there aren't too many possible uses we
+            // have to consider.
+            tint::Switch(
+                use.instruction,
+                [&](const Let* let) {
+                    for (auto& u : let->Result()->UsagesUnsorted()) {
+                        worklist.Push(u);
+                    }
+                },
+                [&](const UserCall* call) {
+                    auto* target = call->Target();
+                    auto* param = target->Params()[use.operand_index - call->ArgsOperandOffset()];
+                    for (auto& u : param->UsagesUnsorted()) {
+                        worklist.Push(u);
+                    }
+                },
+                [&](const CoreBuiltinCall* call) {
+                    const core::type::SubgroupMatrix* mat_ty = nullptr;
+                    if (call->Func() == BuiltinFn::kSubgroupMatrixLoad) {
+                        mat_ty = call->Result()->Type()->As<core::type::SubgroupMatrix>();
+                    }
+                    if (call->Func() == BuiltinFn::kSubgroupMatrixStore) {
+                        mat_ty = call->Args()[2]->Type()->As<core::type::SubgroupMatrix>();
+                    }
+                    if (mat_ty) {
+                        uint32_t mat_size =
+                            mat_ty->Rows() * mat_ty->Columns() * mat_ty->Type()->Size();
+                        size = std::max(size, mat_size);
+                    }
+                },
+                [&](const Access* access) {
+                    for (auto& u : access->Result()->UsagesUnsorted()) {
+                        worklist.Push(u);
+                    }
+                },
+                [&](Default) {});
+        }
+
+        return size;
+    }
+
+    void ClampBufferViewArgs(ir::CoreBuiltinCall* call) {
+        // bufferView %ptr, %offset, [%length]
+        // bufferArrayView %ptr, %offset, %size, [%length]
+
+        // Determine the minimum size need for the return type.
+        // If the type does not have a fixed footprint (i.e. contains a runtime-sized array) then we
+        // want to ensure at least one element of it is included.
+        auto* store_ty = call->Result()->Type()->UnwrapPtrOrRef();
+        uint32_t ty_required_size = 0;
+        uint32_t ty_stride = 0;
+        uint32_t ty_offset = 0;
+        if (store_ty->HasFixedFootprint()) {
+            ty_required_size = store_ty->Size();
+        } else {
+            if (auto* str_ty = store_ty->As<core::type::Struct>()) {
+                auto last = str_ty->Members().Back();
+                auto last_ty = last->Type();
+                TINT_IR_ASSERT(ir, last_ty->Is<core::type::Array>());
+                ty_offset = last->Offset();
+                ty_stride = last_ty->As<core::type::Array>()->ImplicitStride();
+                ty_required_size = ty_offset + ty_stride;
             } else {
-                TINT_IR_UNREACHABLE(ir);
+                TINT_IR_ASSERT(ir, store_ty->Is<core::type::Array>());
+                ty_stride = store_ty->As<core::type::Array>()->ImplicitStride();
+                ty_required_size = ty_stride;
+            }
+        }
+
+        // The bound buffer is guaranteed to be large enough for any subgroup matrix access, but the
+        // size operand on bufferArrayView might be smaller than necessary. Search forwards for any
+        // subgroup matrix memory access and ensure the minimum size is large enough to accommodate
+        // the maximum needed size.
+        if (call->Func() == core::BuiltinFn::kBufferArrayView) {
+            uint32_t max_subgroup_matrix_size = MaxSubgroupMatrixSizeUse(call);
+            ty_required_size = std::max(ty_required_size, max_subgroup_matrix_size + ty_offset);
+        }
+
+        b.InsertBefore(call, [&] {
+            auto* offset = call->Args()[1];
+            auto* size = call->Func() == BuiltinFn::kBufferArrayView ? call->Args()[2] : nullptr;
+            // If the length arg exists, use it. Otherwise, insert a bufferLength call.
+            Value* length = nullptr;
+            if (call->Func() == BuiltinFn::kBufferView && call->Args().size() > 2) {
+                length = call->Args()[2];
+            } else if (call->Func() == BuiltinFn::kBufferArrayView && call->Args().size() > 3) {
+                length = call->Args()[3];
+            } else {
+                length = b.Call(ty.u32(), BuiltinFn::kBufferLength, call->Args()[0]);
+            }
+
+            offset = b.InsertBitcastIfNeeded(ty.u32(), offset);
+            Value* total_required_size = offset;
+            if (size) {
+                size = b.InsertBitcastIfNeeded(ty.u32(), size);
+                size = b.Call(ty.u32(), BuiltinFn::kMax, size, u32(ty_required_size));
+                total_required_size =
+                    b.Call(ty.u32(), BuiltinFn::kAddSat, total_required_size, size);
+            } else {
+                total_required_size = b.Call(ty.u32(), BuiltinFn::kAddSat, total_required_size,
+                                             u32(ty_required_size));
+            }
+
+            // Now check if length < total_required_size
+            // If true, this is an invalid memory view and we will try to patch it safely.
+            // If false, use the args as is.
+            auto* len_less_than = b.LessThan(length, total_required_size);
+            auto* offset_select = b.Call(ty.u32(), BuiltinFn::kSelect, offset, 0_u, len_less_than);
+            call->SetArg(1, offset_select);
+            Value* size_select = nullptr;
+            if (size) {
+                size_select = b.Call(ty.u32(), BuiltinFn::kSelect, size,
+                                     b.Constant(u32(ty_required_size)), len_less_than);
+                call->SetArg(2, size_select);
             }
         });
     }
@@ -540,6 +695,14 @@ struct State {
                         [&](Var* var) {
                             result = var;
                             return nullptr;  // Done
+                        },
+                        [&](CoreBuiltinCall* call) {
+                            Value* call_value = nullptr;
+                            if (call->Func() == BuiltinFn::kBufferView ||
+                                call->Func() == BuiltinFn::kBufferArrayView) {
+                                call_value = call->Args()[0];
+                            }
+                            return call_value;
                         },
                         TINT_ICE_ON_NO_MATCH);
                 },
@@ -568,7 +731,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> Robustness(Module& ir, const RobustnessConfig& config) {
-    TINT_CHECK_RESULT(ValidateAndDumpIfNeeded(ir, "core.Robustness", kRobustnessCapabilities));
+    AssertValid(ir, "before core.Robustness");
 
     State{config, ir}.Process();
 

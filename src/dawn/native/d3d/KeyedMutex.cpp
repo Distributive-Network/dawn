@@ -25,13 +25,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/d3d/KeyedMutex.h"
+#include "src/dawn/native/d3d/KeyedMutex.h"
 
 #include <utility>
 
 #include "dawn/native/D3DBackend.h"
-#include "dawn/native/d3d/D3DError.h"
-#include "dawn/native/d3d/DeviceD3D.h"
+#include "src/dawn/native/d3d/D3DError.h"
+#include "src/dawn/native/d3d/DeviceD3D.h"
 
 namespace dawn::native::d3d {
 
@@ -57,9 +57,9 @@ MaybeError KeyedMutex::AcquireKeyedMutex() {
     msg << "Failed to acquire keyed mutex for external image with " << HRESULTAsString(hr) << " (0x"
         << std::uppercase << std::setfill('0') << std::setw(8) << std::hex << hr << ")";
     if (hr == DXGI_ERROR_DEVICE_REMOVED) {
-        return DAWN_DEVICE_LOST_ERROR(msg.str());
+        return DAWN_BACKEND_DEVICE_LOST_ERROR(msg.str());
     } else {
-        return DAWN_INTERNAL_ERROR(msg.str());
+        return DAWN_UNRECOVERABLE_ERROR(msg.str());
     }
 }
 

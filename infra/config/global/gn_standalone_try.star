@@ -27,7 +27,7 @@
 
 """Try Dawn builders using GN and a standalone Dawn checkout (instead of Chromium)."""
 
-load("@chromium-luci//builders.star", "os")
+load("@chromium-luci//gpu.star", "gpu")
 load("@chromium-luci//try.star", "try_")
 load("//constants.star", "siso")
 load("//location_filters.star", "exclusion_filters")
@@ -37,8 +37,7 @@ try_.defaults.set(
     executable = "recipe:dawn/gn_v2_trybot",
     builder_group = "try",
     bucket = "try",
-    pool = "luci.chromium.gpu.try",
-    builderless = True,
+    pool = gpu.try_.POOL,
     build_numbers = True,
     list_view = "try",
     cq_group = "Dawn-CQ",
@@ -58,85 +57,103 @@ def apply_cq_builder_defaults(kwargs):
     kwargs.setdefault("max_concurrent_builds", 3)
     return kwargs
 
-def apply_linux_cq_builder_defaults(kwargs):
-    kwargs = apply_cq_builder_defaults(kwargs)
-    kwargs.setdefault("os", os.LINUX_DEFAULT)
-    kwargs.setdefault("ssd", None)
-    return kwargs
-
-def apply_mac_cq_builder_defaults(kwargs):
-    kwargs = apply_cq_builder_defaults(kwargs)
-    kwargs.setdefault("os", os.MAC_DEFAULT)
-    kwargs.setdefault("cpu", "arm64")
-    return kwargs
-
-def apply_win_cq_builder_defaults(kwargs):
-    kwargs = apply_cq_builder_defaults(kwargs)
-    kwargs.setdefault("os", os.WINDOWS_DEFAULT)
-
-    # This can be changed to prefer SSDs once the GPU Windows GCE fleet has
-    # been switched to primarily using SSDs.
-    kwargs.setdefault("ssd", None)
-    return kwargs
-
 def apply_functional_builder_with_node_defaults(kwargs):
-    kwargs.setdefault("tryjob", try_.job(
+    kwargs.setdefault("cq_settings", try_.cq_settings(
         location_filters = exclusion_filters.gn_clang_cq_file_exclusions,
     ))
     return kwargs
 
 def apply_functional_builder_without_node_defaults(kwargs):
-    kwargs.setdefault("tryjob", try_.job(
+    kwargs.setdefault("cq_settings", try_.cq_settings(
         location_filters = exclusion_filters.gn_clang_no_node_cq_file_exclusions,
     ))
     return kwargs
 
 def apply_fuzz_builder_defaults(kwargs):
-    kwargs.setdefault("tryjob", try_.job(
+    kwargs.setdefault("cq_settings", try_.cq_settings(
         location_filters = exclusion_filters.gn_clang_cq_fuzz_file_exclusions,
     ))
     return kwargs
 
-def add_builder_to_main_and_milestone_cq_groups(kwargs):
-    # Dawn standalone builders run fine unbranched on branched CLs.
-    try_.builder(**kwargs)
+def add_builder_to_milestone_cq_groups(name, disable_reuse = False):
     for milestone in ACTIVE_MILESTONES.keys():
         luci.cq_tryjob_verifier(
             cq_group = "Dawn-CQ-" + milestone,
-            builder = "dawn:try/" + kwargs["name"],
+            builder = "dawn:try/" + name,
+            disable_reuse = disable_reuse,
         )
 
-def dawn_linux_functional_cq_tester(**kwargs):
-    kwargs = apply_linux_cq_builder_defaults(kwargs)
+def dawn_android_functional_cq_tester(**kwargs):
+    kwargs = apply_cq_builder_defaults(kwargs)
     kwargs = apply_functional_builder_with_node_defaults(kwargs)
-    add_builder_to_main_and_milestone_cq_groups(kwargs)
+
+    # TODO(crbug.com/520153663): Add to branches once both arm and arm64 are
+    # added to the CQ.
+    gpu.try_.linux_optional_builder(**kwargs)
+
+def dawn_linux_functional_cq_tester(**kwargs):
+    kwargs = apply_cq_builder_defaults(kwargs)
+    kwargs = apply_functional_builder_with_node_defaults(kwargs)
+    gpu.try_.linux_rate_limited_builder(**kwargs)
+    add_builder_to_milestone_cq_groups(kwargs["name"])
 
 def dawn_mac_functional_cq_tester(**kwargs):
-    kwargs = apply_mac_cq_builder_defaults(kwargs)
+    kwargs = apply_cq_builder_defaults(kwargs)
     kwargs = apply_functional_builder_with_node_defaults(kwargs)
-    add_builder_to_main_and_milestone_cq_groups(kwargs)
+    gpu.try_.mac_rate_limited_builder(**kwargs)
+    add_builder_to_milestone_cq_groups(kwargs["name"])
 
 def dawn_win_functional_cq_tester(**kwargs):
-    kwargs = apply_win_cq_builder_defaults(kwargs)
+    kwargs = apply_cq_builder_defaults(kwargs)
     kwargs = apply_functional_builder_with_node_defaults(kwargs)
-    add_builder_to_main_and_milestone_cq_groups(kwargs)
+    gpu.try_.win_rate_limited_builder(**kwargs)
+    add_builder_to_milestone_cq_groups(kwargs["name"])
 
 def dawn_linux_functional_cq_tester_without_node(**kwargs):
-    kwargs = apply_linux_cq_builder_defaults(kwargs)
+    kwargs = apply_cq_builder_defaults(kwargs)
     kwargs = apply_functional_builder_without_node_defaults(kwargs)
-    add_builder_to_main_and_milestone_cq_groups(kwargs)
+    gpu.try_.linux_rate_limited_builder(**kwargs)
+    add_builder_to_milestone_cq_groups(kwargs["name"])
 
 def dawn_win_functional_cq_tester_without_node(**kwargs):
-    kwargs = apply_win_cq_builder_defaults(kwargs)
+    kwargs = apply_cq_builder_defaults(kwargs)
     kwargs = apply_functional_builder_without_node_defaults(kwargs)
-    add_builder_to_main_and_milestone_cq_groups(kwargs)
+    gpu.try_.win_rate_limited_builder(**kwargs)
+    add_builder_to_milestone_cq_groups(kwargs["name"])
 
 def dawn_linux_fuzz_cq_tester(**kwargs):
-    kwargs = apply_linux_cq_builder_defaults(kwargs)
+    kwargs = apply_cq_builder_defaults(kwargs)
     kwargs = apply_fuzz_builder_defaults(kwargs)
-    add_builder_to_main_and_milestone_cq_groups(kwargs)
+    gpu.try_.linux_rate_limited_builder(**kwargs)
+    add_builder_to_milestone_cq_groups(kwargs["name"])
+
+def dawn_linux_presubmit_builder(**kwargs):
+    kwargs = apply_cq_builder_defaults(kwargs)
+    gpu.try_.linux_presubmit_builder(**kwargs)
+    add_builder_to_milestone_cq_groups(kwargs["name"], disable_reuse = True)
 
 ## Functional testers
+
+dawn_android_functional_cq_tester(
+    name = "dawn-cq-android-arm-rel",
+    description_html = "Tests release Dawn on Android/arm on multiple hardware configs. Blocks CL submission.",
+    mirrors = [
+        "ci/dawn-android-arm-builder-rel",
+    ],
+    gn_args = "ci/dawn-android-arm-builder-rel",
+    # TODO(crbug.com/520153663): Add to CQ + branches once we confirm there is
+    # sufficient GCE capacity.
+    cq_settings = try_.cq_settings(includable_only = True),
+)
+
+dawn_android_functional_cq_tester(
+    name = "dawn-cq-android-arm64-rel",
+    description_html = "Tests release Dawn on Android/arm64 on multiple hardware configs. Blocks CL submission.",
+    mirrors = [
+        "ci/dawn-android-arm64-builder-rel",
+    ],
+    gn_args = "ci/dawn-android-arm64-builder-rel",
+)
 
 dawn_linux_functional_cq_tester(
     name = "dawn-cq-linux-x64-dbg",
@@ -225,6 +242,16 @@ dawn_win_functional_cq_tester(
 )
 
 dawn_win_functional_cq_tester(
+    name = "dawn-cq-win-arm64-rel",
+    description_html = "Tests release Dawn on Win/ARM64 configs. Blocks CL submission",
+    mirrors = [
+        "ci/dawn-win-arm64-builder-rel",
+        "ci/dawn-win-arm64-qualcomm-snapdragonxelite-rel",
+    ],
+    gn_args = "ci/dawn-win-arm64-builder-rel",
+)
+
+dawn_win_functional_cq_tester(
     name = "dawn-cq-win-x64-msvc-dbg",
     description_html = "Tests debug Dawn built with MSVC on Win/x64 on multiple hardware configs. Blocks CL submission",
     mirrors = [
@@ -249,6 +276,7 @@ dawn_win_functional_cq_tester(
     description_html = "Tests release Dawn on Win/x64 on multiple hardware configs. Blocks CL submission",
     mirrors = [
         "ci/dawn-win-x64-builder-rel",
+        "ci/dawn-win-x64-amd-rx5500xt-rel",
         "ci/dawn-win-x64-intel-uhd630-rel",
         # TODO(crbug.com/458768121): Add the UHD 770 config when capacity has
         # recovered.
@@ -318,44 +346,28 @@ dawn_linux_fuzz_cq_tester(
     gn_args = "ci/dawn-linux-x86-fuzz-rel",
 )
 
+# Presubmit-only testers
+
+dawn_linux_presubmit_builder(
+    name = "presubmit",
+    description_html = "Runs basic presubmit checks on Linux machines",
+    executable = "recipe:run_presubmit",
+    cq_settings = try_.cq_settings(
+        on_default_cq = True,
+    ),
+    properties = {
+        "repo_name": "dawn",
+        "runhooks": True,
+    },
+)
+
 ################################################################################
 # Manual Trybots                                                               #
 ################################################################################
 
-## Templates
-
-def dawn_linux_manual_builder(*, name, **kwargs):
-    return try_.builder(
-        name = name,
-        max_concurrent_builds = 1,
-        os = os.LINUX_DEFAULT,
-        ssd = None,
-        **kwargs
-    )
-
-def dawn_mac_manual_builder(*, name, **kwargs):
-    kwargs.setdefault("cpu", "arm64")
-    return try_.builder(
-        name = name,
-        max_concurrent_builds = 1,
-        os = os.MAC_DEFAULT,
-        **kwargs
-    )
-
-def dawn_win_manual_builder(*, name, **kwargs):
-    return try_.builder(
-        name = name,
-        max_concurrent_builds = 1,
-        os = os.WINDOWS_DEFAULT,
-        # This can be changed to prefer SSDs once the GPU Windows GCE fleet has
-        # been switched to primarily using SSDs.
-        ssd = None,
-        **kwargs
-    )
-
 ## Functional testers
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x64-intel-uhd630-rel",
     description_html = "Tests release Dawn on Linux/x64 on Intel CPUs w/ UHD 630 GPUs. Manual only.",
     mirrors = [
@@ -365,7 +377,7 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x64-builder-rel",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x64-intel-uhd770-rel",
     description_html = "Tests release Dawn on Linux/x64 on Intel CPUs w/ UHD 770 GPUs. Manual only.",
     mirrors = [
@@ -375,7 +387,17 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x64-builder-rel",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
+    name = "dawn-try-linux-x64-nvidia-gtx1660-exp-rel",
+    description_html = "Tests release Dawn on Linux/x64 on NVIDIA GTX 1660 GPUs w/ experimental OS/driver configs. Manual only.",
+    mirrors = [
+        "ci/dawn-linux-x64-builder-rel",
+        "ci/dawn-linux-x64-nvidia-gtx1660-exp-rel",
+    ],
+    gn_args = "ci/dawn-linux-x64-builder-rel",
+)
+
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x64-nvidia-gtx1660-rel",
     description_html = "Tests release Dawn on Linux/x64 on NVIDIA GTX 1660 GPUs. Manual only.",
     mirrors = [
@@ -385,7 +407,7 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x64-builder-rel",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x64-sws-dbg",
     description_html = "Tests debug Dawn on Linux/x64 with SwiftShader. Manual only.",
     mirrors = [
@@ -395,7 +417,7 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x64-builder-dbg",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x64-sws-rel",
     description_html = "Tests release Dawn on Linux/x64 with SwiftShader. Manual only.",
     mirrors = [
@@ -405,7 +427,7 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x64-builder-rel",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x64-sws-tsan",
     description_html = "Tests release Dawn on Linux/x64 with SwiftShader with TSAN. Manual only.",
     mirrors = [
@@ -415,7 +437,7 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x64-builder-tsan",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x86-sws-dbg",
     description_html = "Tests debug Dawn on Linux/x86 with SwiftShader. Manual only.",
     mirrors = [
@@ -425,7 +447,7 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x86-builder-dbg",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x86-sws-rel",
     description_html = "Tests release Dawn on Linux/x86 with SwiftShader. Manual only.",
     mirrors = [
@@ -435,7 +457,17 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x86-builder-rel",
 )
 
-dawn_mac_manual_builder(
+gpu.try_.mac_manual_builder(
+    name = "dawn-try-mac-arm64-apple-m2-exp-rel",
+    description_html = "Tests release Dawn on Mac/arm64 on Apple M2 devices w/ experimental OS configs. Manual only.",
+    mirrors = [
+        "ci/dawn-mac-arm64-builder-rel",
+        "ci/dawn-mac-arm64-apple-m2-exp-rel",
+    ],
+    gn_args = "ci/dawn-mac-arm64-builder-rel",
+)
+
+gpu.try_.mac_manual_builder(
     name = "dawn-try-mac-arm64-apple-m2-rel",
     description_html = "Tests release Dawn on Mac/arm64 on Apple M2 devices. Manual only.",
     mirrors = [
@@ -445,7 +477,7 @@ dawn_mac_manual_builder(
     gn_args = "ci/dawn-mac-arm64-builder-rel",
 )
 
-dawn_mac_manual_builder(
+gpu.try_.mac_manual_builder(
     name = "dawn-try-mac-x64-amd-5300m-rel",
     description_html = "Tests release Dawn on Mac/x64 on 16\" 2019 Macbook Pros w/ 5300M GPUs. Manual only.",
     mirrors = [
@@ -455,7 +487,7 @@ dawn_mac_manual_builder(
     gn_args = "ci/dawn-mac-x64-builder-rel",
 )
 
-dawn_mac_manual_builder(
+gpu.try_.mac_manual_builder(
     name = "dawn-try-mac-x64-amd-555x-rel",
     description_html = "Tests release Dawn on Mac/x64 on 15\" 2019 Macbook Pros w/ AMD Radeon Pro 555X GPUs. Manual only.",
     mirrors = [
@@ -465,7 +497,7 @@ dawn_mac_manual_builder(
     gn_args = "ci/dawn-mac-x64-builder-rel",
 )
 
-dawn_mac_manual_builder(
+gpu.try_.mac_manual_builder(
     name = "dawn-try-mac-x64-intel-uhd630-exp-rel",
     description_html = "Tests release Dawn on Mac/x64 on 2018 Mac Minis w/ Intel UHD 630 GPUs w/ experimental OS configs. Manual only.",
     mirrors = [
@@ -475,7 +507,7 @@ dawn_mac_manual_builder(
     gn_args = "ci/dawn-mac-x64-builder-rel",
 )
 
-dawn_mac_manual_builder(
+gpu.try_.mac_manual_builder(
     name = "dawn-try-mac-x64-intel-uhd630-rel",
     description_html = "Tests release Dawn on Mac/x64 on 2018 Mac Minis w/ Intel UHD 630 GPUs. Manual only.",
     mirrors = [
@@ -485,7 +517,7 @@ dawn_mac_manual_builder(
     gn_args = "ci/dawn-mac-x64-builder-rel",
 )
 
-dawn_mac_manual_builder(
+gpu.try_.mac_manual_builder(
     name = "dawn-try-mac-x64-sws-dbg",
     description_html = "Tests debug Dawn on Mac/x64 with SwiftShader. Manual only.",
     mirrors = [
@@ -495,7 +527,7 @@ dawn_mac_manual_builder(
     gn_args = "ci/dawn-mac-x64-builder-dbg",
 )
 
-dawn_mac_manual_builder(
+gpu.try_.mac_manual_builder(
     name = "dawn-try-mac-x64-sws-rel",
     description_html = "Tests release Dawn on Mac/x64 with SwiftShader. Manual only.",
     mirrors = [
@@ -505,7 +537,7 @@ dawn_mac_manual_builder(
     gn_args = "ci/dawn-mac-x64-builder-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-arm64-qualcomm-snapdragonxelite-rel",
     description_html = "Tests release Dawn on Windows/arm64 on devices with Snapdragon X Elite SoCs. Manual only.",
     mirrors = [
@@ -515,7 +547,17 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-arm64-builder-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
+    name = "dawn-try-win-x64-amd-rx5500xt-rel",
+    description_html = "Tests release Dawn on Windows/x64 on AMD RX 5500 XT GPUs. Manual only.",
+    mirrors = [
+        "ci/dawn-win-x64-builder-rel",
+        "ci/dawn-win-x64-amd-rx5500xt-rel",
+    ],
+    gn_args = "ci/dawn-win-x64-builder-rel",
+)
+
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-intel-uhd630-asan",
     description_html = "Tests release Dawn on Windows/x64/ASAN on Intel CPUs w/ UHD 630. Manual only.",
     mirrors = [
@@ -525,7 +567,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-asan",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-intel-uhd630-rel",
     description_html = "Tests release Dawn on Windows/x64 on Intel CPUs w/ UHD 630. Manual only.",
     mirrors = [
@@ -535,7 +577,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-intel-uhd770-rel",
     description_html = "Tests release Dawn on Windows/x64 on Intel CPUs w/ UHD 770. Manual only.",
     mirrors = [
@@ -545,7 +587,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-nvidia-gtx1660-asan",
     description_html = "Tests release Dawn on Windows/x64/ASAN on NVIDIA GTX 1660 GPUs. Manual only.",
     mirrors = [
@@ -555,7 +597,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-asan",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-nvidia-gtx1660-exp-rel",
     description_html = "Tests release Dawn on Windows/x64 on NVIDIA GTX 1660 GPUs w/ experimental OS/driver configs. Manual only.",
     mirrors = [
@@ -565,7 +607,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-nvidia-gtx1660-rel",
     description_html = "Tests release Dawn on Windows/x64 on NVIDIA GTX 1660 GPUs. Manual only.",
     mirrors = [
@@ -575,7 +617,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-sws-dbg",
     description_html = "Tests debug Dawn on Windows/x64 with SwiftShader. Manual only.",
     mirrors = [
@@ -585,7 +627,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-dbg",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-sws-msvc-dbg",
     description_html = "Tests debug Dawn on Windows/x64 with SwiftShader using binaries built with MSVC. Manual only.",
     mirrors = [
@@ -595,7 +637,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-msvc-dbg",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-sws-msvc-rel",
     description_html = "Tests release Dawn on Windows/x64 with SwiftShader using binaries built with MSVC. Manual only.",
     mirrors = [
@@ -605,7 +647,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-msvc-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x64-sws-rel",
     description_html = "Tests release Dawn on Windows/x64 with SwiftShader. Manual only.",
     mirrors = [
@@ -615,7 +657,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x64-builder-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x86-intel-uhd630-rel",
     description_html = "Tests release Dawn on Windows/x86 on Intel CPUs w/ UHD 630. Manual only.",
     mirrors = [
@@ -625,7 +667,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x86-builder-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x86-nvidia-gtx1660-rel",
     description_html = "Tests release Dawn on Windows/x86 on NVIDIA GTX 1660 GPUs. Manual only.",
     mirrors = [
@@ -635,7 +677,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x86-builder-rel",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x86-sws-dbg",
     description_html = "Tests debug Dawn on Windows/x86 with SwiftShader. Manual only.",
     mirrors = [
@@ -645,7 +687,7 @@ dawn_win_manual_builder(
     gn_args = "ci/dawn-win-x86-builder-dbg",
 )
 
-dawn_win_manual_builder(
+gpu.try_.win_manual_builder(
     name = "dawn-try-win-x86-sws-rel",
     description_html = "Tests release Dawn on Windows/x86 with SwiftShader. Manual only.",
     mirrors = [
@@ -657,7 +699,7 @@ dawn_win_manual_builder(
 
 ## Fuzz testers
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x64-fuzz-dbg",
     description_html = "Runs debug Dawn fuzz tests on Linux/x64. Manual only.",
     mirrors = [
@@ -666,7 +708,7 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x64-fuzz-dbg",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x64-fuzz-rel",
     description_html = "Runs release Dawn fuzz tests on Linux/x64. Manual only.",
     mirrors = [
@@ -675,7 +717,7 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x64-fuzz-rel",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x86-fuzz-dbg",
     description_html = "Runs debug Dawn fuzz tests on Linux/x86. Manual only.",
     mirrors = [
@@ -684,7 +726,7 @@ dawn_linux_manual_builder(
     gn_args = "ci/dawn-linux-x86-fuzz-dbg",
 )
 
-dawn_linux_manual_builder(
+gpu.try_.linux_manual_builder(
     name = "dawn-try-linux-x86-fuzz-rel",
     description_html = "Runs release Dawn fuzz tests on Linux/x86. Manual only.",
     mirrors = [

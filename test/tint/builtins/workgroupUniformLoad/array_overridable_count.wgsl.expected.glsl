@@ -3,7 +3,7 @@
 shared int v[128];
 int foo() {
   barrier();
-  int v_1 = v[0u];
+  int v_1 = v[0];
   barrier();
   return v_1;
 }
@@ -20,7 +20,6 @@ void main_inner(uint tint_local_index) {
       {
         v_2 = (v_3 + 1u);
       }
-      continue;
     }
   }
   barrier();

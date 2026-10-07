@@ -25,10 +25,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "src/tint/lang/hlsl/writer/helper_test.h"
-
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/number.h"
+#include "src/tint/lang/hlsl/writer/helper_test.h"
 
 namespace tint::hlsl::writer {
 namespace {
@@ -52,10 +51,11 @@ TEST_F(HlslWriterTest, DynamicOffset_RobustnessAndDynamicOffsetFromImmediates) {
     Options options{};
     options.disable_robustness = false;
     options.immediate_binding_point = BindingPoint{0, 30};
-    options.array_offset_from_uniform.buffer_offsets_offset = 16;
-    options.array_offset_from_uniform.bindpoint_to_offset_index[{0, 0}] = 0;
+    options.array_offset_from_immediate.buffer_offsets_offset = 16;
+    options.array_offset_from_immediate.bindpoint_to_offset_index[{0, 0}] = 0;
 
-    ASSERT_TRUE(Generate(options)) << err_ << output_.hlsl;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer sb : register(u0);
 cbuffer cbuffer_tint_immediate_data : register(b30) {
@@ -84,10 +84,11 @@ TEST_F(HlslWriterTest, DynamicOffset_AtomicWithImmediates) {
 
     Options options{};
     options.immediate_binding_point = BindingPoint{0, 30};
-    options.array_offset_from_uniform.buffer_offsets_offset = 0;
-    options.array_offset_from_uniform.bindpoint_to_offset_index[{0, 0}] = 0;
+    options.array_offset_from_immediate.buffer_offsets_offset = 0;
+    options.array_offset_from_immediate.bindpoint_to_offset_index[{0, 0}] = 0;
 
-    ASSERT_TRUE(Generate(options)) << err_ << output_.hlsl;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer sb : register(u0);
 cbuffer cbuffer_tint_immediate_data : register(b30) {
@@ -124,11 +125,12 @@ TEST_F(HlslWriterTest, DynamicOffset_MultipleBuffersWithImmediates) {
 
     Options options{};
     options.immediate_binding_point = BindingPoint{0, 30};
-    options.array_offset_from_uniform.buffer_offsets_offset = 0;
-    options.array_offset_from_uniform.bindpoint_to_offset_index[{0, 0}] = 0;
-    options.array_offset_from_uniform.bindpoint_to_offset_index[{0, 1}] = 1;
+    options.array_offset_from_immediate.buffer_offsets_offset = 0;
+    options.array_offset_from_immediate.bindpoint_to_offset_index[{0, 0}] = 0;
+    options.array_offset_from_immediate.bindpoint_to_offset_index[{0, 1}] = 1;
 
-    ASSERT_TRUE(Generate(options)) << err_ << output_.hlsl;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer sb1 : register(u0);
 RWByteAddressBuffer sb2 : register(u1);
@@ -141,6 +143,19 @@ void main() {
 }
 
 )");
+}
+
+TEST_F(HlslWriterTest, DynamicOffsetFromImmediate_MissingOffset) {
+    auto* entry = b.ComputeFunction("main");
+    b.Append(entry->Block(), [&] { b.Return(entry); });
+
+    Options options;
+    options.array_offset_from_immediate.bindpoint_to_offset_index[{0, 0}] = 0;
+
+    auto result = Generate(options);
+    ASSERT_NE(result, Success);
+    EXPECT_EQ(result.Failure().reason,
+              "array offset from immediate requires a buffer offsets offset");
 }
 
 }  // namespace

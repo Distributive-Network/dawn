@@ -31,12 +31,12 @@
 #include <string>
 #include <vector>
 
-#include "dawn/common/Assert.h"
-#include "dawn/common/Constants.h"
-#include "dawn/common/Math.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/assert.h"
 
 namespace dawn {
 namespace {
@@ -79,7 +79,7 @@ class TextureViewTestBase : public DawnTest {
 
         // Only set the textureBindingViewDimension in compat mode. It's not needed
         // nor used in non-compat.
-        wgpu::TextureBindingViewDimensionDescriptor textureBindingViewDimensionDesc;
+        wgpu::TextureBindingViewDimension textureBindingViewDimensionDesc;
         if (!HasFlexibleTextureViews()) {
             textureBindingViewDimensionDesc.textureBindingViewDimension =
                 textureBindingViewDimension;
@@ -145,6 +145,9 @@ class TextureViewSamplingTest : public TextureViewTestBase {
     void SetUp() override {
         DawnTest::SetUp();
 
+        // TODO(crbug.com/523211970): Produces incorrect result on Pixel 10.
+        DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
         mRenderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
         wgpu::SamplerDescriptor samplerDescriptor = {};
@@ -197,7 +200,7 @@ class TextureViewSamplingTest : public TextureViewTestBase {
                 const int pixelValue = GenerateTestPixelValue(layer, level);
 
                 constexpr uint32_t kPaddedTexWidth = kPixelsPerRowPitch;
-                std::vector<utils::RGBA8> data(kPaddedTexWidth * texHeight,
+                std::vector<utils::RGBA8> data(static_cast<size_t>(kPaddedTexWidth) * texHeight,
                                                utils::RGBA8(0, 0, 0, pixelValue));
                 wgpu::Buffer stagingBuffer = utils::CreateBufferFromData(
                     device, data.data(), data.size() * sizeof(utils::RGBA8),
@@ -699,6 +702,12 @@ TEST_P(TextureViewSamplingTest, TextureCubeMapArrayViewSingleCubeMap) {
 
 class TextureViewRenderingTest : public TextureViewTestBase {
   protected:
+    void SetUp() override {
+        TextureViewTestBase::SetUp();
+        // TODO(crbug.com/523211969): Produces incorrect result on Pixel 10.
+        DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+    }
+
     void TextureLayerAsColorAttachmentTest(wgpu::TextureViewDimension dimension,
                                            uint32_t layerCount,
                                            uint32_t levelCount,
@@ -1012,6 +1021,9 @@ TEST_P(TextureViewRenderingTest, SRGBReinterpretionResolveAttachment) {
     // TODO(crbug.com/468047552): Fails on Win11/NVIDIA GTX 1660.
     DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsNvidia() && IsD3D12() && IsBackendValidationEnabled());
 
+    // TODO(crbug.com/468047552): Fails on Win11/AMD RX 5500 XT.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
     // TODO(crbug.com/473890413): [Capture] validation error: attachment state of pipeline not
     // compatible with pass.
     DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
@@ -1175,6 +1187,55 @@ TEST_P(TextureViewTest, DestroyedTexture) {
     wgpu::TextureView view = texture.CreateView(&viewDesc);
 }
 
+// Test sampling a texture view with TextureBinding usage when the texture was created with
+// TextureBinding | StorageBinding during a render pass.
+TEST_P(TextureViewTest, SampledTextureWithStorageBinding) {
+    wgpu::TextureDescriptor texDesc;
+    texDesc.size = {4, 4, 1};
+    texDesc.format = wgpu::TextureFormat::R32Float;
+    texDesc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::StorageBinding;
+    wgpu::Texture texture = device.CreateTexture(&texDesc);
+
+    wgpu::TextureViewDescriptor viewDesc;
+    viewDesc.usage = wgpu::TextureUsage::TextureBinding;
+    wgpu::TextureView view = texture.CreateView(&viewDesc);
+
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        @vertex fn vs(@builtin(vertex_index) i : u32) -> @builtin(position) vec4f {
+            const pos = array(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+            return vec4f(pos[i], 0.0, 1.0);
+        }
+
+        @group(0) @binding(1) var t : texture_2d<f32>;
+        @fragment fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
+            return textureLoad(t, vec2u(0, 0), 0);
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor pDesc;
+    pDesc.vertex.module = module;
+    pDesc.cFragment.module = module;
+    pDesc.cTargets[0].format = wgpu::TextureFormat::RGBA8Unorm;
+    wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&pDesc);
+
+    wgpu::BindGroup bg = utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0),
+                                              {
+                                                  {1, view},
+                                              });
+
+    utils::BasicRenderPass renderPass =
+        utils::CreateBasicRenderPass(device, 4, 4, wgpu::TextureFormat::RGBA8Unorm);
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass.renderPassInfo);
+    pass.SetPipeline(pipeline);
+    pass.SetBindGroup(0, bg);
+    pass.Draw(3);
+    pass.End();
+
+    wgpu::CommandBuffer commands = encoder.Finish();
+    queue.Submit(1, &commands);
+}
+
 DAWN_INSTANTIATE_TEST(TextureViewTest,
                       D3D11Backend(),
                       D3D12Backend(),
@@ -1201,7 +1262,14 @@ DAWN_INSTANTIATE_TEST(TextureView3DTest,
                       VulkanBackend(),
                       WebGPUBackend());
 
-class TextureView1DTest : public DawnTest {};
+class TextureView1DTest : public DawnTest {
+  protected:
+    void SetUp() override {
+        DawnTest::SetUp();
+        // TODO(crbug.com/523211968): Produces incorrect result on Pixel 10.
+        DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+    }
+};
 
 // Test that it is possible to create a 1D texture view and sample from it.
 TEST_P(TextureView1DTest, Sampling) {

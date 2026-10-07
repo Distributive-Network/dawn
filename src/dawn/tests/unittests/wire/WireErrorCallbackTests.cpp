@@ -28,32 +28,28 @@
 #include <memory>
 #include <utility>
 
-#include "dawn/common/FutureUtils.h"
-#include "dawn/common/StringViewUtils.h"
-#include "dawn/tests/StringViewMatchers.h"
-#include "dawn/tests/unittests/wire/WireFutureTest.h"
-#include "dawn/tests/unittests/wire/WireTest.h"
 #include "dawn/wire/WireClient.h"
+#include "src/dawn/common/FutureUtils.h"
+#include "src/dawn/common/StringViewUtils.h"
+#include "src/dawn/tests/StringViewMatchers.h"
+#include "src/dawn/tests/unittests/wire/WireFutureTest.h"
+#include "src/dawn/tests/unittests/wire/WireTest.h"
 
 namespace dawn::wire {
 namespace {
 
 using testing::_;
-using testing::DoAll;
 using testing::EmptySizedString;
-using testing::InvokeWithoutArgs;
-using testing::Mock;
-using testing::Return;
-using testing::SaveArg;
 using testing::SizedString;
-using testing::StrictMock;
+using testing::WithArg;
 
 class WireErrorCallbackTests : public WireTest {};
 
 // Test the return wire for device user warning callbacks
 TEST_F(WireErrorCallbackTests, DeviceLoggingCallback) {
     testing::MockCppCallback<wgpu::LoggingCallback<void>*> mockCallback;
-    device.SetLoggingCallback(mockCallback.Callback());
+    device.SetLoggingCallback(mockCallback.TemplatedCallback(),
+                              mockCallback.TemplatedCallbackUserdata());
 
     // Setting the injected warning callback should stay on the client side and do nothing
     FlushClient();
@@ -127,11 +123,12 @@ TEST_P(WirePopErrorScopeCallbackTests, TypeAndFilters) {
     for (const auto& [type, filter] : kErrorTypeAndFilters) {
         PushErrorScope(filter);
         PopErrorScope();
-        EXPECT_CALL(api, OnDevicePopErrorScope(apiDevice, _)).WillOnce([&] {
-            api.CallDevicePopErrorScopeCallback(apiDevice, WGPUPopErrorScopeStatus_Success,
-                                                static_cast<WGPUErrorType>(type),
-                                                ToOutputStringView("Some error message"));
-        });
+        EXPECT_CALL(api, OnDevicePopErrorScope(apiDevice, _, _))
+            .WillOnce(WithArg<2>([&](WGPUFuture future) {
+                api.CallDevicePopErrorScopeCallback(
+                    apiDevice, WGPUPopErrorScopeStatus_Success, static_cast<WGPUErrorType>(type),
+                    ToOutputStringView("Some error message"), future);
+            }));
 
         FlushClient();
         FlushFutures();
@@ -150,7 +147,7 @@ TEST_P(WirePopErrorScopeCallbackTests, DisconnectBeforeServerReply) {
     PushErrorScope(wgpu::ErrorFilter::Validation);
 
     PopErrorScope();
-    EXPECT_CALL(api, OnDevicePopErrorScope(apiDevice, _)).Times(1);
+    EXPECT_CALL(api, OnDevicePopErrorScope(apiDevice, _, _)).Times(1);
 
     FlushClient();
     FlushFutures();
@@ -172,11 +169,12 @@ TEST_P(WirePopErrorScopeCallbackTests, DisconnectAfterServerReply) {
     PushErrorScope(wgpu::ErrorFilter::Validation);
     PopErrorScope();
 
-    EXPECT_CALL(api, OnDevicePopErrorScope(apiDevice, _)).WillOnce(InvokeWithoutArgs([&] {
-        api.CallDevicePopErrorScopeCallback(apiDevice, WGPUPopErrorScopeStatus_Success,
-                                            WGPUErrorType_Validation,
-                                            ToOutputStringView("Some error message"));
-    }));
+    EXPECT_CALL(api, OnDevicePopErrorScope(apiDevice, _, _))
+        .WillOnce(WithArg<2>([&](WGPUFuture future) {
+            api.CallDevicePopErrorScopeCallback(apiDevice, WGPUPopErrorScopeStatus_Success,
+                                                WGPUErrorType_Validation,
+                                                ToOutputStringView("Some error message"), future);
+        }));
 
     FlushClient();
     FlushFutures();
@@ -193,11 +191,12 @@ TEST_P(WirePopErrorScopeCallbackTests, DisconnectAfterServerReply) {
 TEST_P(WirePopErrorScopeCallbackTests, EmptyStack) {
     PopErrorScope();
 
-    EXPECT_CALL(api, OnDevicePopErrorScope(apiDevice, _)).WillOnce(InvokeWithoutArgs([&] {
-        api.CallDevicePopErrorScopeCallback(apiDevice, WGPUPopErrorScopeStatus_Error,
-                                            WGPUErrorType_NoError,
-                                            ToOutputStringView("No error scopes to pop"));
-    }));
+    EXPECT_CALL(api, OnDevicePopErrorScope(apiDevice, _, _))
+        .WillOnce(WithArg<2>([&](WGPUFuture future) {
+            api.CallDevicePopErrorScopeCallback(
+                apiDevice, WGPUPopErrorScopeStatus_Error, WGPUErrorType_NoError,
+                ToOutputStringView("No error scopes to pop"), future);
+        }));
 
     FlushClient();
     FlushFutures();

@@ -32,6 +32,8 @@
 #include <string>
 #include <vector>
 
+#include "src/tint/api/common/workgroup_info.h"
+
 namespace tint::msl::writer {
 
 /// The output produced when generating MSL.
@@ -49,35 +51,19 @@ struct Output {
     /// @returns this
     Output& operator=(const Output&);
 
-    /// Workgroup size information
-    struct WorkgroupInfo {
-        /// The x-component
-        uint32_t x = 0;
-        /// The y-component
-        uint32_t y = 0;
-        /// The z-component
-        uint32_t z = 0;
-
-        /// A list of dynamic workgroup allocations.
-        /// Each entry in the vector is the size of the workgroup allocation that
-        /// should be created for that index.
-        std::vector<uint32_t> allocations;
-
-        /// The needed workgroup storage size
-        size_t storage_size = 0;
-    };
-
     /// The generated MSL.
     std::string msl = "";
-
-    /// True if the shader needs a UBO of buffer sizes.
-    bool needs_storage_buffer_sizes = false;
 
     /// True if the generated shader uses the invariant attribute.
     bool has_invariant_attribute = false;
 
     /// The workgroup size information, if the entry point was a compute shader
     WorkgroupInfo workgroup_info{};
+
+    /// A list of dynamic workgroup allocations, if the entry point was a compute shader
+    /// Each entry in the vector is the size of the workgroup allocation that
+    /// should be created for that index.
+    std::vector<uint32_t> workgroup_allocations;
 };
 
 }  // namespace tint::msl::writer

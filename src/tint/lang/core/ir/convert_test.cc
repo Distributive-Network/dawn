@@ -26,6 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/ir/convert.h"
+
 #include "src/tint/lang/core/ir/ir_helper_test.h"
 
 namespace tint::core::ir {
@@ -46,7 +47,7 @@ TEST_F(IR_ConvertDeathTest, Fail_NullToType) {
 }
 
 TEST_F(IR_ConvertTest, Results) {
-    auto* c = b.Convert(mod.Types().i32(), 1_u);
+    auto* c = b.Convert(mod.Types().i32(), b.Let("l", 1_u))->AsInstruction<Convert>();
 
     EXPECT_EQ(c->Results().Length(), 1u);
     EXPECT_TRUE(c->Result()->Is<InstructionResult>());
@@ -54,7 +55,8 @@ TEST_F(IR_ConvertTest, Results) {
 }
 
 TEST_F(IR_ConvertTest, Clone) {
-    auto* c = b.Convert(mod.Types().f32(), 1_u);
+    auto* l = b.Let("l", 1_u);
+    auto* c = b.Convert(mod.Types().f32(), l)->AsInstruction<Convert>();
 
     auto* new_c = clone_ctx.Clone(c);
 
@@ -63,10 +65,9 @@ TEST_F(IR_ConvertTest, Clone) {
     EXPECT_EQ(mod.Types().f32(), new_c->Result()->Type());
 
     auto args = new_c->Args();
-    EXPECT_EQ(1u, args.Length());
+    EXPECT_EQ(1u, args.size());
 
-    auto* val0 = args[0]->As<Constant>()->Value();
-    EXPECT_EQ(1_u, val0->As<core::constant::Scalar<u32>>()->ValueAs<u32>());
+    EXPECT_EQ(l->Result(), args[0]);
 }
 
 }  // namespace

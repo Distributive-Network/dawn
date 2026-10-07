@@ -26,16 +26,25 @@
 //* OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <jni.h>
 #include <webgpu/webgpu.h>
+#include <vector>
+
+#include <memory>
 
 namespace dawn::kotlin_api {
 
 class JNIContext;
 
-struct UserData {
+struct UserData : public std::enable_shared_from_this<UserData> {
     jobject callback;
     jobject executor;
     JavaVM *jvm;
+    std::vector<std::shared_ptr<UserData>> recurringCallbacks;
+
+    ~UserData();
 };
+
+void RegisterDeviceCallbacks(WGPUDevice device, const std::vector<std::shared_ptr<UserData>>& callbacks);
+void FreeDeviceCallbacks(WGPUDevice device);
 
 // Converts Kotlin objects representing Dawn structures into native structures that can be passed
 // into the native Dawn API.

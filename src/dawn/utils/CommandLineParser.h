@@ -36,8 +36,8 @@
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"  // TODO(343500108): Use std::span when we have C++20.
-#include "dawn/common/Assert.h"
-#include "dawn/common/NonMovable.h"
+#include "src/utils/assert.h"
+#include "src/utils/non_movable.h"
 
 namespace dawn::utils {
 
@@ -185,7 +185,7 @@ class CommandLineParser {
         std::string JoinNames(absl::string_view separator) const;
         OptionBase::ParseResult ParseImpl(absl::Span<const absl::string_view> args) override;
         E mValue;
-        bool mHasDefault;
+        bool mHasDefault = false;
         std::vector<std::pair<absl::string_view, E>> mConversions;
     };
     static std::string JoinConversionNames(absl::Span<const absl::string_view> names,

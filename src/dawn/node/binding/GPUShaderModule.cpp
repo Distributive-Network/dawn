@@ -28,10 +28,12 @@
 #include "src/dawn/node/binding/GPUShaderModule.h"
 
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "src/dawn/node/binding/Converter.h"
+#include "src/utils/compiler.h"
 
 namespace wgpu::binding {
 
@@ -54,8 +56,7 @@ GPUShaderModule::getCompilationInfo(Napi::Env env) {
         std::string message;
 
         explicit GPUCompilationMessage(const wgpu::CompilationMessage& m)
-            : lineNum(m.lineNum),
-              message(m.message) {
+            : lineNum(m.lineNum), message(m.message) {
             [[maybe_unused]] bool foundUtf16 = false;
             for (const auto* chain = m.nextInChain; chain != nullptr; chain = chain->nextInChain) {
                 if (chain->sType == wgpu::SType::DawnCompilationMessageUtf16) {
@@ -122,11 +123,12 @@ GPUShaderModule::getCompilationInfo(Napi::Env env) {
         wgpu::CallbackMode::AllowProcessEvents,
         [ctx = std::move(ctx)](wgpu::CompilationInfoRequestStatus status,
                                wgpu::CompilationInfo const* compilationInfo) {
-            Messages messages(compilationInfo->messageCount);
-            for (uint32_t i = 0; i < compilationInfo->messageCount; i++) {
-                auto& msg = compilationInfo->messages[i];
-                messages[i] =
-                    interop::GPUCompilationMessage::Create<GPUCompilationMessage>(ctx->env, msg);
+            auto msg_span = WGPU_SPAN(compilationInfo->message);
+            Messages messages;
+            messages.reserve(msg_span.size());
+            for (const auto& msg : msg_span) {
+                messages.push_back(
+                    interop::GPUCompilationMessage::Create<GPUCompilationMessage>(ctx->env, msg));
             }
 
             ctx->promise.Resolve(interop::GPUCompilationInfo::Create<GPUCompilationInfo>(

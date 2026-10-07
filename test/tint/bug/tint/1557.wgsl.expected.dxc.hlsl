@@ -17,7 +17,7 @@ void g() {
       if ((j >= int(1))) {
         break;
       }
-      j = asint((asuint(j) + asuint(int(1))));
+      j = asint((asuint(j) + 1u));
       int k = f();
       {
         uint tint_low_inc = (tint_loop_idx.x - 1u);
@@ -25,7 +25,6 @@ void g() {
         uint tint_carry = uint((tint_low_inc == 4294967295u));
         tint_loop_idx.y = (tint_loop_idx.y - tint_carry);
       }
-      continue;
     }
   }
 }

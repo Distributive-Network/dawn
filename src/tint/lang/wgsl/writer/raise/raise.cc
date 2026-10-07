@@ -36,6 +36,7 @@
 #include "src/tint/lang/core/ir/transform/rename_conflicts.h"
 #include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/wgsl/enums.h"
+#include "src/tint/lang/wgsl/ir/atomic_vec2u_to_from_u64.h"
 #include "src/tint/lang/wgsl/ir/builtin_call.h"
 #include "src/tint/lang/wgsl/writer/raise/ptr_to_ref.h"
 #include "src/tint/lang/wgsl/writer/raise/value_to_let.h"
@@ -60,6 +61,7 @@ wgsl::BuiltinFn Convert(core::BuiltinFn fn) {
         CASE(kAtan)
         CASE(kAtan2)
         CASE(kAtanh)
+        CASE(kBitcast)
         CASE(kCeil)
         CASE(kClamp)
         CASE(kCos)
@@ -168,6 +170,8 @@ wgsl::BuiltinFn Convert(core::BuiltinFn fn) {
         CASE(kAtomicXor)
         CASE(kAtomicExchange)
         CASE(kAtomicCompareExchangeWeak)
+        CASE(kAtomicStoreMin)
+        CASE(kAtomicStoreMax)
         CASE(kSubgroupBallot)
         CASE(kSubgroupElect)
         CASE(kSubgroupBroadcast)
@@ -206,6 +210,9 @@ wgsl::BuiltinFn Convert(core::BuiltinFn fn) {
         CASE(kGetResource)
         CASE(kBufferView)
         CASE(kBufferLength)
+        CASE(kBufferArrayView)
+        case core::BuiltinFn::kAddSat:  // lowered below
+        case core::BuiltinFn::kMulSat:  // lowered below
         case core::BuiltinFn::kNone:
             break;
     }
@@ -217,7 +224,7 @@ void ReplaceBuiltinFnCall(core::ir::Builder& b, core::ir::CoreBuiltinCall* call)
     auto* replacement = b.CallWithResult<wgsl::ir::BuiltinCall>(
         call->DetachResult(), Convert(call->Func()), std::move(args));
     if (!call->ExplicitTemplateParams().IsEmpty()) {
-        Vector<const core::type::Type*, 4> tmpl_args;
+        Vector<core::ir::TemplateParameter, 4> tmpl_args;
         for (auto p : call->ExplicitTemplateParams()) {
             tmpl_args.Push(p);
         }
@@ -261,9 +268,50 @@ void ReplaceWorkgroupBarrier(core::ir::Builder& b, core::ir::CoreBuiltinCall* ca
     load->Destroy();
 }
 
+void ReplaceAddSat(core::ir::Builder& b, core::ir::CoreBuiltinCall* call) {
+    auto* lhs = call->Args()[0];
+    auto* rhs = call->Args()[1];
+    b.InsertBefore(call, [&] {
+        auto* add = b.Add(lhs, rhs);
+        auto* lt = b.LessThan(add, lhs);
+        auto* sat = b.Constant(core::u32(0xffffffff));
+        if (call->Result()->Type()->Is<core::type::Vector>()) {
+            sat = b.Splat(call->Result()->Type(), sat);
+        }
+        b.CallWithResult<wgsl::ir::BuiltinCall>(call->DetachResult(), wgsl::BuiltinFn::kSelect, add,
+                                                sat, lt);
+    });
+    call->Destroy();
+}
+
+void ReplaceMulSat(core::ir::Builder& b, core::ir::CoreBuiltinCall* call) {
+    auto* ty = call->Result()->Type();
+    auto* lhs = call->Args()[0];
+    auto* rhs = call->Args()[1];
+    b.InsertBefore(call, [&] {
+        auto* mul = b.Multiply(lhs, rhs);
+        auto* lhs_ne_0 = b.NotEqual(lhs, b.Zero(ty));
+        auto* rhs_ne_0 = b.NotEqual(lhs, b.Zero(ty));
+        auto* sat = b.Constant(core::u32(0xffffffff));
+        if (call->Result()->Type()->Is<core::type::Vector>()) {
+            sat = b.Splat(call->Result()->Type(), sat);
+        }
+        auto* div = b.Divide(sat, lhs);
+        auto* gt = b.GreaterThan(rhs, div);
+        auto* logical_and = b.And(lhs_ne_0, rhs_ne_0);
+        logical_and = b.And(logical_and, gt);
+        b.CallWithResult<wgsl::ir::BuiltinCall>(call->DetachResult(), wgsl::BuiltinFn::kSelect, mul,
+                                                sat, logical_and);
+    });
+    call->Destroy();
+}
+
 }  // namespace
 
 Result<SuccessType> Raise(core::ir::Module& mod) {
+    TINT_CHECK_RESULT(tint::wgsl::ir::transform::AtomicVec2uToFromU64(
+        mod, tint::wgsl::ir::transform::AtomicVec2uU64Direction::kFromU64));
+
     TINT_CHECK_RESULT(core::ir::transform::RenameConflicts(mod));
 
     core::ir::Builder b{mod};
@@ -272,6 +320,12 @@ Result<SuccessType> Raise(core::ir::Module& mod) {
             switch (call->Func()) {
                 case core::BuiltinFn::kWorkgroupBarrier:
                     ReplaceWorkgroupBarrier(b, call);
+                    break;
+                case core::BuiltinFn::kAddSat:
+                    ReplaceAddSat(b, call);
+                    break;
+                case core::BuiltinFn::kMulSat:
+                    ReplaceMulSat(b, call);
                     break;
                 default:
                     ReplaceBuiltinFnCall(b, call);

@@ -27,9 +27,10 @@
 
 #include "src/tint/lang/glsl/ir/builtin_call.h"
 
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "src/tint/lang/core/ir/ir_helper_test.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 using namespace tint::core::fluent_types;  // NOLINT
 
@@ -52,7 +53,19 @@ TEST_F(IR_GlslBuiltinCallTest, Clone) {
     EXPECT_EQ(BuiltinFn::kBarrier, new_b->Func());
 
     auto args = new_b->Args();
-    EXPECT_EQ(0u, args.Length());
+    EXPECT_EQ(0u, args.size());
+}
+
+TEST_F(IR_GlslBuiltinCallTest, CloneWithExplicitParams) {
+    auto* builtin = b.Call<BuiltinCall>(mod.Types().void_(), BuiltinFn::kBarrier);
+    builtin->SetExplicitTemplateParams(Vector<core::ir::TemplateParameter, 1>{mod.Types().i32()});
+
+    auto* new_b = clone_ctx.Clone(builtin);
+    EXPECT_NE(builtin->Result(), new_b->Result());
+    EXPECT_EQ(mod.Types().void_(), new_b->Result()->Type());
+
+    EXPECT_EQ(BuiltinFn::kBarrier, new_b->Func());
+    EXPECT_THAT(new_b->ExplicitTemplateParams(), testing::ElementsAre(mod.Types().i32()));
 }
 
 }  // namespace

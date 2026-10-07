@@ -25,13 +25,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/CacheRequest.h"
+#include "src/dawn/native/CacheRequest.h"
 
-#include "dawn/common/Log.h"
+#include "src/utils/log.h"
 
 namespace dawn::native::detail {
 
-void LogCacheError(std::unique_ptr<ErrorData> error) {
+void LogCacheError(std::unique_ptr<UnrecoverableError> error) {
     dawn::ErrorLog() << error->GetFormattedMessage();
 }
 

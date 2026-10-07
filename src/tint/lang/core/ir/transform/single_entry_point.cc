@@ -32,7 +32,7 @@
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/referenced_functions.h"
 #include "src/tint/lang/core/ir/referenced_module_decls.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 namespace tint::core::ir::transform {
 
@@ -105,10 +105,13 @@ Result<SuccessType> Run(ir::Module& ir, std::string_view entry_point_name) {
 }  // namespace
 
 Result<SuccessType> SingleEntryPoint(Module& ir, std::string_view entry_point_name) {
-    TINT_CHECK_RESULT(
-        ValidateAndDumpIfNeeded(ir, "core.SingleEntryPoint", kSingleEntryPointCapabilities));
+    AssertValid(ir, "before core.SingleEntryPoint");
 
-    return Run(ir, entry_point_name);
+    TINT_CHECK_RESULT(Run(ir, entry_point_name));
+
+    ir.properties.Remove(Property::kAllowMultipleEntryPoints);
+
+    return Success;
 }
 
 }  // namespace tint::core::ir::transform

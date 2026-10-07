@@ -32,6 +32,8 @@
 #include <string>
 #include <unordered_set>
 
+#include "src/tint/api/common/subgroup_matrix.h"
+#include "src/tint/api/common/workgroup_info.h"
 #include "src/tint/lang/core/ir/function.h"
 
 namespace tint::hlsl::writer {
@@ -50,19 +52,6 @@ struct Output {
     /// Copy assign
     Output& operator=(const Output&);
 
-    /// Workgroup size information
-    struct WorkgroupInfo {
-        /// The x-component
-        uint32_t x = 0;
-        /// The y-component
-        uint32_t y = 0;
-        /// The z-component
-        uint32_t z = 0;
-
-        /// The needed workgroup storage size
-        size_t storage_size = 0;
-    };
-
     /// The generated HLSL.
     std::string hlsl = "";
 
@@ -73,14 +62,14 @@ struct Output {
     core::ir::Function::PipelineStage pipeline_stage =
         core::ir::Function::PipelineStage::kUndefined;
 
-    /// Indices into the array_length_from_uniform binding that are statically used.
-    std::unordered_set<uint32_t> used_array_length_from_uniform_indices;
-
     /// The workgroup size information, if the entry point was a compute shader
     WorkgroupInfo workgroup_info{};
 
-    /// The subgroup size information, if the entry point used the `@subgroup_size` attribute.
-    std::optional<uint32_t> subgroup_size = {};
+    /// The subgroup matrix information.
+    SubgroupMatrixInfo subgroup_matrix_info{};
+
+    /// The workgroup storage size before SplitWorkgroupAtomics, if the transform was enabled
+    std::optional<uint64_t> workgroup_storage_size_before_split_workgroup_atomics;
 
     /// True if the shader uses vertex_index
     bool has_vertex_index = false;

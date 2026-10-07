@@ -27,8 +27,9 @@
 
 #include <gmock/gmock.h>
 
-#include "dawn/tests/unittests/validation/ValidationTest.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/tests/unittests/validation/ValidationTest.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/compiler.h"
 
 namespace dawn {
 namespace {
@@ -363,7 +364,7 @@ TEST_F(CommandBufferValidationTest, InjectedValidateErrorVariousStringTypes) {
     // Use explicit length which truncates a null-terminated string.
     {
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-        encoder.InjectValidationError(std::string_view("my error bad", 8));
+        encoder.InjectValidationError(DAWN_UNSAFE_TODO(std::string_view("my error bad", 8)));
         ASSERT_DEVICE_ERROR(encoder.Finish(),
                             testing::AllOf(HasSubstr("my error"), Not(HasSubstr("bad"))));
     }
@@ -371,7 +372,7 @@ TEST_F(CommandBufferValidationTest, InjectedValidateErrorVariousStringTypes) {
     // Empty, nullptr string
     {
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-        encoder.InjectValidationError(std::string_view(nullptr, 0));
+        encoder.InjectValidationError(std::string_view());
         // empty error string, followed by a newline and error context
         ASSERT_DEVICE_ERROR(encoder.Finish(), StartsWith("\n"));
     }
@@ -379,7 +380,7 @@ TEST_F(CommandBufferValidationTest, InjectedValidateErrorVariousStringTypes) {
     // Empty, non-null string
     {
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-        encoder.InjectValidationError(std::string_view("foobar", 0));
+        encoder.InjectValidationError(DAWN_UNSAFE_TODO(std::string_view("foobar", 0)));
         // empty error string, followed by a newline and error context
         ASSERT_DEVICE_ERROR(encoder.Finish(), StartsWith("\n"));
     }
@@ -407,18 +408,17 @@ TEST_F(CommandBufferValidationTest, InjectedValidateErrorVariousStringTypes) {
     // part of the injected error.
     {
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-        encoder.SetLabel(std::string_view("my\0encoder", 10));
-        encoder.InjectValidationError(std::string_view("err\0or", 6));
+        encoder.SetLabel(DAWN_UNSAFE_TODO(std::string_view("my\0encoder", 10)));
+        encoder.InjectValidationError(DAWN_UNSAFE_TODO(std::string_view("err\0or", 6)));
         ASSERT_DEVICE_ERROR(encoder.Finish(), AllOf(HasSubstr("validation error: err."),
                                                     HasSubstr("[CommandEncoder \"my\"]")));
     }
 }
 
+// Test having the device destroyed before encoding.
 TEST_F(CommandBufferValidationTest, EncodeAfterDeviceDestroyed) {
     PlaceholderRenderPass placeholderRenderPass(device);
 
-    // Device destroyed before encoding.
-    {
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
         ExpectDeviceDestruction();
         device.Destroy();
@@ -427,19 +427,20 @@ TEST_F(CommandBufferValidationTest, EncodeAfterDeviceDestroyed) {
         wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&placeholderRenderPass);
         pass.End();
         encoder.Finish();
-    }
+}
 
-    // Device destroyed after encoding.
-    {
-        ExpectDeviceDestruction();
-        device.Destroy();
-        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-        // The encoder should not accessing any device info if device is destroyed when try
-        // encoding.
-        wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&placeholderRenderPass);
-        pass.End();
-        encoder.Finish();
-    }
+// Test having the device destroyed after encoding but before Finish().
+TEST_F(CommandBufferValidationTest, FinishAfterDeviceDestroyed) {
+    PlaceholderRenderPass placeholderRenderPass(device);
+
+    ExpectDeviceDestruction();
+    device.Destroy();
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    // The encoder should not accessing any device info if device is destroyed when try
+    // encoding.
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&placeholderRenderPass);
+    pass.End();
+    encoder.Finish();
 }
 
 // Test that an error is produced when encoding happens after ending a pass.

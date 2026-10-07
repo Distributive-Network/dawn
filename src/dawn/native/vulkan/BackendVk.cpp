@@ -25,22 +25,24 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/vulkan/BackendVk.h"
+#include "src/dawn/native/vulkan/BackendVk.h"
 
 #include <algorithm>
 #include <string>
 #include <utility>
 
-#include "dawn/common/Assert.h"
-#include "dawn/common/Log.h"
-#include "dawn/common/SystemUtils.h"
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/Instance.h"
 #include "dawn/native/VulkanBackend.h"
-#include "dawn/native/vulkan/DeviceVk.h"
-#include "dawn/native/vulkan/PhysicalDeviceVk.h"
-#include "dawn/native/vulkan/UtilsVulkan.h"
-#include "dawn/native/vulkan/VulkanError.h"
+#include "src/dawn/common/GPUInfo.h"
+#include "src/dawn/common/SystemUtils.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/Instance.h"
+#include "src/dawn/native/vulkan/DeviceVk.h"
+#include "src/dawn/native/vulkan/PhysicalDeviceVk.h"
+#include "src/dawn/native/vulkan/UtilsVulkan.h"
+#include "src/dawn/native/vulkan/VulkanError.h"
+#include "src/utils/assert.h"
+#include "src/utils/compiler.h"
+#include "src/utils/log.h"
 
 // TODO(crbug.com/dawn/283): Link against the Vulkan Loader and remove this.
 #if defined(DAWN_ENABLE_SWIFTSHADER)
@@ -170,50 +172,65 @@ constexpr SkippedMessage kSkippedMessages[] = {
      // vkCmdDraw(): the descriptor
      "is being used in draw but has never been updated via vkUpdateDescriptorSets() or a similar "
      "call."},
-};
+
+    // This error gets raised when using MSAARenderToSingleSampled with CreateRenderPass2 because
+    // we have a mismatch in the number of samples in the actual render pass vs. the render pass the
+    // graphics pipeline was created with since we lack MSAARenderToSingleSampled info at pipeline
+    // creation time. This mismatch does not have an effect on any known drivers because they don't
+    // rely on the attachment sample count when rendering with MSAARenderToSingleSampled.
+    // Unfortunately this suppression is overly broad because the check in question is bundled with
+    // all the rest of the render pass compatibility rules. Given that this isn't an issue when
+    // using Dynamic Rendering, however, we should be able to remove the suppression if we ever drop
+    // the CreateRenderPass(2) rendering paths. (ie: if we upgrade to requiring Vulkan 1.3)
+    // http://crbug.com/463893793, https://gitlab.khronos.org/vulkan/vulkan/-/issues/4662
+    {"VUID-vkCmdDraw-renderPass-02684", "The current render pass must be compatible"}};
 
 namespace dawn::native::vulkan {
 
 namespace {
 
+// This should always be sorted such that fallback ICDs are searched first to ensure that we return
+// the correct adapters when users are asking for forced fallback adapters.
 static constexpr ICD kICDs[] = {
+#if defined(DAWN_ENABLE_SWIFTSHADER)
+    ICD::SwiftShader,
+#endif  // defined(DAWN_ENABLE_SWIFTSHADER)
 // Other drivers should not be loaded with MSAN because they don't have MSAN instrumentation.
 // MSAN will produce false positives since it cannot detect changes to memory that the driver
 // has made.
 #if !defined(MEMORY_SANITIZER)
     ICD::None,
 #endif
-#if defined(DAWN_ENABLE_SWIFTSHADER)
-    ICD::SwiftShader,
-#endif  // defined(DAWN_ENABLE_SWIFTSHADER)
 };
 
 // Suppress validation errors that are known. Returns false in that case.
-bool ShouldReportDebugMessage(const char* messageId, const char* message) {
-    // If a driver gives us a NULL pMessage (which would be a violation of the Vulkan spec)
+bool ShouldReportDebugMessage(const char* cMessageId, const char* cMessage) {
+    // If a driver gives us a nullptr pMessage (which would be a violation of the Vulkan spec)
     // then ignore this message.
-    if (message == nullptr) {
+    if (cMessage == nullptr) {
         return false;
     }
+    std::string_view message = cMessage;
 
     // Some Vulkan drivers send "error" messages of "VK_SUCCESS" when zero devices are
     // available; seen in crbug.com/1464122. This is not a real error that we care about.
     // The messageId is ignored because drivers may report
     // __FILE__: __LINE__ info here.
-    // https://github.com/Mesa3D/mesa/blob/22.2/src/amd/vulkan/radv_device.c#L1201
-    if (strcmp(message, "VK_SUCCESS") == 0) {
+    // https://gitlab.freedesktop.org/mesa/mesa/-/blob/22.2/src/amd/vulkan/radv_device.c#L1201
+    if (message == "VK_SUCCESS") {
         return false;
     }
 
-    // The Vulkan spec does allow pMessageIdName to be NULL, but it may still contain a valid
+    // The Vulkan spec does allow pMessageIdName to be nullptr, but it may still contain a valid
     // message. Since we can't compare it with our skipped message list allow it through.
-    if (messageId == nullptr) {
+    if (cMessageId == nullptr) {
         return true;
     }
+    std::string_view messageId = cMessageId;
 
     for (const SkippedMessage& msg : kSkippedMessages) {
-        if (strstr(messageId, msg.messageId) != nullptr &&
-            strstr(message, msg.messageContents) != nullptr) {
+        if (messageId.find(msg.messageId) != std::string_view::npos &&
+            message.find(msg.messageContents) != std::string_view::npos) {
             return false;
         }
     }
@@ -224,8 +241,8 @@ void LogCallbackData(LogSeverity severity,
                      const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData) {
     LogMessage log = LogMessage(severity);
 
-    // pMessageIdName may be NULL, according to the Vulkan spec. Passing NULL into an ostream is
-    // undefined behavior, so we'll handle that scenario separately.
+    // pMessageIdName may be nullptr, according to the Vulkan spec. Passing nullptr into an ostream
+    // is undefined behavior, so we'll handle that scenario separately.
     if (pCallbackData->pMessageIdName != nullptr) {
         log << pCallbackData->pMessageIdName;
     } else {
@@ -257,8 +274,10 @@ OnDebugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     // Look through all the object labels attached to the debug message and try to parse
     // a device debug prefix out of one of them. If a debug prefix is found and matches
     // a registered device, forward the message on to it.
-    for (uint32_t i = 0; i < pCallbackData->objectCount; ++i) {
-        const VkDebugUtilsObjectNameInfoEXT& object = pCallbackData->pObjects[i];
+    Span<const VkDebugUtilsObjectNameInfoEXT> objects =
+        // SAFETY: pObjects is defined as a pointer to objectCount VkDebugUtilsObjectNameInfoEXTs.
+        DAWN_UNSAFE_BUFFERS({pCallbackData->pObjects, pCallbackData->objectCount});
+    for (const auto& object : objects) {
         std::string deviceDebugPrefix = GetDeviceDebugPrefixFromDebugName(object.pObjectName);
         if (deviceDebugPrefix.empty()) {
             continue;
@@ -346,7 +365,7 @@ MaybeError VulkanInstance::Initialize(const InstanceBase* instance, ICD icd) {
         if (mVulkanLib.Open(libName, searchPaths, &error)) {
             return {};
         }
-        return DAWN_FORMAT_INTERNAL_ERROR("Couldn't load Vulkan: %s", error.c_str());
+        return DAWN_FORMAT_UNRECOVERABLE_ERROR("Couldn't load Vulkan: %s", error.c_str());
     };
 
     switch (icd) {
@@ -370,7 +389,7 @@ MaybeError VulkanInstance::Initialize(const InstanceBase* instance, ICD icd) {
         auto execDir = GetExecutableDirectory();
         std::string vkDataDir = execDir.value_or("") + DAWN_VK_DATA_DIR;
         if (!vkLayerPath.Set("VK_LAYER_PATH", vkDataDir.c_str())) {
-            return DAWN_INTERNAL_ERROR("Couldn't set VK_LAYER_PATH");
+            return DAWN_UNRECOVERABLE_ERROR("Couldn't set VK_LAYER_PATH");
         }
 #else
         dawn::WarningLog() << "Backend validation enabled but Dawn was not built with "
@@ -387,18 +406,26 @@ MaybeError VulkanInstance::Initialize(const InstanceBase* instance, ICD icd) {
         versionError << "Vulkan " << FormatAPIVersion(mGlobalInfo.apiVersion)
                      << " driver is unsupported. At least Vulkan "
                      << FormatAPIVersion(kRequiredVulkanVersion) << " is required.";
-        return DAWN_INTERNAL_ERROR(versionError.str());
+        return DAWN_UNRECOVERABLE_ERROR(versionError.str());
     }
 
     VulkanGlobalKnobs usedGlobalKnobs = {};
     DAWN_TRY_ASSIGN(usedGlobalKnobs, CreateVkInstance(instance));
-    *static_cast<VulkanGlobalKnobs*>(&mGlobalInfo) = usedGlobalKnobs;
 
     DAWN_TRY(mFunctions.LoadInstanceProcs(mInstance, mGlobalInfo));
 
     if (usedGlobalKnobs.HasExt(InstanceExt::DebugUtils)) {
-        DAWN_TRY(RegisterDebugUtils());
+        // Workaround for buggy drivers/loaders (e.g. Adreno 610/619 on Android) that advertise
+        // VK_EXT_debug_utils in vkEnumerateInstanceExtensionProperties but return nullptr for
+        // some entrypoints in vkGetInstanceProcAddr.
+        if (mFunctions.TryLoadEXTDebugUtils(mInstance)) {
+            DAWN_TRY(RegisterDebugUtils());
+        } else {
+            usedGlobalKnobs.extensions.set(InstanceExt::DebugUtils, false);
+        }
     }
+
+    *static_cast<VulkanGlobalKnobs*>(&mGlobalInfo) = usedGlobalKnobs;
 
     DAWN_TRY_ASSIGN(mVkPhysicalDevices, GatherPhysicalDevices(mInstance, mFunctions));
 
@@ -550,6 +577,16 @@ std::vector<Ref<PhysicalDeviceBase>> Backend::DiscoverPhysicalDevices(
     const UnpackedPtr<RequestAdapterOptions>& options) {
     std::vector<Ref<PhysicalDeviceBase>> physicalDevices;
     InstanceBase* instance = GetInstance();
+
+    auto IsFallbackAdapter = [](const PhysicalDevice* physicalDevice) {
+        // Swiftshader is the only fallback adapter that we currently have.
+        if (gpu_info::IsGoogleSwiftshader(physicalDevice->GetVendorId(),
+                                          physicalDevice->GetDeviceId())) {
+            return true;
+        }
+        return false;
+    };
+
     for (ICD icd : kICDs) {
 #if DAWN_PLATFORM_IS(MACOS)
         // On Mac, we don't expect non-Swiftshader Vulkan to be available.
@@ -557,19 +594,19 @@ std::vector<Ref<PhysicalDeviceBase>> Backend::DiscoverPhysicalDevices(
             continue;
         }
 #endif  // DAWN_PLATFORM_IS(MACOS)
-        if (options->forceFallbackAdapter && icd != ICD::SwiftShader) {
+        // We always search for fallback adapters first, so if we already found one, don't bother
+        // looking for more.
+        if (options->forceFallbackAdapter && !physicalDevices.empty()) {
             continue;
         }
         if (mPhysicalDevices[icd].empty()) {
             if (!mVulkanInstancesCreated[icd]) {
                 mVulkanInstancesCreated.set(icd);
 
-                [[maybe_unused]] bool hadError =
-                    instance->ConsumedErrorAndWarnOnce([&]() -> MaybeError {
-                        DAWN_TRY_ASSIGN(mVulkanInstances[icd],
-                                        VulkanInstance::Create(instance, icd));
-                        return {};
-                    }());
+                std::ignore = instance->ConsumedErrorAndWarnOnce([&]() -> MaybeError {
+                    DAWN_TRY_ASSIGN(mVulkanInstances[icd], VulkanInstance::Create(instance, icd));
+                    return {};
+                }());
             }
 
             if (mVulkanInstances[icd] == nullptr) {
@@ -580,9 +617,12 @@ std::vector<Ref<PhysicalDeviceBase>> Backend::DiscoverPhysicalDevices(
             const std::vector<VkPhysicalDevice>& vkPhysicalDevices =
                 mVulkanInstances[icd]->GetVkPhysicalDevices();
             for (VkPhysicalDevice vkPhysicalDevice : vkPhysicalDevices) {
-                Ref<PhysicalDevice> physicalDevice =
-                    AcquireRef(new PhysicalDevice(mVulkanInstances[icd].Get(), vkPhysicalDevice));
+                Ref<PhysicalDevice> physicalDevice = AcquireRef(
+                    new PhysicalDevice(instance, mVulkanInstances[icd].Get(), vkPhysicalDevice));
                 if (instance->ConsumedErrorAndWarnOnce(physicalDevice->Initialize())) {
+                    continue;
+                }
+                if (options->forceFallbackAdapter && !IsFallbackAdapter(physicalDevice.Get())) {
                     continue;
                 }
                 // This loop can't filter adapters based on SupportsFeatureLevel() since the results

@@ -40,7 +40,8 @@ TEST_F(MslWriterTest, LetU32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -57,7 +58,8 @@ TEST_F(MslWriterTest, LetDuplicate) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -74,7 +76,8 @@ TEST_F(MslWriterTest, LetF32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -90,7 +93,8 @@ TEST_F(MslWriterTest, LetI32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -107,7 +111,8 @@ TEST_F(MslWriterTest, LetF16) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -123,7 +128,8 @@ TEST_F(MslWriterTest, LetVec3F32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -140,7 +146,8 @@ TEST_F(MslWriterTest, LetVec3F16) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -157,7 +164,8 @@ TEST_F(MslWriterTest, LetMat2x3F32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -175,7 +183,8 @@ TEST_F(MslWriterTest, LetMat2x3F16) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -191,11 +200,12 @@ TEST_F(MslWriterTest, LetArrF32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
-    EXPECT_EQ(output_.msl, MetalHeader() + MetalArray() + R"(
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
+    EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
-  tint_array<float, 3> const l = tint_array<float, 3>{1.0f, 2.0f, 3.0f};
+  array<float, 3> const l = array<float, 3>{1.0f, 2.0f, 3.0f};
 }
 )");
 }
@@ -209,11 +219,12 @@ TEST_F(MslWriterTest, LetArrVec2Bool) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
-    EXPECT_EQ(output_.msl, MetalHeader() + MetalArray() + R"(
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
+    EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
-  tint_array<bool2, 3> const l = tint_array<bool2, 3>{bool2(true, false), bool2(false, true), bool2(true, false)};
+  array<bool2, 3> const l = array<bool2, 3>{bool2(true, false), bool2(false, true), bool2(true, false)};
 }
 )");
 }

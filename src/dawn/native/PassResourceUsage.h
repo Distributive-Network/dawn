@@ -31,8 +31,12 @@
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
-#include "dawn/native/SubresourceStorage.h"
-#include "dawn/native/dawn_platform.h"
+#include "partition_alloc/pointers/raw_ptr.h"
+#include "partition_alloc/pointers/raw_ptr_exclusion.h"
+#include "src/dawn/common/ityp_vector.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/SubresourceStorage.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace dawn::native {
 
@@ -67,13 +71,14 @@ using TextureSubresourceSyncInfo = SubresourceStorage<TextureSyncInfo>;
 // buffer validation pre-computes this information so that backends with explicit barriers
 // don't have to re-compute it.
 struct SyncScopeResourceUsage {
-    std::vector<BufferBase*> buffers;
+    RAW_PTR_EXCLUSION std::vector<BufferBase*> buffers;
     std::vector<BufferSyncInfo> bufferSyncInfos;
 
-    std::vector<TextureBase*> textures;
+    RAW_PTR_EXCLUSION std::vector<TextureBase*> textures;
     std::vector<TextureSubresourceSyncInfo> textureSyncInfos;
 
-    std::vector<ExternalTextureBase*> externalTextures;
+    RAW_PTR_EXCLUSION std::vector<ExternalTextureBase*> externalTextures;
+    raw_ptr<ResourceTableBase> resourceTable;
 };
 
 // Contains all the resource usage data for a compute pass.
@@ -86,9 +91,12 @@ struct ComputePassResourceUsage {
     std::vector<SyncScopeResourceUsage> dispatchUsages;
 
     // All the resources referenced by this compute pass for validation in Queue::Submit.
-    absl::flat_hash_set<BufferBase*> referencedBuffers;
-    absl::flat_hash_set<TextureBase*> referencedTextures;
-    absl::flat_hash_set<ExternalTextureBase*> referencedExternalTextures;
+    // NOTE: these are hot (populated on every SetBindGroup) so they are intentionally left as
+    // raw pointers instead of raw_ptr<T>. See b/551978862.
+    RAW_PTR_EXCLUSION absl::flat_hash_set<BufferBase*> referencedBuffers;
+    RAW_PTR_EXCLUSION absl::flat_hash_set<TextureBase*> referencedTextures;
+    RAW_PTR_EXCLUSION absl::flat_hash_set<ExternalTextureBase*> referencedExternalTextures;
+    RAW_PTR_EXCLUSION absl::flat_hash_set<ResourceTableBase*> referencedResourceTables;
 };
 
 // Contains all the resource usage data for a render pass.
@@ -98,12 +106,13 @@ struct ComputePassResourceUsage {
 // RenderBundle so they can be merged into the render passes' usage on ExecuteBundles().
 struct RenderPassResourceUsage : public SyncScopeResourceUsage {
     // Storage to track the occlusion queries used during the pass.
-    std::vector<QuerySetBase*> querySets;
-    std::vector<std::vector<bool>> queryAvailabilities;
+    std::vector<raw_ptr<QuerySetBase>> querySets;
+    std::vector<ityp::vector<QueryIndex, bool>> queryAvailabilities;
+    bool usesFramebufferFetch = false;
 };
 
-using RenderPassUsages = std::vector<RenderPassResourceUsage>;
-using ComputePassUsages = std::vector<ComputePassResourceUsage>;
+using RenderPassUsages = ityp::vector<PassIndex, RenderPassResourceUsage>;
+using ComputePassUsages = ityp::vector<PassIndex, ComputePassResourceUsage>;
 
 // Contains a hierarchy of "ResourceUsage" that mirrors the hierarchy of the CommandBuffer and
 // is used for validation and to produce barriers and lazy clears in the backends.
@@ -112,11 +121,15 @@ struct CommandBufferResourceUsage {
     ComputePassUsages computePasses;
 
     // Resources used in commands that aren't in a pass.
-    absl::flat_hash_set<BufferBase*> topLevelBuffers;
-    absl::flat_hash_set<TextureBase*> topLevelTextures;
-    absl::flat_hash_set<QuerySetBase*> usedQuerySets;
-    absl::flat_hash_set<ResourceTableBase*> usedResourceTables;
+    // NOTE: these are hot (populated on every copy command) so they are intentionally left as
+    // raw pointers instead of raw_ptr<T>. See b/551978862.
+    RAW_PTR_EXCLUSION absl::flat_hash_set<BufferBase*> topLevelBuffers;
+    RAW_PTR_EXCLUSION absl::flat_hash_set<TextureBase*> topLevelTextures;
+    RAW_PTR_EXCLUSION absl::flat_hash_set<QuerySetBase*> usedQuerySets;
 };
+
+// Returns a set of writable textures from scope.textures
+absl::flat_hash_set<TextureBase*> GatherWritableTextures(const SyncScopeResourceUsage& scope);
 
 }  // namespace dawn::native
 

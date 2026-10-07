@@ -25,11 +25,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/TexelBufferView.h"
-#include "dawn/native/Buffer.h"
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/Device.h"
+#include "src/dawn/native/TexelBufferView.h"
+
 #include "dawn/native/ObjectType_autogen.h"
+#include "src/dawn/native/Buffer.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/Device.h"
 
 namespace dawn::native {
 
@@ -55,8 +56,8 @@ bool IsFormatSupportedForTexelBuffer(wgpu::TextureFormat format) {
     }
 }
 
-ResultOrError<const Format*> ValidateTexelBufferFormat(DeviceBase* device,
-                                                       wgpu::TextureFormat format) {
+ResultOrValError<const Format*> ValidateTexelBufferFormat(DeviceBase* device,
+                                                          wgpu::TextureFormat format) {
     DAWN_INVALID_IF(format == wgpu::TextureFormat::Undefined, "Texel buffer format is undefined.");
 
     const Format* internalFormat = nullptr;

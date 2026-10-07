@@ -22,14 +22,13 @@ void f() {
       }
       if (tint_continue) {
         {
-          i = asint((asuint(i) + asuint(int(1))));
+          i = asint((asuint(i) + 1u));
         }
         continue;
       }
       {
-        i = asint((asuint(i) + asuint(int(1))));
+        i = asint((asuint(i) + 1u));
       }
-      continue;
     }
   }
 }

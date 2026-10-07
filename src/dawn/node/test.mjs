@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { describe, it, before, after } from 'node:test';
+import { Worker, } from 'node:worker_threads';
 
 const require = createRequire(import.meta.url);
 
@@ -256,9 +257,47 @@ describe('tests', async () => {
         });
         texture.destroy();
       });
-      assert.ok(() => e?.error.message.includes('maxTextureDimension2D'));
+      assert.ok(() => e?.error.message.includes('exceeded maximum texture size'));
     });
 
+  });
+
+  await describe('prototype toStringTag', async () => {
+    await it('the property is present in the prototype', async () => {
+      assert.ok(() => GPU.prototype[Symbol.toStringTag] === 'GPU');
+
+      const descriptor = Object.getOwnPropertyDescriptor(GPU.prototype, Symbol.toStringTag);
+      assert.ok(() => !descriptor.writable);
+      assert.ok(() => !descriptor.enumerable);
+      assert.ok(() => descriptor.configurable);
+    });
+
+    await it('toString.call works on instances', async () => {
+      assert.ok(() => Object.prototype.toString.call(navigator.gpu) === '[object GPU]');
+    });
+  });
+
+  await describe('worker threads tests', async () => {
+    it('can request adapter in multiple worker threads simultaneously', async () => {
+      const numWorkers = 4;
+      const workers = [];
+
+      for (let i = 0; i < numWorkers; i++) {
+        workers.push(new Promise((resolve, reject) => {
+          const worker = new Worker(join(__dirname, 'worker-test.mjs'), { type: 'module' });
+          worker.on('message', (msg) => {
+            if (msg === 'success') resolve();
+            else reject(new Error(`Worker failed: ${msg}`));
+          });
+          worker.on('error', reject);
+          worker.on('exit', (code) => {
+            if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
+          });
+        }));
+      }
+
+      await Promise.all(workers);
+    });
   });
 
 });

@@ -25,109 +25,100 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <algorithm>
+#include <utility>
 
-#include "absl/types/span.h"  // TODO(343500108): Use std::span when we have C++20.
-#include "dawn/common/StringViewUtils.h"
-#include "dawn/wire/SupportedFeatures.h"
-#include "dawn/wire/server/ObjectStorage.h"
-#include "dawn/wire/server/Server.h"
+#include "src/dawn/common/StringViewUtils.h"
+#include "src/dawn/wire/SupportedFeatures.h"
+#include "src/dawn/wire/server/ObjectStorage.h"
+#include "src/dawn/wire/server/Server.h"
 
 namespace dawn::wire::server {
 
 WireResult Server::DoInstanceRequestAdapter(Known<WGPUInstance> instance,
-                                            ObjectHandle eventManager,
-                                            WGPUFuture future,
+                                            Future future,
                                             ObjectHandle adapterHandle,
-                                            const WGPURequestAdapterOptions* options) {
+                                            const RequestAdapterOptions* options) {
     Reserved<WGPUAdapter> adapter;
     WIRE_TRY(Allocate(&adapter, adapterHandle, AllocationState::Reserved));
 
     auto userdata = MakeUserdata<RequestAdapterUserdata>();
-    userdata->eventManager = eventManager;
+    userdata->instanceId = instance.id;
     userdata->future = future;
-    userdata->adapterObjectId = adapter.id;
+    userdata->adapter = adapter.AsHandle();
 
-    mProcs.instanceRequestAdapter(
-        instance->handle, options,
+    mProcs->instanceRequestAdapter(
+        instance->handle, ToAPI(options),
         MakeCallbackInfo<WGPURequestAdapterCallbackInfo, &Server::OnRequestAdapterCallback,
-                         WGPUCallbackMode_AllowSpontaneous>(userdata.release()));
+                         wgpu::CallbackMode::AllowSpontaneous>(userdata.release()));
     return WireResult::Success;
 }
 
 void Server::OnRequestAdapterCallback(RequestAdapterUserdata* data,
-                                      WGPURequestAdapterStatus status,
+                                      wgpu::RequestAdapterStatus status,
                                       WGPUAdapter adapter,
-                                      WGPUStringView message) {
+                                      StringView message) {
     ReturnInstanceRequestAdapterCallbackCmd cmd = {};
-    cmd.eventManager = data->eventManager;
+    cmd.instanceId = data->instanceId;
     cmd.future = data->future;
     cmd.status = status;
     cmd.message = message;
 
-    if (status != WGPURequestAdapterStatus_Success) {
+    if (status != wgpu::RequestAdapterStatus::Success) {
         DAWN_ASSERT(adapter == nullptr);
-        SerializeCommand(cmd);
+        SerializeCommand(std::move(cmd));
         return;
     }
 
     // Assign the handle and allocated status if the adapter is created successfully.
-    if (FillReservation(data->adapterObjectId, adapter) == WireResult::FatalError) {
-        cmd.status = WGPURequestAdapterStatus_CallbackCancelled;
-        cmd.message = ToOutputStringView("Destroyed before request was fulfilled.");
-        SerializeCommand(cmd);
+    if (FillReservation(data->adapter, adapter) == WireResult::FatalError) {
+        cmd.status = wgpu::RequestAdapterStatus::CallbackCancelled;
+        cmd.message = "Destroyed before request was fulfilled.";
+        SerializeCommand(std::move(cmd));
         return;
     }
 
     // Query and report the adapter supported features.
-    FreeMembers<WGPUSupportedFeatures> supportedFeatures(mProcs);
-    mProcs.adapterGetFeatures(adapter, &supportedFeatures);
-    cmd.featuresCount = supportedFeatures.featureCount;
+    FreeMembers<SupportedFeatures> supportedFeatures(mProcs);
+    mProcs->adapterGetFeatures(adapter, ToAPI(&supportedFeatures));
     cmd.features = supportedFeatures.features;
 
     // Query and report the adapter info.
-    FreeMembers<WGPUAdapterInfo> info(mProcs);
-    WGPUChainedStruct** propertiesChain = &info.nextInChain;
+    FreeMembers<AdapterInfo> info(mProcs);
+    ChainedStructOut** propertiesChain = &info.nextInChain;
 
     // Query AdapterPropertiesMemoryHeaps if the feature is supported.
-    FreeMembers<WGPUAdapterPropertiesMemoryHeaps> memoryHeapProperties(mProcs);
-    memoryHeapProperties.chain.sType = WGPUSType_AdapterPropertiesMemoryHeaps;
-    if (mProcs.adapterHasFeature(adapter, WGPUFeatureName_AdapterPropertiesMemoryHeaps)) {
-        *propertiesChain = &memoryHeapProperties.chain;
-        propertiesChain = &(*propertiesChain)->next;
+    FreeMembers<AdapterPropertiesMemoryHeaps> memoryHeapProperties(mProcs);
+    if (mProcs->adapterHasFeature(adapter, WGPUFeatureName_AdapterPropertiesMemoryHeaps)) {
+        *propertiesChain = &memoryHeapProperties;
+        propertiesChain = &(*propertiesChain)->nextInChain;
     }
 
     // Query AdapterPropertiesD3D if the feature is supported.
-    WGPUAdapterPropertiesD3D d3dProperties = {};
-    d3dProperties.chain.sType = WGPUSType_AdapterPropertiesD3D;
-    if (mProcs.adapterHasFeature(adapter, WGPUFeatureName_AdapterPropertiesD3D)) {
-        *propertiesChain = &d3dProperties.chain;
-        propertiesChain = &(*propertiesChain)->next;
+    AdapterPropertiesD3D d3dProperties;
+    if (mProcs->adapterHasFeature(adapter, WGPUFeatureName_AdapterPropertiesD3D)) {
+        *propertiesChain = &d3dProperties;
+        propertiesChain = &(*propertiesChain)->nextInChain;
     }
 
     // Query AdapterPropertiesVk if the feature is supported.
-    WGPUAdapterPropertiesVk vkProperties = {};
-    vkProperties.chain.sType = WGPUSType_AdapterPropertiesVk;
-    if (mProcs.adapterHasFeature(adapter, WGPUFeatureName_AdapterPropertiesVk)) {
-        *propertiesChain = &vkProperties.chain;
-        propertiesChain = &(*propertiesChain)->next;
+    AdapterPropertiesVk vkProperties;
+    if (mProcs->adapterHasFeature(adapter, WGPUFeatureName_AdapterPropertiesVk)) {
+        *propertiesChain = &vkProperties;
+        propertiesChain = &(*propertiesChain)->nextInChain;
     }
 
     // Query AdapterPropertiesSubgroupMatrixConfigs if the feature is supported.
-    FreeMembers<WGPUAdapterPropertiesSubgroupMatrixConfigs> subgroupMatrixConfigs(mProcs);
-    // WGPUAdapterPropertiesSubgroupMatrixConfigs subgroupMatrixConfigs{};
-    subgroupMatrixConfigs.chain.sType = WGPUSType_AdapterPropertiesSubgroupMatrixConfigs;
-    if (mProcs.adapterHasFeature(adapter, WGPUFeatureName_ChromiumExperimentalSubgroupMatrix)) {
-        *propertiesChain = &subgroupMatrixConfigs.chain;
-        propertiesChain = &(*propertiesChain)->next;
+    FreeMembers<AdapterPropertiesSubgroupMatrixConfigs> subgroupMatrixConfigs(mProcs);
+    if (mProcs->adapterHasFeature(adapter, WGPUFeatureName_ChromiumExperimentalSubgroupMatrix)) {
+        *propertiesChain = &subgroupMatrixConfigs;
+        propertiesChain = &(*propertiesChain)->nextInChain;
     }
 
-    WGPUDawnAdapterPropertiesPowerPreference powerProperties = {};
-    powerProperties.chain.sType = WGPUSType_DawnAdapterPropertiesPowerPreference;
-    *propertiesChain = &powerProperties.chain;
-    propertiesChain = &(*propertiesChain)->next;
+    DawnAdapterPropertiesPowerPreference powerProperties;
+    *propertiesChain = &powerProperties;
+    propertiesChain = &(*propertiesChain)->nextInChain;
 
-    mProcs.adapterGetInfo(adapter, &info);
+    mProcs->adapterGetInfo(adapter, ToAPI(&info));
     cmd.info = &info;
 
     // Query and report the adapter limits, including all known extension limits.
@@ -142,10 +133,10 @@ void Server::OnRequestAdapterCallback(RequestAdapterUserdata* data,
         WGPU_DAWN_TEXEL_COPY_BUFFER_ROW_ALIGNMENT_LIMITS_INIT;
     compatLimits.chain.next = &texelCopyBufferRowAlignmentLimits.chain;
 
-    mProcs.adapterGetLimits(adapter, &limits);
-    cmd.limits = &limits;
+    mProcs->adapterGetLimits(adapter, &limits);
+    cmd.limits = FromAPI(&limits);
 
-    SerializeCommand(cmd);
+    SerializeCommand(std::move(cmd));
 }
 
 }  // namespace dawn::wire::server

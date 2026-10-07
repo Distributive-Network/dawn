@@ -31,7 +31,7 @@
 #include <utility>
 
 #include "src/tint/lang/core/ir/builder.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/type/binding_array.h"
 #include "src/tint/lang/msl/builtin_fn.h"
 #include "src/tint/lang/msl/ir/builtin_call.h"
@@ -84,7 +84,7 @@ struct State {
     static constexpr const char* kDynamicOffsetParamName = "tint_dynamic_offset_buffer";
 
     /// Process the module.
-    void Process() {
+    Result<SuccessType> Process() {
         // Seed the block-to-function map with the function entry blocks.
         // This is used to determine the owning function for any given instruction.
         for (auto& func : ir.functions) {
@@ -112,8 +112,19 @@ struct State {
                 continue;
             }
 
-            Vector<core::ir::Instruction*, 16> to_destroy;
             auto* ptr = var->Result()->Type()->As<core::type::Pointer>();
+
+            // Only uniform and storage buffers support dynamic offsets.
+            if (!(ptr->AddressSpace() == core::AddressSpace::kStorage ||
+                  ptr->AddressSpace() == core::AddressSpace::kUniform)) {
+                auto binding_iter =
+                    iter->second.binding_info_to_offset_index.find(var->BindingPoint()->binding);
+                if (binding_iter != iter->second.binding_info_to_offset_index.end()) {
+                    return Failure("dynamic offset supplied for non-buffer type");
+                }
+            }
+
+            Vector<core::ir::Instruction*, 16> to_destroy;
             var->Result()->ForEachUseUnsorted([&](core::ir::Usage use) {  //
                 auto* extracted_variable = GetVariableFromStruct(var, use.instruction);
 
@@ -158,6 +169,8 @@ struct State {
                 inst->Destroy();
             }
         }
+
+        return Success;
     }
 
     /// Create the argument buffers. Each bind group will have a separate structure.
@@ -332,26 +345,26 @@ struct State {
 
             auto idx = *var_to_struct_idx.Get(var);
 
-            auto* access = b.Access(type, arg_buffer->second, u32(idx));
-            access->InsertBefore(inst);
+            core::ir::Value* access = nullptr;
+            b.InsertBefore(inst, [&] { access = b.Access(type, arg_buffer->second, u32(idx)); });
 
             auto grp_iter = config.group_to_argument_buffer_info.find(group);
             if (grp_iter == config.group_to_argument_buffer_info.end()) {
-                return access->Result();
+                return access;
             }
 
             auto binding_iter = grp_iter->second.binding_info_to_offset_index.find(binding);
             if (binding_iter == grp_iter->second.binding_info_to_offset_index.end()) {
-                return access->Result();
+                return access;
             }
 
             core::ir::Value* offset_buffer = group_to_dynamic_offset_buffer.GetOr(group, nullptr);
             if (!offset_buffer) {
-                return access->Result();
+                return access;
             }
 
             core::ir::Value* result = nullptr;
-            b.InsertAfter(access, [&] {
+            b.InsertBefore(inst, [&] {
                 auto* offset = b.Access(ty.ptr<storage, u32, read>(), offset_buffer,
                                         b.Constant(u32(binding_iter->second)));
 
@@ -379,14 +392,12 @@ struct State {
 }  // namespace
 
 Result<SuccessType> ArgumentBuffers(core::ir::Module& ir, const ArgumentBuffersConfig& config) {
-    TINT_CHECK_RESULT(
-        ValidateAndDumpIfNeeded(ir, "msl.ArgumentBuffers",
-                                tint::core::ir::Capabilities{
-                                    tint::core::ir::Capability::kAllowPointSizeBuiltin,
-                                    tint::core::ir::Capability::kAllowDuplicateBindings,
-                                }));
+    AssertValid(ir, "before msl.ArgumentBuffers");
 
-    State{config, ir}.Process();
+    TINT_CHECK_RESULT((State{config, ir}.Process()));
+
+    ir.properties.Add(core::ir::Property::kAllowMslEntryPointInterface);
+    ir.properties.Add(core::ir::Property::kAllowPointerAndHandleInAggregates);
 
     return Success;
 }

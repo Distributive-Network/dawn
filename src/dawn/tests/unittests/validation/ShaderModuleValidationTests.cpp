@@ -25,6 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <array>
 #include <bit>
 #include <limits>
 #include <memory>
@@ -34,24 +35,26 @@
 #include <utility>
 #include <vector>
 
-#include "dawn/common/Constants.h"
-#include "dawn/native/CompilationMessages.h"
-#include "dawn/native/ShaderModule.h"
-#include "dawn/tests/unittests/validation/ValidationTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/native/CompilationMessages.h"
+#include "src/dawn/native/ShaderModule.h"
+#include "src/dawn/tests/unittests/validation/ValidationTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/compiler.h"
 
-#if TINT_BUILD_SPV_READER && !defined(__EMSCRIPTEN__)
+#if TINT_BUILD_SPV_READER && !DAWN_PLATFORM_IS(EMSCRIPTEN)
 #include "spirv-tools/optimizer.hpp"
-#endif  // TINT_BUILD_SPV_READER && !defined(__EMSCRIPTEN__)
+#endif  // TINT_BUILD_SPV_READER && !DAWN_PLATFORM_IS(EMSCRIPTEN)
 
 namespace dawn {
 namespace {
 
 class ShaderModuleValidationTest : public ValidationTest {};
 
-#if TINT_BUILD_SPV_READER && !defined(__EMSCRIPTEN__)
+#if TINT_BUILD_SPV_READER && !DAWN_PLATFORM_IS(EMSCRIPTEN)
 
+template <typename T = wgpu::ShaderSourceSPIRV>
 wgpu::ShaderModule CreateShaderModuleFromASM(
     const wgpu::Device& device,
     const char* source,
@@ -70,8 +73,8 @@ wgpu::ShaderModule CreateShaderModuleFromASM(
         DAWN_ASSERT(spirv != nullptr);
         DAWN_ASSERT(spirv->wordCount <= std::numeric_limits<uint32_t>::max());
 
-        wgpu::ShaderSourceSPIRV spirvDesc;
-        spirvDesc.codeSize = static_cast<uint32_t>(spirv->wordCount);
+        T spirvDesc;
+        spirvDesc.codeSize = static_cast<decltype(spirvDesc.codeSize)>(spirv->wordCount);
         spirvDesc.code = spirv->code;
         spirvDesc.nextInChain = spirv_options;
 
@@ -121,7 +124,8 @@ TEST_F(ShaderModuleValidationTest, CreationSuccess) {
                    OpReturn
                    OpFunctionEnd)";
 
-    CreateShaderModuleFromASM(device, shader);
+    CreateShaderModuleFromASM<wgpu::ShaderSourceSPIRV>(device, shader);
+    CreateShaderModuleFromASM<wgpu::DawnShaderSourceSPIRV>(device, shader);
 }
 
 // Tint's SPIR-V reader transforms a combined image sampler into two
@@ -207,47 +211,6 @@ TEST_F(ShaderModuleValidationTest, ArrayOfCombinedTextureAndSampler) {
     ASSERT_DEVICE_ERROR(CreateShaderModuleFromASM(device, shader));
 }
 
-// Test that it is not allowed to declare a multisampled-array interface texture.
-// TODO(enga): Also test multisampled cube, cube array, and 3D. These have no GLSL keywords.
-TEST_F(ShaderModuleValidationTest, MultisampledArrayTexture) {
-    // SPIR-V ASM produced by glslang for the following fragment shader:
-    //
-    //  #version 450
-    //  layout(set=0, binding=0) uniform texture2DMSArray tex;
-    //  void main () {}}
-    //
-    // Note that the following defines an interface array multisampled texture which is not allowed
-    // in Dawn / WebGPU.
-    //
-    //  %7 = OpTypeImage %float 2D 0 1 1 1 Unknown
-    //  %_ptr_UniformConstant_7 = OpTypePointer UniformConstant %7
-    //  %tex = OpVariable %_ptr_UniformConstant_7 UniformConstant
-    const char* shader = R"(
-               OpCapability Shader
-          %1 = OpExtInstImport "GLSL.std.450"
-               OpMemoryModel Logical GLSL450
-               OpEntryPoint Fragment %main "main"
-               OpExecutionMode %main OriginUpperLeft
-               OpSource GLSL 450
-               OpName %main "main"
-               OpName %tex "tex"
-               OpDecorate %tex DescriptorSet 0
-               OpDecorate %tex Binding 0
-       %void = OpTypeVoid
-          %3 = OpTypeFunction %void
-      %float = OpTypeFloat 32
-          %7 = OpTypeImage %float 2D 0 1 1 1 Unknown
-%_ptr_UniformConstant_7 = OpTypePointer UniformConstant %7
-        %tex = OpVariable %_ptr_UniformConstant_7 UniformConstant
-       %main = OpFunction %void None %3
-          %5 = OpLabel
-               OpReturn
-               OpFunctionEnd
-        )";
-
-    ASSERT_DEVICE_ERROR(CreateShaderModuleFromASM(device, shader));
-}
-
 const char* kShaderWithNonUniformDerivative = R"(
                OpCapability Shader
                OpMemoryModel Logical GLSL450
@@ -297,7 +260,7 @@ TEST_F(ShaderModuleValidationTest, NonUniformDerivatives_FlagSetToTrue) {
     CreateShaderModuleFromASM(device, kShaderWithNonUniformDerivative, &spirv_options_desc);
 }
 
-#endif  // TINT_BUILD_SPV_READER && !defined(__EMSCRIPTEN__)
+#endif  // TINT_BUILD_SPV_READER && !DAWN_PLATFORM_IS(EMSCRIPTEN)
 
 // Test that it is invalid to create a shader module with no chained descriptor. (It must be
 // WGSL or SPIRV, not empty)
@@ -399,7 +362,7 @@ TEST_F(ShaderModuleValidationTest, GetCompilationMessages) {
                 reinterpret_cast<const wgpu::DawnCompilationMessageUtf16*>(message->nextInChain);
             EXPECT_EQ(0u, utf16->linePos);
 
-            message = &info->messages[1];
+            message = &DAWN_UNSAFE_TODO(info->messages[1]);
             ASSERT_EQ("Warning Message", std::string_view(message->message));
             ASSERT_EQ(wgpu::CompilationMessageType::Warning, message->type);
             ASSERT_EQ(0u, message->lineNum);
@@ -410,7 +373,7 @@ TEST_F(ShaderModuleValidationTest, GetCompilationMessages) {
                 reinterpret_cast<const wgpu::DawnCompilationMessageUtf16*>(message->nextInChain);
             EXPECT_EQ(0u, utf16->linePos);
 
-            message = &info->messages[2];
+            message = &DAWN_UNSAFE_TODO(info->messages[2]);
             ASSERT_EQ("Error Message", std::string_view(message->message));
             ASSERT_EQ(wgpu::CompilationMessageType::Error, message->type);
             ASSERT_EQ(3u, message->lineNum);
@@ -421,7 +384,7 @@ TEST_F(ShaderModuleValidationTest, GetCompilationMessages) {
                 reinterpret_cast<const wgpu::DawnCompilationMessageUtf16*>(message->nextInChain);
             EXPECT_EQ(4u, utf16->linePos);
 
-            message = &info->messages[3];
+            message = &DAWN_UNSAFE_TODO(info->messages[3]);
             ASSERT_EQ("Complete Message", std::string_view(message->message));
             ASSERT_EQ(wgpu::CompilationMessageType::Info, message->type);
             ASSERT_EQ(3u, message->lineNum);
@@ -745,7 +708,7 @@ class ShaderModuleMaxInterStageShaderVariablesValidationTest : public Validation
         adapter.GetFeatures(&supportedFeatures);
         std::vector<wgpu::FeatureName> requiredFeatures(
             supportedFeatures.features,
-            supportedFeatures.features + supportedFeatures.featureCount);
+            DAWN_UNSAFE_TODO(supportedFeatures.features + supportedFeatures.featureCount));
         return requiredFeatures;
     }
 };
@@ -908,20 +871,20 @@ TEST_F(ShaderModuleMaxInterStageShaderVariablesValidationTest, Test) {
             const char* extension;
             std::optional<wgpu::FeatureName> requiredFeature;
         };
-        Builtin builtins[] = {
+        auto builtins = std::array<Builtin, 6>({
             {"front_facing", "bool", nullptr, {}},
             {"sample_index", "u32", nullptr, {}},
             {"sample_mask", "u32", nullptr, {}},
             {"primitive_index", "u32", "primitive_index", wgpu::FeatureName::PrimitiveIndex},
             {"subgroup_invocation_id", "u32", "subgroups", wgpu::FeatureName::Subgroups},
             {"subgroup_size", "u32", "subgroups", wgpu::FeatureName::Subgroups},
-        };
+        });
         for (uint8_t mask = 1; mask < 1 << std::size(builtins); ++mask) {
             std::string builtInDeclarations = "";
             bool canTest = true;
             for (uint8_t b = 0; b < std::size(builtins); ++b) {
                 if (mask & (1 << b)) {
-                    const Builtin& builtin = builtins[b];
+                    const Builtin& builtin = DAWN_UNSAFE_TODO(builtins[b]);
                     builtInDeclarations += "@builtin(" + std::string(builtin.name) + ") b_" +
                                            std::string(builtin.name) + ": " +
                                            std::string(builtin.type) + ",";
@@ -973,10 +936,11 @@ const WGSLExtensionInfo kExtensions[] = {
     {"primitive_index", false, {wgpu::FeatureName::PrimitiveIndex}, {}},
     {"chromium_experimental_pixel_local", true, {wgpu::FeatureName::PixelLocalStorageCoherent}, {}},
     {"chromium_disable_uniformity_analysis", true, {}, {}},
-    {"chromium_internal_graphite", true, {}, {}},
     {"chromium_experimental_framebuffer_fetch", true, {wgpu::FeatureName::FramebufferFetch}, {}},
-    {"chromium_experimental_subgroup_matrix", true, {wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix}, {}},
-    {"chromium_experimental_resource_table", true, {wgpu::FeatureName::ChromiumExperimentalSamplingResourceTable}, {}}
+    {"chromium_experimental_subgroup_matrix", true, {wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix}, {"subgroups"}},
+    {"chromium_experimental_resource_table", true, {wgpu::FeatureName::ChromiumExperimentalSamplingResourceTable}, {}},
+    {"subgroup_size_control", false, {wgpu::FeatureName::SubgroupSizeControl}, {"subgroups"}},
+    {"atomic_vec2u_min_max", false, {wgpu::FeatureName::AtomicVec2uMinMax}, {}}
 
     // Currently the following WGSL extensions are not enabled under any situation.
     /*
@@ -999,7 +963,7 @@ class ShaderModuleExtensionValidationTest : public ValidationTest {
         wgpu::SupportedFeatures supportedFeatures;
         adapter.GetFeatures(&supportedFeatures);
         for (uint32_t i = 0; i < supportedFeatures.featureCount; ++i) {
-            requiredFeatures.push_back(supportedFeatures.features[i]);
+            requiredFeatures.push_back(DAWN_UNSAFE_TODO(supportedFeatures.features[i]));
         }
         return requiredFeatures;
     }
@@ -1150,6 +1114,113 @@ INSTANTIATE_TEST_SUITE_P(,
                          ShaderModuleExtensionValidationTestUnsafeOnlyRequiredFeatures,
                          ::testing::Combine(::testing::ValuesIn(kExtensions),
                                             ::testing::Values(true, false)));
+
+class SubgroupSizeControlValidationTest : public ValidationTest {
+  protected:
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        return {wgpu::FeatureName::SubgroupSizeControl};
+    }
+    void TestTotalInvocationsPerWorkgroupAndSubgroupSize(const std::vector<uint32_t>& workgroupSize,
+                                                         uint32_t subgroupSize,
+                                                         bool success) {
+        for (bool setSubgroupSizeAsOverride : {true, false}) {
+            std::ostringstream stream;
+            stream << R"(
+enable subgroups;
+enable subgroup_size_control;)";
+
+            if (setSubgroupSizeAsOverride) {
+                stream << "override kSubgroupSize : u32;\n";
+            } else {
+                stream << "const kSubgroupSize = " << subgroupSize << ";\n";
+            }
+
+            stream << "@compute @subgroup_size(kSubgroupSize) @workgroup_size(" << workgroupSize[0];
+            for (uint32_t i = 1; i < workgroupSize.size(); ++i) {
+                stream << ", " << workgroupSize[i];
+            }
+            stream << ")\n";
+            stream << R"(
+fn main(@builtin(subgroup_invocation_id) sg_id : u32,
+        @builtin(subgroup_size) sg_size : u32) {
+    _ = sg_id + sg_size;
+})";
+
+            wgpu::ComputePipelineDescriptor pipelineDesc = {};
+            pipelineDesc.compute.module = utils::CreateShaderModule(device, stream.str().c_str());
+
+            wgpu::ConstantEntry entry = {};
+            if (setSubgroupSizeAsOverride) {
+                entry.key = "kSubgroupSize";
+                entry.value = static_cast<double>(subgroupSize);
+                pipelineDesc.compute.constantCount = 1;
+                pipelineDesc.compute.constants = &entry;
+            }
+
+            if (success) {
+                device.CreateComputePipeline(&pipelineDesc);
+            } else {
+                ASSERT_DEVICE_ERROR(device.CreateComputePipeline(&pipelineDesc));
+            }
+        }
+    }
+};
+
+// Test the X-dimension of the work group size must be a multiple of subgroup size when the
+// `@subgroup_size` attribute is used.
+TEST_F(SubgroupSizeControlValidationTest, ValidateTotalInvocationsPerWorkgroupAndSubgroupSize) {
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({32}, 16, true);
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({16, 4}, 16, true);
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({16, 4, 2}, 16, true);
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({4, 16}, 16, false);
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({4, 2, 16}, 16, false);
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({8, 4}, 16, false);
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({8, 4, 2}, 32, false);
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({24}, 16, false);
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({8, 3, 2}, 32, false);
+    TestTotalInvocationsPerWorkgroupAndSubgroupSize({32}, 32, true);
+}
+
+// Test that @subgroup_size(0) produces a validation error.
+TEST_F(SubgroupSizeControlValidationTest, ZeroSubgroupSizeIsInvalid) {
+    // Test with subgroup_size set as an override constant to 0.
+    {
+        std::string shader = R"(
+enable subgroups;
+enable subgroup_size_control;
+override kSubgroupSize : u32;
+@compute @subgroup_size(kSubgroupSize) @workgroup_size(32)
+fn main(@builtin(subgroup_invocation_id) sg_id : u32,
+        @builtin(subgroup_size) sg_size : u32) {
+    _ = sg_id + sg_size;
+})";
+
+        wgpu::ComputePipelineDescriptor pipelineDesc = {};
+        pipelineDesc.compute.module = utils::CreateShaderModule(device, shader.c_str());
+
+        wgpu::ConstantEntry entry = {};
+        entry.key = "kSubgroupSize";
+        entry.value = 0.0;
+        pipelineDesc.compute.constantCount = 1;
+        pipelineDesc.compute.constants = &entry;
+
+        ASSERT_DEVICE_ERROR(device.CreateComputePipeline(&pipelineDesc));
+    }
+
+    // Test with subgroup_size set as a module-scope constant to 0.
+    {
+        std::string shader = R"(
+enable subgroups;
+enable subgroup_size_control;
+const kSubgroupSize = 0u;
+@compute @subgroup_size(kSubgroupSize) @workgroup_size(32)
+fn main(@builtin(subgroup_invocation_id) sg_id : u32,
+        @builtin(subgroup_size) sg_size : u32) {
+    _ = sg_id + sg_size;
+})";
+        ASSERT_DEVICE_ERROR(utils::CreateShaderModule(device, shader.c_str()));
+    }
+}
 
 }  // anonymous namespace
 }  // namespace dawn

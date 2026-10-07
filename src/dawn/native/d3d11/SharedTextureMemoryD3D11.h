@@ -30,9 +30,9 @@
 
 #include <optional>
 
-#include "dawn/native/Error.h"
-#include "dawn/native/d3d/SharedTextureMemoryD3D.h"
-#include "dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/d3d/SharedTextureMemoryD3D.h"
+#include "src/dawn/native/d3d/d3d_platform.h"
 
 namespace dawn::native {
 namespace d3d {
@@ -86,8 +86,8 @@ class SharedTextureMemory final : public d3d::SharedTextureMemory {
 
     Ref<SharedResourceMemoryContents> CreateContents() override;
 
-    MaybeError BeginAccessImpl(TextureBase* texture,
-                               const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
+    MaybeValError BeginAccessImpl(TextureBase* texture,
+                                  const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
     ResultOrError<FenceAndSignalValue> EndAccessImpl(
         TextureBase* texture,
         ExecutionSerial lastUsageSerial,

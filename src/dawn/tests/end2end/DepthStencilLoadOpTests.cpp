@@ -28,9 +28,9 @@
 #include <algorithm>
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 namespace dawn {
 namespace {
@@ -132,7 +132,8 @@ class DepthStencilLoadOpTests : public DawnTestWithParams<DepthStencilLoadOpTest
                 // textureLoad with texture_depth_xxx is not supported in compat mode.
                 DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
 
-                std::vector<float> expectedDepth(mipSize * mipSize, kDepthValues[mipLevel]);
+                std::vector<float> expectedDepth(static_cast<size_t>(mipSize) * mipSize,
+                                                 kDepthValues[mipLevel]);
                 ExpectSampledDepthData(
                     texture, mipSize, mipSize, 0, mipLevel,
                     new detail::ExpectEq<float>(expectedDepth.data(), expectedDepth.size(), 0.0001))
@@ -144,14 +145,15 @@ class DepthStencilLoadOpTests : public DawnTestWithParams<DepthStencilLoadOpTest
                 DAWN_TEST_UNSUPPORTED_IF(utils::IsStencilOnlyFormat(GetParam().mFormat));
 
                 if (GetParam().mFormat == wgpu::TextureFormat::Depth16Unorm) {
-                    std::vector<uint16_t> expectedDepth(mipSize * mipSize,
+                    std::vector<uint16_t> expectedDepth(static_cast<size_t>(mipSize) * mipSize,
                                                         kU16DepthValues[mipLevel]);
                     EXPECT_TEXTURE_EQ(expectedDepth.data(), texture, {0, 0}, {mipSize, mipSize},
                                       mipLevel, wgpu::TextureAspect::DepthOnly,
-                                      /* bytesPerRow */ 0, /* tolerance */ uint16_t(1))
+                                      /* bytesPerRow */ 0, /* tolerance */ uint16_t{1})
                         << "copy depth mip " << mipLevel;
                 } else {
-                    std::vector<float> expectedDepth(mipSize * mipSize, kDepthValues[mipLevel]);
+                    std::vector<float> expectedDepth(static_cast<size_t>(mipSize) * mipSize,
+                                                     kDepthValues[mipLevel]);
                     EXPECT_TEXTURE_EQ(expectedDepth.data(), texture, {0, 0}, {mipSize, mipSize},
                                       mipLevel, wgpu::TextureAspect::DepthOnly)
                         << "copy depth mip " << mipLevel;
@@ -161,7 +163,8 @@ class DepthStencilLoadOpTests : public DawnTestWithParams<DepthStencilLoadOpTest
             }
 
             case Check::CopyStencil: {
-                std::vector<uint8_t> expectedStencil(mipSize * mipSize, kStencilValues[mipLevel]);
+                std::vector<uint8_t> expectedStencil(static_cast<size_t>(mipSize) * mipSize,
+                                                     kStencilValues[mipLevel]);
                 EXPECT_TEXTURE_EQ(expectedStencil.data(), texture, {0, 0}, {mipSize, mipSize},
                                   mipLevel, wgpu::TextureAspect::StencilOnly)
                     << "copy stencil mip " << mipLevel;
@@ -171,7 +174,8 @@ class DepthStencilLoadOpTests : public DawnTestWithParams<DepthStencilLoadOpTest
             case Check::DepthTest: {
                 DAWN_TEST_UNSUPPORTED_IF(utils::IsStencilOnlyFormat(GetParam().mFormat));
 
-                std::vector<float> expectedDepth(mipSize * mipSize, kDepthValues[mipLevel]);
+                std::vector<float> expectedDepth(static_cast<size_t>(mipSize) * mipSize,
+                                                 kDepthValues[mipLevel]);
                 ExpectAttachmentDepthTestData(texture, GetParam().mFormat, mipSize, mipSize, 0,
                                               mipLevel, expectedDepth)
                     << "depth test mip " << mipLevel;
@@ -200,6 +204,9 @@ class DepthStencilLoadOpTests : public DawnTestWithParams<DepthStencilLoadOpTest
 
 // Check that clearing a mip level works at all.
 TEST_P(DepthStencilLoadOpTests, ClearMip0) {
+    // TODO(crbug.com/519296892): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     // TODO(crbug.com/dawn/1828): depth16unorm broken on Apple GPUs.
     DAWN_SUPPRESS_TEST_IF(IsApple() && GetParam().mFormat == wgpu::TextureFormat::Depth16Unorm);
 
@@ -213,6 +220,9 @@ TEST_P(DepthStencilLoadOpTests, ClearMip0) {
 
 // Check that clearing a non-zero mip level works at all.
 TEST_P(DepthStencilLoadOpTests, ClearMip1) {
+    // TODO(crbug.com/519296892): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
     encoder.BeginRenderPass(&renderPassDescriptors[1]).End();
     wgpu::CommandBuffer commandBuffer = encoder.Finish();
@@ -223,11 +233,11 @@ TEST_P(DepthStencilLoadOpTests, ClearMip1) {
 
 // Clear first mip then the second mip.  Check both mip levels.
 TEST_P(DepthStencilLoadOpTests, ClearBothMip0Then1) {
+    // TODO(crbug.com/519296892): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     // TODO(crbug.com/dawn/1828): depth16unorm broken on Apple GPUs.
     DAWN_SUPPRESS_TEST_IF(IsApple() && GetParam().mFormat == wgpu::TextureFormat::Depth16Unorm);
-
-    // TODO(42242119): fail on Qualcomm Adreno X1.
-    DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsQualcomm());
 
     wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
     encoder.BeginRenderPass(&renderPassDescriptors[0]).End();
@@ -241,6 +251,9 @@ TEST_P(DepthStencilLoadOpTests, ClearBothMip0Then1) {
 
 // Clear second mip then the first mip. Check both mip levels.
 TEST_P(DepthStencilLoadOpTests, ClearBothMip1Then0) {
+    // TODO(crbug.com/519296892): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     // TODO(crbug.com/dawn/1828): depth16unorm broken on Apple GPUs.
     DAWN_SUPPRESS_TEST_IF(IsApple() && GetParam().mFormat == wgpu::TextureFormat::Depth16Unorm);
 
@@ -289,7 +302,14 @@ INSTANTIATE_TEST_SUITE_P(,
                          DawnTestBase::PrintToStringParamName("DepthStencilLoadOpTests"));
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(DepthStencilLoadOpTests);
 
-class StencilClearValueOverflowTest : public DepthStencilLoadOpTests {};
+class StencilClearValueOverflowTest : public DepthStencilLoadOpTests {
+  protected:
+    void SetUp() override {
+        DepthStencilLoadOpTests::SetUp();
+        // TODO(crbug.com/523211964): Produces incorrect result on Pixel 10.
+        DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+    }
+};
 
 // Test when stencilClearValue overflows uint8_t (>255), only the last 8 bits will be applied as the
 // stencil clear value in encoder.BeginRenderPass() (currently Dawn only supports 8-bit stencil
@@ -310,7 +330,7 @@ TEST_P(StencilClearValueOverflowTest, StencilClearValueOverFlowUint8) {
     CheckMipLevel(0u);
 }
 
-// Test when stencilClearValue overflows uint16_t(>65535), only the last 8 bits will be applied as
+// Test when stencilClearValue overflows uint16_t (>65535), only the last 8 bits will be applied as
 // the stencil clear value in encoder.BeginRenderPass() (currently Dawn only supports 8-bit stencil
 // format).
 TEST_P(StencilClearValueOverflowTest, StencilClearValueOverFlowUint16) {
@@ -398,6 +418,9 @@ TEST_P(DepthTextureClearTwiceTest, ClearDepthAspectTwice) {
     // TODO(crbug.com/473870505): [Capture] support depth/stencil and multi-planar textures.
     DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
 
+    // TODO(crbug.com/522868201): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     constexpr uint32_t kSize = 64;
     constexpr uint32_t kLevelCount = 5;
 
@@ -444,24 +467,25 @@ TEST_P(DepthTextureClearTwiceTest, ClearDepthAspectTwice) {
         constexpr std::array<uint32_t, 3> kLevelsToTest = {0, 1u, 3u};
         for (uint32_t level : kLevelsToTest) {
             uint32_t sizeAtLevel = kSize >> level;
-            std::vector<float> expectedValue(sizeAtLevel * sizeAtLevel, 0.f);
+            std::vector<float> expectedValue(static_cast<size_t>(sizeAtLevel) * sizeAtLevel, 0.f);
             ExpectAttachmentDepthTestData(depthTexture, GetParam().mFormat, sizeAtLevel,
                                           sizeAtLevel, 0, level, expectedValue);
         }
     }
 }
 
-DAWN_INSTANTIATE_TEST_P(DepthTextureClearTwiceTest,
-                        {D3D11Backend(), D3D11Backend({"use_packed_depth24_unorm_stencil8_format"}),
-                         D3D12Backend(), D3D12Backend({"use_packed_depth24_unorm_stencil8_format"}),
-                         MetalBackend(), OpenGLBackend(), OpenGLESBackend(),
-                         VulkanBackend({"vulkan_use_dynamic_rendering"}, {}),
-                         VulkanBackend({}, {"vulkan_use_dynamic_rendering"}), WebGPUBackend()},
-                        {wgpu::TextureFormat::Depth16Unorm, wgpu::TextureFormat::Depth24Plus,
-                         wgpu::TextureFormat::Depth32Float,
-                         wgpu::TextureFormat::Depth32FloatStencil8,
-                         wgpu::TextureFormat::Depth24PlusStencil8},
-                        {true, false});
+DAWN_INSTANTIATE_TEST_P(
+    DepthTextureClearTwiceTest,
+    {D3D11Backend(), D3D11Backend({"use_packed_depth24_unorm_stencil8_format"}), D3D12Backend(),
+     D3D12Backend({"use_packed_depth24_unorm_stencil8_format"}), MetalBackend(), OpenGLBackend(),
+     OpenGLESBackend(), VulkanBackend({"vulkan_use_dynamic_rendering"}, {}),
+     VulkanBackend({"vulkan_use_create_render_pass_2"}, {"vulkan_use_dynamic_rendering"}),
+     VulkanBackend({}, {"vulkan_use_create_render_pass_2", "vulkan_use_dynamic_rendering"}),
+     WebGPUBackend()},
+    {wgpu::TextureFormat::Depth16Unorm, wgpu::TextureFormat::Depth24Plus,
+     wgpu::TextureFormat::Depth32Float, wgpu::TextureFormat::Depth32FloatStencil8,
+     wgpu::TextureFormat::Depth24PlusStencil8},
+    {true, false});
 
 }  // anonymous namespace
 }  // namespace dawn

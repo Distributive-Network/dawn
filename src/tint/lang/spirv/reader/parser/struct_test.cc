@@ -29,10 +29,8 @@
 
 namespace tint::spirv::reader {
 
-TEST_F(SpirvParserDeathTest, Struct_Empty) {
-    EXPECT_DEATH_IF_SUPPORTED(  //
-        {
-            auto assembly = Assemble(R"(
+TEST_F(SpirvParserTest, Struct_Empty) {
+    auto assembly = Assemble(R"(
                OpCapability Shader
                OpMemoryModel Logical GLSL450
                OpEntryPoint GLCompute %main "main"
@@ -53,10 +51,9 @@ TEST_F(SpirvParserDeathTest, Struct_Empty) {
                OpReturn
                OpFunctionEnd
 )");
-            auto parsed = Parse(Slice(assembly.Get().data(), assembly.Get().size()));
-            EXPECT_EQ(parsed, Success);
-        },
-        "empty structures are not supported");
+    auto parsed = Parse(assembly.Get());
+    EXPECT_NE(parsed, Success);
+    EXPECT_EQ(parsed.Failure().reason, "empty structures are not supported");
 }
 
 TEST_F(SpirvParserTest, Struct_BasicDecl) {
@@ -387,6 +384,41 @@ $B1: {  # root
 
 %main = @fragment func():void {
   $B2: {
+    ret
+  }
+}
+)");
+}
+
+TEST_F(SpirvParserTest, Struct_VariableDecoration_VertexOput_U32) {
+    EXPECT_IR(R"(
+               OpCapability Shader
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Vertex %main "main" %var
+               OpDecorate %var Location 0
+       %void = OpTypeVoid
+        %int = OpTypeInt 32 1
+        %str = OpTypeStruct %int
+    %fn_type = OpTypeFunction %void
+%_ptr_Output = OpTypePointer Output %str
+        %var = OpVariable %_ptr_Output Output
+       %main = OpFunction %void None %fn_type
+          %5 = OpLabel
+               OpReturn
+               OpFunctionEnd
+)",
+              R"(
+tint_symbol_1 = struct @align(4) {
+  tint_symbol:i32 @offset(0), @interpolate(flat)
+}
+
+$B1: {  # root
+  %1:ptr<__out, tint_symbol_1, read_write> = var undef @location(0)
+}
+
+%main = @vertex func():void {
+  $B2: {
+    undef = phony %1
     ret
   }
 }

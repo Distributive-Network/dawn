@@ -31,6 +31,7 @@
 #include <variant>
 
 #include "src/tint/lang/core/fluent_types.h"
+#include "src/tint/lang/core/ir/array_count.h"
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/constant.h"
 #include "src/tint/lang/core/ir/exit_if.h"
@@ -41,11 +42,14 @@
 #include "src/tint/lang/core/ir/loop.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/switch.h"
-#include "src/tint/lang/core/ir/type/array_count.h"
+#include "src/tint/lang/core/ir/swizzle.h"
 #include "src/tint/lang/core/ir/value.h"
+#include "src/tint/lang/core/type/memory_view.h"
 #include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/core/type/reference.h"
 #include "src/tint/lang/core/type/struct.h"
+#include "src/tint/lang/core/type/swizzle_view.h"
+#include "src/tint/lang/core/type/vector.h"
 #include "src/tint/lang/wgsl/ast/accessor_expression.h"
 #include "src/tint/lang/wgsl/ast/alias.h"
 #include "src/tint/lang/wgsl/ast/assignment_statement.h"
@@ -108,6 +112,7 @@
 #include "src/tint/lang/wgsl/sem/variable.h"
 #include "src/tint/utils/containers/reverse.h"
 #include "src/tint/utils/containers/scope_stack.h"
+#include "src/tint/utils/ice/ice.h"
 #include "src/tint/utils/macros/defer.h"
 #include "src/tint/utils/macros/scoped_assignment.h"
 #include "src/tint/utils/rtti/switch.h"
@@ -170,6 +175,9 @@ class Impl {
 
     /// The current stack of scopes being processed.
     ScopeStack<Symbol, core::ir::Value*> scopes_;
+
+    /// The number of entry points that have been emitted.
+    uint32_t entry_point_count = 0;
 
     /// The diagnostic that have been raised.
     diag::List diagnostics_;
@@ -242,9 +250,12 @@ class Impl {
                     EmitVariable(var);
                 },
                 [&](const ast::Function* func) { EmitFunction(func); },
-                [&](const ast::Enable*) {
+                [&](const ast::Enable* enable) {
                     // TODO(dsinclair): Implement? I think these need to be passed along so further
                     // stages know what is enabled.
+                    if (enable->HasExtension(wgsl::Extension::kF16)) {
+                        mod.properties.Add(core::ir::Property::kAllow16BitFloats);
+                    }
                 },
                 [&](const ast::ConstAssert*) {
                     // Evaluated by the resolver, drop from the IR.
@@ -257,6 +268,12 @@ class Impl {
                 },  //
                 TINT_ICE_ON_NO_MATCH);
         }
+
+        // Set properties that are used by the generated module.
+        if (entry_point_count > 1) {
+            mod.properties.Add(core::ir::Property::kAllowMultipleEntryPoints);
+        }
+        mod.properties.Add(core::ir::Property::kAllowSwizzleView);
 
         if (diagnostics_.ContainsErrors()) {
             return diag::Failure{std::move(diagnostics_)};
@@ -277,6 +294,7 @@ class Impl {
         scopes_.Set(ast_func->name->symbol, ir_func);
 
         if (ast_func->IsEntryPoint()) {
+            entry_point_count++;
             switch (ast_func->PipelineStage()) {
                 case ast::PipelineStage::kVertex:
                     ir_func->SetStage(core::ir::Function::PipelineStage::kVertex);
@@ -337,7 +355,7 @@ class Impl {
         Vector<core::ir::FunctionParam*, 1> params;
         for (auto* p : ast_func->params) {
             const auto* param_sem = program_.Sem().Get(p)->As<sem::Parameter>();
-            auto* ty = RemapOverrideSizedArrayIfNeeded(param_sem->Type());
+            auto* ty = RemapOverrideSizedTypeIfNeeded(param_sem->Type());
             auto* param = builder_.FunctionParam(p->name->symbol.NameView(), ty);
 
             for (auto* attr : p->attributes) {
@@ -355,6 +373,10 @@ class Impl {
 
             scopes_.Set(p->name->symbol, param);
             params.Push(param);
+
+            if (ty->UnwrapPtr()->Is<core::type::Buffer>()) {
+                mod.properties.Add(core::ir::Property::kAllowBufferTypes);
+            }
         }
         ir_func->SetParams(params);
 
@@ -446,46 +468,59 @@ class Impl {
             return;
         }
 
-        auto b = builder_.Append(current_block_);
-        if (auto* v = std::get_if<core::ir::Value*>(&lhs)) {
-            b.Store(*v, rhs);
-        } else if (auto ref = std::get_if<VectorRefElementAccess>(&lhs)) {
-            b.StoreVectorElement(ref->vector, ref->index, rhs);
-        }
+        Store(lhs, rhs);
     }
 
     void EmitIncrementDecrement(const ast::IncrementDecrementStatement* stmt) {
         auto lhs = EmitExpression(stmt->lhs);
+        auto* lhs_val = Load(lhs);
 
         auto* one = program_.TypeOf(stmt->lhs)->UnwrapRef()->IsSignedIntegerScalar()
                         ? builder_.Constant(1_i)
                         : builder_.Constant(1_u);
 
-        EmitCompoundAssignment(lhs, one,
-                               stmt->increment ? core::BinaryOp::kAdd : core::BinaryOp::kSubtract);
+        auto op = stmt->increment ? core::BinaryOp::kAdd : core::BinaryOp::kSubtract;
+        core::ir::Value* value = nullptr;
+        builder_.Append(current_block_, [&] { value = BinaryOp(lhs_val, one, op); });
+        Store(lhs, value);
     }
 
     void EmitCompoundAssignment(const ast::CompoundAssignmentStatement* stmt) {
         auto lhs = EmitExpression(stmt->lhs);
+        auto* lhs_val = Load(lhs);
 
-        auto rhs = EmitValueExpression(stmt->rhs);
-        if (!rhs) {
+        auto rhs_val = EmitValueExpression(stmt->rhs);
+        if (!rhs_val) {
             return;
         }
 
-        EmitCompoundAssignment(lhs, rhs, stmt->op);
+        core::ir::Value* value = nullptr;
+        builder_.Append(current_block_, [&] { value = BinaryOp(lhs_val, rhs_val, stmt->op); });
+
+        Store(lhs, value);
     }
 
-    void EmitCompoundAssignment(ValueOrVecElAccess lhs, core::ir::Value* rhs, core::BinaryOp op) {
+    core::ir::Value* Load(ValueOrVecElAccess val) {
+        auto b = builder_.Append(current_block_);
+        if (auto* v = std::get_if<core::ir::Value*>(&val)) {
+            if ((*v)->Type()->Is<core::type::MemoryView>()) {
+                return b.Load(*v)->Result();
+            } else {
+                return *v;
+            }
+        } else if (auto ref = std::get_if<VectorRefElementAccess>(&val)) {
+            return b.LoadVectorElement(ref->vector, ref->index)->Result();
+        } else {
+            TINT_UNREACHABLE();
+        }
+    }
+
+    void Store(ValueOrVecElAccess lhs, core::ir::Value* rhs) {
         auto b = builder_.Append(current_block_);
         if (auto* v = std::get_if<core::ir::Value*>(&lhs)) {
-            auto* load = b.Load(*v);
-            auto* inst = current_block_->Append(BinaryOp(load->Result(), rhs, op));
-            b.Store(*v, inst);
+            b.Store(*v, rhs);
         } else if (auto ref = std::get_if<VectorRefElementAccess>(&lhs)) {
-            auto* load = b.LoadVectorElement(ref->vector, ref->index);
-            auto* inst = b.Append(BinaryOp(load->Result(), rhs, op));
-            b.StoreVectorElement(ref->vector, ref->index, inst);
+            b.StoreVectorElement(ref->vector, ref->index, rhs);
         }
     }
 
@@ -784,8 +819,8 @@ class Impl {
             Hashmap<const ast::Expression*, ValueOrVecElAccess, 64> bindings_;
 
             void Bind(const ast::Expression* expr, core::ir::Value* value) {
-                // If this expression maps to sem::Load, insert a load instruction to get the result
-                if (impl.program_.Sem().Get<sem::Load>(expr)) {
+                auto* sem = impl.program_.Sem().Get<sem::Load>(expr);
+                if (sem) {
                     auto* load = impl.builder_.Load(value);
                     impl.current_block_->Append(load);
                     value = load->Result();
@@ -853,12 +888,13 @@ class Impl {
 
                 auto* sem = impl.program_.Sem().Get(expr)->Unwrap();
 
-                // The access result type should match the source result type. If the source is a
-                // pointer, we generate a pointer.
+                // The access result type should match the source result type.
                 const core::type::Type* ty =
                     sem->Type()->UnwrapRef()->Clone(impl.clone_ctx_.type_ctx);
+                // If the source is a pointer, generate a pointer, unless it's already a
+                // SwizzleView.
                 if (auto* ptr = obj->Type()->As<core::type::Pointer>();
-                    ptr && !ty->Is<core::type::Pointer>()) {
+                    ptr && !ty->IsAnyOf<core::type::Pointer, core::type::SwizzleView>()) {
                     ty = impl.builder_.ir.Types().ptr(ptr->AddressSpace(), ty, ptr->Access());
                 }
 
@@ -883,9 +919,13 @@ class Impl {
                         if (indices.Length() == 1) {
                             return impl.builder_.Constant(u32(indices[0]));
                         }
+
                         auto* val = impl.builder_.Swizzle(ty, obj, std::move(indices));
-                        impl.current_block_->Append(val);
-                        Bind(expr, val->Result());
+
+                        if (auto* val_inst = val->AsInstruction()) {
+                            impl.current_block_->Append(val_inst);
+                        }
+                        Bind(expr, val);
                         return nullptr;
                     },  //
                     TINT_ICE_ON_NO_MATCH);
@@ -897,26 +937,26 @@ class Impl {
                 // If the object is an unnamed value (a subexpression, not a let) and is the result
                 // of another access, then we can just append the index to that access.
                 if (!impl.mod.NameOf(obj).IsValid()) {
-                    if (auto* inst_res = obj->As<core::ir::InstructionResult>()) {
-                        if (auto* access = inst_res->Instruction()->As<core::ir::Access>()) {
-                            access->AddIndex(index);
-                            access->Result()->SetType(ty);
-                            bindings_.Remove(expr->object);
-                            // Move the access after the index expression.
-                            if (impl.current_block_->Back() != access) {
-                                impl.current_block_->Remove(access);
-                                impl.current_block_->Append(access);
-                            }
-                            Bind(expr, access->Result());
-                            return;
+                    if (auto* access = obj->AsInstruction<core::ir::Access>()) {
+                        access->AddIndex(index);
+                        access->Result()->SetType(ty);
+                        bindings_.Remove(expr->object);
+                        // Move the access after the index expression.
+                        if (impl.current_block_->Back() != access) {
+                            impl.current_block_->Remove(access);
+                            impl.current_block_->Append(access);
                         }
+                        Bind(expr, access->Result());
+                        return;
                     }
                 }
 
                 // Create a new access
                 auto* access = impl.builder_.Access(ty, obj, index);
-                impl.current_block_->Append(access);
-                Bind(expr, access->Result());
+                if (auto* access_inst = access->AsInstruction()) {
+                    impl.current_block_->Append(access_inst);
+                }
+                Bind(expr, access);
             }
 
             void EmitBinary(const ast::BinaryExpression* b) {
@@ -928,12 +968,13 @@ class Impl {
                 if (!rhs) {
                     return;
                 }
-                auto* inst = impl.BinaryOp(lhs, rhs, b->op);
-                if (!inst) {
+                core::ir::Value* value = nullptr;
+                impl.builder_.Append(impl.current_block_,
+                                     [&] { value = impl.BinaryOp(lhs, rhs, b->op); });
+                if (!value) {
                     return;
                 }
-                impl.current_block_->Append(inst);
-                Bind(b, inst->Result());
+                Bind(b, value);
             }
 
             void EmitUnary(const ast::UnaryOpExpression* expr) {
@@ -941,7 +982,7 @@ class Impl {
                 if (!val) {
                     return;
                 }
-                core::ir::Instruction* inst = nullptr;
+                core::ir::Value* value = nullptr;
                 switch (expr->op) {
                     case core::UnaryOp::kAddressOf:
                     case core::UnaryOp::kIndirection:
@@ -950,20 +991,22 @@ class Impl {
                         Bind(expr, val);
                         return;
                     case core::UnaryOp::kComplement: {
-                        inst = impl.builder_.Complement(val);
+                        value = impl.builder_.Complement(val);
                         break;
                     }
                     case core::UnaryOp::kNegation: {
-                        inst = impl.builder_.Negation(val);
+                        value = impl.builder_.Negation(val);
                         break;
                     }
                     case core::UnaryOp::kNot: {
-                        inst = impl.builder_.Not(val);
+                        value = impl.builder_.Not(val);
                         break;
                     }
                 }
-                impl.current_block_->Append(inst);
-                Bind(expr, inst->Result());
+                if (auto* inst = value->AsInstruction()) {
+                    impl.current_block_->Append(inst);
+                }
+                Bind(expr, value);
             }
 
             void EmitCall(const ast::CallExpression* expr) {
@@ -1002,7 +1045,7 @@ class Impl {
                 // If this is a builtin function, emit the specific builtin value
                 if (auto* b = sem->Target()->As<sem::BuiltinFn>()) {
                     if (b->Fn() == wgsl::BuiltinFn::kBitcast) {
-                        inst = impl.builder_.Bitcast(ty, args[0]);
+                        inst = impl.builder_.Bitcast(ty, args[0])->AsInstruction();
                     } else {
                         auto* call =
                             impl.builder_.Call<wgsl::ir::BuiltinCall>(ty, b->Fn(), std::move(args));
@@ -1011,23 +1054,30 @@ class Impl {
                         if (b->Overload().num_explicit_templates > 0) {
                             auto* tmpl = expr->target->identifier->As<ast::TemplatedIdentifier>();
                             TINT_ASSERT(tmpl);
-                            Vector<const core::type::Type*, 1> explicit_types;
+                            Vector<core::ir::TemplateParameter, 1> explicit_templates;
                             for (uint32_t i = 0; i < b->Overload().num_explicit_templates; i++) {
                                 auto* tmpl_sem = impl.program_.Sem().Get(tmpl->arguments[i]);
-                                auto* tmpl_ty = tmpl_sem->As<sem::TypeExpression>();
-                                TINT_ASSERT(tmpl_ty);
-                                auto* cloned_ty = tmpl_ty->Type()->Clone(impl.clone_ctx_.type_ctx);
-                                explicit_types.Push(cloned_ty);
+                                if (auto* tmpl_ty = tmpl_sem->As<sem::TypeExpression>()) {
+                                    auto* cloned_ty =
+                                        tmpl_ty->Type()->Clone(impl.clone_ctx_.type_ctx);
+                                    explicit_templates.Push(cloned_ty);
+                                } else if (auto* tmpl_majorness =
+                                               tmpl_sem->As<
+                                                   sem::BuiltinEnumExpression<core::Majorness>>()) {
+                                    explicit_templates.Push(tmpl_majorness->Value());
+                                } else {
+                                    TINT_UNREACHABLE() << "Unhandled template parameter kind";
+                                }
                             }
-                            call->SetExplicitTemplateParams(std::move(explicit_types));
+                            call->SetExplicitTemplateParams(std::move(explicit_templates));
                         }
 
                         inst = call;
                     }
                 } else if (sem->Target()->As<sem::ValueConstructor>()) {
-                    inst = impl.builder_.Construct(ty, std::move(args));
+                    inst = impl.builder_.Construct(ty, std::move(args))->AsInstruction();
                 } else if (sem->Target()->Is<sem::ValueConversion>()) {
-                    inst = impl.builder_.Convert(ty, args[0]);
+                    inst = impl.builder_.Convert(ty, args[0])->AsInstruction();
                 } else if (expr->target->identifier->Is<ast::TemplatedIdentifier>()) {
                     TINT_UNIMPLEMENTED() << "missing templated ident support";
                 } else {
@@ -1089,12 +1139,19 @@ class Impl {
                     return std::nullopt;
                 }
 
+                if (memory_view->Is<core::type::SwizzleView>()) {
+                    return std::nullopt;
+                }
+
                 if (!memory_view->StoreType()->Is<core::type::Vector>()) {
                     return std::nullopt;
                 }
                 return tint::Switch(
                     access,
                     [&](const sem::Swizzle* s) -> std::optional<VectorRefElementAccess> {
+                        if (s->Indices().Length() != 1) {
+                            return std::nullopt;
+                        }
                         if (auto vec = GetValue(access->Object()->Declaration())) {
                             return VectorRefElementAccess{
                                 vec, impl.builder_.Constant(u32(s->Indices()[0]))};
@@ -1150,7 +1207,7 @@ class Impl {
 
             void EndShortCircuit(const ast::BinaryExpression* b) {
                 auto res = GetValue(b);
-                auto* src = res->As<core::ir::InstructionResult>()->Instruction();
+                auto* src = res->AsInstruction();
                 auto* if_ = src->As<core::ir::If>();
                 TINT_ASSERT(if_);
                 auto rhs = GetValue(b->rhs);
@@ -1220,7 +1277,7 @@ class Impl {
         TINT_ICE() << "expression did not resolve to a value";
     }
 
-    void EmitCall(const ast::CallStatement* stmt) { (void)EmitValueExpression(stmt->expr); }
+    void EmitCall(const ast::CallStatement* stmt) { std::ignore = EmitValueExpression(stmt->expr); }
 
     void EmitVariable(const ast::Variable* var) {
         auto* sem = program_.Sem().Get(var);
@@ -1229,7 +1286,7 @@ class Impl {
             var,
             [&](const ast::Var* v) {
                 auto* ref = sem->Type()->As<core::type::Reference>();
-                auto* store_ty = RemapOverrideSizedArrayIfNeeded(ref->StoreType());
+                const core::type::Type* store_ty = RemapOverrideSizedTypeIfNeeded(ref->StoreType());
                 auto* ty = builder_.ir.Types().Get<core::type::Pointer>(ref->AddressSpace(),
                                                                         store_ty, ref->Access());
 
@@ -1260,6 +1317,10 @@ class Impl {
                 // Record the original name and source of the var
                 builder_.ir.SetName(val, v->name->symbol.Name());
                 builder_.ir.SetSource(val, v->source);
+
+                if (store_ty->Is<core::type::Buffer>()) {
+                    mod.properties.Add(core::ir::Property::kAllowBufferTypes);
+                }
             },
             [&](const ast::Let* l) {
                 auto init = EmitValueExpression(l->initializer);
@@ -1304,6 +1365,8 @@ class Impl {
                 // Record the original name and source of the var
                 builder_.ir.SetName(override, o->name->symbol.Name());
                 builder_.ir.SetSource(override, o->source);
+
+                mod.properties.Add(core::ir::Property::kAllowOverrides);
             },
             [&](const ast::Const*) {
                 // Skip. This should be handled by const-eval already, so the const will be a
@@ -1313,7 +1376,7 @@ class Impl {
             TINT_ICE_ON_NO_MATCH);
     }
 
-    core::ir::CoreBinary* BinaryOp(core::ir::Value* lhs, core::ir::Value* rhs, core::BinaryOp op) {
+    core::ir::Value* BinaryOp(core::ir::Value* lhs, core::ir::Value* rhs, core::BinaryOp op) {
         switch (op) {
             case core::BinaryOp::kAnd:
                 return builder_.And(lhs, rhs);
@@ -1354,18 +1417,24 @@ class Impl {
         TINT_UNREACHABLE();
     }
 
-    const core::type::Type* RemapOverrideSizedArrayIfNeeded(const core::type::Type* ty) {
-        // Check that we have an override-sized array, or a pointer to one.
+    const core::type::Type* RemapOverrideSizedTypeIfNeeded(const core::type::Type* ty) {
+        // Check that we have an override-sized array, buffer, or a pointer to one.
         const auto* ary = ty->UnwrapPtr()->As<core::type::Array>();
-        if (!ary ||
-            !ary->Count()
-                 ->IsAnyOf<sem::NamedOverrideArrayCount, sem::UnnamedOverrideArrayCount>()) {
+        const auto* buf = ty->UnwrapPtr()->As<core::type::Buffer>();
+        const core::type::ArrayCount* orig_count = nullptr;
+        if (ary) {
+            orig_count = ary->Count();
+        } else if (buf) {
+            orig_count = buf->Count();
+        }
+        if (!orig_count ||
+            !orig_count->IsAnyOf<sem::NamedOverrideArrayCount, sem::UnnamedOverrideArrayCount>()) {
             return ty->Clone(clone_ctx_.type_ctx);
         }
 
-        // If the array has an override count, we need to remap it to a value array count.
+        // If the type has an override count, we need to remap it to a value array count.
         core::ir::Value* count = tint::Switch(
-            ary->Count(),  //
+            orig_count,  //
             [&](const sem::UnnamedOverrideArrayCount* u) {
                 return EmitValueExpression(u->expr->Declaration());
             },
@@ -1374,11 +1443,17 @@ class Impl {
             },
             TINT_ICE_ON_NO_MATCH);
 
+        const core::type::Type* remapped_ty = nullptr;
         auto* ary_count = builder_.ir.Types().Get<core::ir::type::ValueArrayCount>(count);
-        const core::type::Type* remapped_ty = builder_.ir.Types().Get<core::type::Array>(
-            ary->ElemType()->Clone(clone_ctx_.type_ctx), ary_count, ary->Size());
+        if (ary) {
+            remapped_ty = builder_.ir.Types().Get<core::type::Array>(
+                ary->ElemType()->Clone(clone_ctx_.type_ctx), ary_count, ary->Size());
+        } else {
+            TINT_ASSERT(buf);
+            remapped_ty = builder_.ir.Types().Get<core::type::Buffer>(ary_count);
+        }
 
-        // If the original type was a pointer, wrap the remapped array in a pointer too.
+        // If the original type was a pointer, wrap the remapped type in a pointer too.
         if (auto* ptr = ty->As<core::type::Pointer>()) {
             remapped_ty = builder_.ir.Types().ptr(ptr->AddressSpace(), remapped_ty, ptr->Access());
         }

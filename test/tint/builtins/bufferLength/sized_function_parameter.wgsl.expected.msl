@@ -1,5 +1,40 @@
-SKIP: FAILED
+#include <metal_stdlib>
+using namespace metal;
 
-buffers are not supported by the MSL backend
+struct tint_module_vars_struct {
+  threadgroup array<uchar, 64>* v;
+  device uint* out;
+};
 
-tint executable returned error: exit status 1
+struct tint_symbol_1 {
+  array<uchar, 64> tint_symbol;
+};
+
+void foo(threadgroup array<uchar, 64>* const p, tint_module_vars_struct tint_module_vars) {
+  (*tint_module_vars.out) = 64u;
+}
+
+void main_inner(uint tint_local_index, tint_module_vars_struct tint_module_vars) {
+  {
+    uint v_1 = 0u;
+    v_1 = tint_local_index;
+    while(true) {
+      uint const v_2 = v_1;
+      if ((v_2 >= 64u)) {
+        break;
+      }
+      (*tint_module_vars.v)[v_2] = 0u;
+      {
+        v_1 = (v_2 + 1u);
+      }
+    }
+  }
+  (threadgroup_barrier(mem_flags::mem_threadgroup));
+  (foo(tint_module_vars.v, tint_module_vars));
+}
+
+[[max_total_threads_per_threadgroup(1)]]
+kernel void v_3(uint tint_local_index [[thread_index_in_threadgroup]], threadgroup tint_symbol_1* v_4 [[threadgroup(0)]], device uint* out [[buffer(0)]]) {
+  tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=(&(*v_4).tint_symbol), .out=out};
+  (main_inner(tint_local_index, tint_module_vars));
+}

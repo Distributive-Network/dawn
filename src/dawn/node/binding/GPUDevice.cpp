@@ -28,7 +28,9 @@
 #include "src/dawn/node/binding/GPUDevice.h"
 
 #include <cassert>
+#include <cstdio>
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -39,7 +41,6 @@
 #include "src/dawn/node/binding/GPUBindGroup.h"
 #include "src/dawn/node/binding/GPUBindGroupLayout.h"
 #include "src/dawn/node/binding/GPUBuffer.h"
-#include "src/dawn/node/binding/GPUCommandBuffer.h"
 #include "src/dawn/node/binding/GPUCommandEncoder.h"
 #include "src/dawn/node/binding/GPUComputePipeline.h"
 #include "src/dawn/node/binding/GPUPipelineLayout.h"
@@ -47,19 +48,22 @@
 #include "src/dawn/node/binding/GPUQueue.h"
 #include "src/dawn/node/binding/GPURenderBundleEncoder.h"
 #include "src/dawn/node/binding/GPURenderPipeline.h"
+#include "src/dawn/node/binding/GPUResourceTable.h"
 #include "src/dawn/node/binding/GPUSampler.h"
 #include "src/dawn/node/binding/GPUShaderModule.h"
 #include "src/dawn/node/binding/GPUSupportedFeatures.h"
 #include "src/dawn/node/binding/GPUSupportedLimits.h"
 #include "src/dawn/node/binding/GPUTexture.h"
 #include "src/dawn/node/utils/Debug.h"
+#include "src/utils/compiler.h"
+#include "src/utils/numeric.h"
 
 namespace wgpu::binding {
 
 namespace {
 
 // Returns a string representation of the WGPULoggingType
-const char* str(wgpu::LoggingType ty) {
+constexpr std::string_view str(wgpu::LoggingType ty) {
     switch (ty) {
         case wgpu::LoggingType::Verbose:
             return "verbose";
@@ -75,7 +79,7 @@ const char* str(wgpu::LoggingType ty) {
 }
 
 // Returns a string representation of the wgpu::ErrorType
-const char* str(wgpu::ErrorType ty) {
+constexpr std::string_view str(wgpu::ErrorType ty) {
     switch (ty) {
         case wgpu::ErrorType::NoError:
             return "no error";
@@ -91,19 +95,16 @@ const char* str(wgpu::ErrorType ty) {
     }
 }
 
-// There's something broken with Node when attempting to write more than 65536 bytes to cout.
+// There's something broken with Node when attempting to write more than 65536 bytes to stdout.
 // Split the string up into writes of 4k chunks.
 // Likely related: https://github.com/nodejs/node/issues/12921
 void chunkedWrite(wgpu::StringView msg) {
-    while (msg.length != 0) {
-        int n;
-        if (msg.length > 4096) {
-            n = printf("%.4096s", msg.data);
-        } else {
-            n = printf("%.*s", static_cast<int>(msg.length), msg.data);
-        }
-        msg.data += n;
-        msg.length -= n;
+    std::string_view sv = msg;
+    constexpr size_t kChunkSize = 4096;
+    while (!sv.empty()) {
+        std::string_view chunk = sv.substr(0, kChunkSize);
+        printf("%.*s", static_cast<int>(chunk.size()), chunk.data());
+        sv.remove_prefix(chunk.size());
     }
 }
 
@@ -203,7 +204,8 @@ GPUDevice::GPUDevice(Napi::Env env,
       lost_promise_(lost_promise),
       label_(CopyLabel(desc.label)) {
     device_.SetLoggingCallback([](wgpu::LoggingType type, wgpu::StringView message) {
-        printf("%s:\n", str(type));
+        std::string_view type_str = str(type);
+        printf("%.*s:\n", static_cast<int>(type_str.size()), type_str.data());
         chunkedWrite(message);
     });
     {
@@ -231,12 +233,14 @@ GPUDevice::~GPUDevice() {
 void GPUDevice::handleUncapturedError(ErrorType type, wgpu::StringView message) {
     Napi::HandleScope scope(env_);
 
+    std::string_view type_str = str(type);
+
     auto error = createErrorFromWGPUError(env_, type, message);
     if (!error.has_value()) {
         fprintf(stderr,
                 "GPUDevice::handleUncapturedError: Failed to create GPUError object for error type "
-                "%s.\n",
-                str(type));
+                "%.*s.\n",
+                static_cast<int>(type_str.size()), type_str.data());
         return;
     }
 
@@ -250,7 +254,7 @@ void GPUDevice::handleUncapturedError(ErrorType type, wgpu::StringView message) 
 
     bool doDefault = dispatchEvent(env_, eventObj);
     if (doDefault) {
-        printf("%s:\n", str(type));
+        printf("%.*s:\n", static_cast<int>(type_str.size()), type_str.data());
         chunkedWrite(message);
     }
 }
@@ -278,7 +282,7 @@ interop::Interface<interop::GPUSupportedFeatures> GPUDevice::getFeatures(Napi::E
 
 interop::Interface<interop::GPUSupportedLimits> GPUDevice::getLimits(Napi::Env env) {
     dawn::utils::ComboLimits limits;
-    if (!device_.GetLimits(limits.GetLinked())) {
+    if (device_.GetLimits(limits.GetLinked()) != wgpu::Status::Success) {
         Napi::Error::New(env, "failed to get device limits").ThrowAsJavaScriptException();
     }
 
@@ -353,7 +357,7 @@ interop::Interface<interop::GPUTexture> GPUDevice::createTexture(
         return {};
     }
 
-    wgpu::TextureBindingViewDimensionDescriptor texture_binding_view_dimension_desc{};
+    wgpu::TextureBindingViewDimension texture_binding_view_dimension_desc{};
     wgpu::TextureViewDimension texture_binding_view_dimension;
     if (descriptor.textureBindingViewDimension.has_value() &&
         conv(texture_binding_view_dimension, descriptor.textureBindingViewDimension)) {
@@ -420,6 +424,13 @@ interop::Interface<interop::GPUPipelineLayout> GPUDevice::createPipelineLayout(
         !conv(desc.bindGroupLayouts, desc.bindGroupLayoutCount, descriptor.bindGroupLayouts) ||
         !conv(desc.immediateSize, descriptor.immediateSize)) {
         return {};
+    }
+
+    wgpu::PipelineLayoutResourceTable resourceTable{};
+    if (descriptor.usesResourceTable) {
+        resourceTable.usesResourceTable = true;
+        resourceTable.nextInChain = desc.nextInChain;
+        desc.nextInChain = &resourceTable;
     }
 
     return interop::GPUPipelineLayout::Create<GPUPipelineLayout>(
@@ -587,8 +598,36 @@ interop::Interface<interop::GPURenderBundleEncoder> GPUDevice::createRenderBundl
         return {};
     }
 
+    wgpu::RenderBundleEncoderResourceTable resourceTable{};
+    if (descriptor.usesResourceTable) {
+        resourceTable.usesResourceTable = true;
+        resourceTable.nextInChain = desc.nextInChain;
+        desc.nextInChain = &resourceTable;
+    }
+
     return interop::GPURenderBundleEncoder::Create<GPURenderBundleEncoder>(
         env, desc, device_.CreateRenderBundleEncoder(&desc));
+}
+
+interop::Interface<interop::GPUResourceTable> GPUDevice::createResourceTable(
+    Napi::Env env,
+    interop::GPUResourceTableDescriptor descriptor) {
+    Converter conv(env, device_);
+
+    wgpu::ResourceTableDescriptor desc{};
+    if (!conv(desc.label, descriptor.label) || !conv(desc.size, descriptor.size)) {
+        return {};
+    }
+
+    static constexpr uint32_t kMaxResourceTableSizeInSpec = 65536;
+    if (desc.size > kMaxResourceTableSizeInSpec) {
+        Napi::RangeError::New(env, "GPUResourceTableDescriptor.size is too large.")
+            .ThrowAsJavaScriptException();
+        return {};
+    }
+
+    return interop::GPUResourceTable::Create<GPUResourceTable>(env, desc,
+                                                               device_.CreateResourceTable(&desc));
 }
 
 interop::Interface<interop::GPUQuerySet> GPUDevice::createQuerySet(

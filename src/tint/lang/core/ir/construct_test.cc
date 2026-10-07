@@ -40,7 +40,7 @@ using IR_ConstructDeathTest = IR_ConstructTest;
 TEST_F(IR_ConstructTest, Usage) {
     auto* arg1 = b.Constant(true);
     auto* arg2 = b.Constant(false);
-    auto* c = b.Construct(mod.Types().f32(), arg1, arg2);
+    auto* c = b.Construct(mod.Types().f32(), arg1, arg2)->AsInstruction<Construct>();
 
     EXPECT_THAT(arg1->UsagesUnsorted(), testing::UnorderedElementsAre(Usage{c, 0u}));
     EXPECT_THAT(arg2->UsagesUnsorted(), testing::UnorderedElementsAre(Usage{c, 1u}));
@@ -49,7 +49,7 @@ TEST_F(IR_ConstructTest, Usage) {
 TEST_F(IR_ConstructTest, Result) {
     auto* arg1 = b.Constant(true);
     auto* arg2 = b.Constant(false);
-    auto* c = b.Construct(mod.Types().f32(), arg1, arg2);
+    auto* c = b.Construct(mod.Types().f32(), arg1, arg2)->AsInstruction<Construct>();
 
     EXPECT_EQ(c->Results().Length(), 1u);
     EXPECT_TRUE(c->Result()->Is<InstructionResult>());
@@ -69,7 +69,7 @@ TEST_F(IR_ConstructDeathTest, Fail_NullType) {
 TEST_F(IR_ConstructTest, Clone) {
     auto* arg1 = b.Constant(true);
     auto* arg2 = b.Constant(false);
-    auto* c = b.Construct(mod.Types().f32(), arg1, arg2);
+    auto* c = b.Construct(mod.Types().f32(), arg1, arg2)->AsInstruction<Construct>();
 
     auto* new_c = clone_ctx.Clone(c);
 
@@ -78,7 +78,7 @@ TEST_F(IR_ConstructTest, Clone) {
     EXPECT_EQ(mod.Types().f32(), new_c->Result()->Type());
 
     auto args = new_c->Args();
-    EXPECT_EQ(2u, args.Length());
+    EXPECT_EQ(2u, args.size());
 
     auto* val0 = args[0]->As<Constant>()->Value();
     EXPECT_TRUE(val0->As<core::constant::Scalar<bool>>()->ValueAs<bool>());
@@ -88,12 +88,12 @@ TEST_F(IR_ConstructTest, Clone) {
 }
 
 TEST_F(IR_ConstructTest, CloneEmpty) {
-    auto* c = b.Construct(mod.Types().f32());
+    auto* c = mod.CreateInstruction<core::ir::Construct>(b.InstructionResult(mod.Types().f32()));
 
     auto* new_c = clone_ctx.Clone(c);
     EXPECT_NE(c->Result(), new_c->Result());
     EXPECT_EQ(mod.Types().f32(), new_c->Result()->Type());
-    EXPECT_TRUE(new_c->Args().IsEmpty());
+    EXPECT_TRUE(new_c->Args().empty());
 }
 
 }  // namespace

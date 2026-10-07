@@ -28,8 +28,8 @@
 #ifndef SRC_DAWN_NATIVE_SHAREDFENCE_H_
 #define SRC_DAWN_NATIVE_SHAREDFENCE_H_
 
-#include "dawn/native/Error.h"
-#include "dawn/native/ObjectBase.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/ObjectBase.h"
 
 namespace dawn::native {
 
@@ -45,7 +45,7 @@ class SharedFenceBase : public ApiObjectBase {
 
     void APIExportInfo(SharedFenceExportInfo* info) const;
 
-    MaybeError ExportInfo(SharedFenceExportInfo* info) const;
+    MaybeValError ExportInfo(SharedFenceExportInfo* info) const;
 
   protected:
     SharedFenceBase(DeviceBase* device, StringView label);
@@ -55,12 +55,12 @@ class SharedFenceBase : public ApiObjectBase {
 
   private:
     void DestroyImpl(DestroyReason reason) override;
-    virtual MaybeError ExportInfoImpl(UnpackedPtr<SharedFenceExportInfo>& info) const = 0;
+    virtual MaybeValError ExportInfoImpl(UnpackedPtr<SharedFenceExportInfo>& info) const = 0;
 };
 
 struct FenceAndSignalValue {
-    Ref<SharedFenceBase> object;
-    uint64_t signaledValue;
+    Ref<SharedFenceBase> object = nullptr;
+    uint64_t signaledValue = 0;
 };
 
 }  // namespace dawn::native

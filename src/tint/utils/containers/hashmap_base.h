@@ -29,6 +29,7 @@
 #define SRC_TINT_UTILS_CONTAINERS_HASHMAP_BASE_H_
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <optional>
 #include <tuple>
@@ -40,6 +41,7 @@
 #include "src/tint/utils/math/math.h"
 #include "src/tint/utils/memory/aligned_storage.h"
 #include "src/tint/utils/rtti/traits.h"
+#include "src/utils/compiler.h"
 
 // This file implements a custom STL style container & iterator in a performant manner, using
 // C-style data access. It is not unexpected that -Wunsafe-buffer-usage triggers in this code, since
@@ -47,8 +49,6 @@
 // Attempting to change this code in simple ways to quiet these errors either a) negatively affects
 // the performance by introducing unneeded copes, or b) uses typing shenanigans to work around the
 // warning that other linters/analyses are unhappy with.
-TINT_BEGIN_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
-
 namespace tint {
 
 /// HashmapKey wraps the comparator type for a Hashmap and Hashset.
@@ -141,6 +141,7 @@ class HashmapKey {
     const T& Value() const { return value_; }
 
     /// @returns the value of the key
+    // NOLINTNEXTLINE(google-explicit-constructor)
     operator const T&() const { return value_; }
 
     /// @returns the pointer to the value, or the value itself if T is a pointer.
@@ -501,7 +502,7 @@ class HashmapBase {
         /// The slot that will hold the edit.
         Slot& slot;
         /// The hash of the key, passed to EditAt().
-        HashCode hash;
+        HashCode hash = 0;
         /// The resolved node entry, or nullptr if EditAt() did not resolve to an existing entry.
         Entry* entry = nullptr;
 
@@ -666,9 +667,13 @@ class HashmapBase {
             nodes_allocation->next = allocations_;
             allocations_ = nodes_allocation;
 
-            auto* nodes = Bitcast<Node*>(memory + kAllocationSize);
+            // SAFETY: memory is allocated to be kAllocationSize + space for count nodes, so memory
+            // + kAllocationSize is the boundary of the nodes. If there are 0 nodes it will not be
+            // used.
+            auto* nodes = Bitcast<Node*>(DAWN_UNSAFE_BUFFERS(memory + kAllocationSize));
             for (size_t i = 0; i < count; i++) {
-                Add(&nodes[i]);
+                // SAFETY: nodes has an allocated size of at least `count` elements.
+                Add(DAWN_UNSAFE_BUFFERS(&nodes[i]));
             }
         }
     };
@@ -687,7 +692,5 @@ class HashmapBase {
 };
 
 }  // namespace tint
-
-TINT_END_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
 
 #endif  // SRC_TINT_UTILS_CONTAINERS_HASHMAP_BASE_H_

@@ -28,24 +28,25 @@
 #include <cstring>
 #include <memory>
 
-#include "dawn/common/StringViewUtils.h"
-#include "dawn/tests/StringViewMatchers.h"
-#include "dawn/tests/unittests/wire/WireFutureTest.h"
-#include "dawn/tests/unittests/wire/WireTest.h"
 #include "dawn/wire/WireClient.h"
 #include "gmock/gmock.h"
+#include "src/dawn/common/StringViewUtils.h"
+#include "src/dawn/tests/StringViewMatchers.h"
+#include "src/dawn/tests/unittests/wire/WireFutureTest.h"
+#include "src/dawn/tests/unittests/wire/WireTest.h"
+#include "src/utils/compiler.h"
 
 namespace dawn::wire {
 namespace {
 
 using testing::_;
 using testing::EmptySizedString;
-using testing::InvokeWithoutArgs;
-using testing::Ne;
 using testing::NonEmptySizedString;
 using testing::Return;
+using testing::SaveArg;
 using testing::Sequence;
 using testing::SizedString;
+using testing::WithArg;
 
 class WireWriteBufferTests : public WireTest {};
 
@@ -68,14 +69,15 @@ TEST_F(WireWriteBufferTests, WriteBufferChunkedCommands) {
     FlushClient();
 
     auto expected = std::make_unique<uint8_t[]>(kLargeAllocationSize);
-    std::memset(expected.get(), 0b10101010, kLargeAllocationSize);
+    DAWN_UNSAFE_TODO(std::memset(expected.get(), 0b10101010, kLargeAllocationSize));
     queue.WriteBuffer(buffer, 0, expected.get(), kLargeAllocationSize);
 
-    EXPECT_CALL(
-        api, QueueWriteBuffer(apiQueue, apiBuffer, 0, MatchesLambda([&](void const* actual) {
-                                  return !std::memcmp(expected.get(), actual, kLargeAllocationSize);
-                              }),
-                              kLargeAllocationSize))
+    DAWN_UNSAFE_TODO(
+        EXPECT_CALL(api, QueueWriteBuffer(
+                             apiQueue, apiBuffer, 0, MatchesLambda([&](void const* actual) {
+                                 return !std::memcmp(expected.get(), actual, kLargeAllocationSize);
+                             }),
+                             kLargeAllocationSize)))
         .Times(1);
     FlushClient();
 }
@@ -91,14 +93,51 @@ class WireQueueTests : public WireQueueTestBase {
 
 DAWN_INSTANTIATE_WIRE_FUTURE_TEST_P(WireQueueTests);
 
+// Pending requests on the same object can be completed independently, in any order.
+TEST_P(WireQueueTests, OnSubmittedWorkDoneOutOfOrder) {
+    OnSubmittedWorkDone();
+    OnSubmittedWorkDone();
+
+    WGPUFuture firstFuture = {};
+    WGPUFuture secondFuture = {};
+    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _, _))
+        .WillOnce(SaveArg<2>(&firstFuture))
+        .WillOnce(SaveArg<2>(&secondFuture));
+    FlushClient();
+    ASSERT_NE(firstFuture.id, secondFuture.id);
+
+    // Only the second callback should run, even though the first request is still pending.
+    api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
+                                             ToOutputStringView("Second request"), secondFuture);
+    FlushFutures();
+    ExpectWireCallbacksWhen([&](auto& mockCb) {
+        EXPECT_CALL(mockCb, Call(wgpu::QueueWorkDoneStatus::Error, SizedString("Second request")))
+            .Times(1);
+
+        FlushCallbacks();
+    });
+
+    // Completing the second request must leave the first callback available.
+    api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Success,
+                                             ToOutputStringView("First request"), firstFuture);
+    FlushFutures();
+    ExpectWireCallbacksWhen([&](auto& mockCb) {
+        EXPECT_CALL(mockCb, Call(wgpu::QueueWorkDoneStatus::Success, SizedString("First request")))
+            .Times(1);
+
+        FlushCallbacks();
+    });
+}
+
 // Test that a successful OnSubmittedWorkDone call is forwarded to the client.
 TEST_P(WireQueueTests, OnSubmittedWorkDoneSuccess) {
     OnSubmittedWorkDone();
 
-    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _)).WillOnce(InvokeWithoutArgs([&] {
-        api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Success,
-                                                 kEmptyOutputStringView);
-    }));
+    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _, _))
+        .WillOnce(WithArg<2>([&](WGPUFuture future) {
+            api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Success,
+                                                     kEmptyOutputStringView, future);
+        }));
     FlushClient();
     FlushFutures();
 
@@ -113,10 +152,11 @@ TEST_P(WireQueueTests, OnSubmittedWorkDoneSuccess) {
 TEST_P(WireQueueTests, OnSubmittedWorkDoneError) {
     OnSubmittedWorkDone();
 
-    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _)).WillOnce(InvokeWithoutArgs([&] {
-        api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
-                                                 ToOutputStringView("Some message"));
-    }));
+    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _, _))
+        .WillOnce(WithArg<2>([&](WGPUFuture future) {
+            api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
+                                                     ToOutputStringView("Some message"), future);
+        }));
     FlushClient();
     FlushFutures();
 
@@ -137,10 +177,11 @@ TEST_P(WireQueueTests, OnSubmittedWorkDoneBeforeDisconnectAfterReply) {
 
     OnSubmittedWorkDone();
 
-    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _)).WillOnce(InvokeWithoutArgs([&] {
-        api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
-                                                 ToOutputStringView("Some message"));
-    }));
+    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _, _))
+        .WillOnce(WithArg<2>([&](WGPUFuture future) {
+            api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
+                                                     ToOutputStringView("Some message"), future);
+        }));
     FlushClient();
     FlushFutures();
 
@@ -159,10 +200,11 @@ TEST_P(WireQueueTests, OnSubmittedWorkDoneBeforeDisconnectAfterReply) {
 TEST_P(WireQueueTests, OnSubmittedWorkDoneBeforeDisconnectBeforeReply) {
     OnSubmittedWorkDone();
 
-    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _)).WillOnce(InvokeWithoutArgs([&] {
-        api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
-                                                 ToOutputStringView("Some message"));
-    }));
+    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _, _))
+        .WillOnce(WithArg<2>([&](WGPUFuture future) {
+            api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
+                                                     ToOutputStringView("Some message"), future);
+        }));
     FlushClient();
 
     ExpectWireCallbacksWhen([&](auto& mockCb) {
@@ -193,10 +235,11 @@ TEST_P(WireQueueTests, OnSubmittedWorkDoneInsideCallbackBeforeDisconnect) {
     static constexpr size_t kNumRequests = 10;
     OnSubmittedWorkDone();
 
-    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _)).WillOnce(InvokeWithoutArgs([&] {
-        api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
-                                                 ToOutputStringView("Some message"));
-    }));
+    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _, _))
+        .WillOnce(WithArg<2>([&](WGPUFuture future) {
+            api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
+                                                     ToOutputStringView("Some message"), future);
+        }));
     FlushClient();
 
     ExpectWireCallbacksWhen([&](auto& mockCb) {
@@ -215,7 +258,7 @@ TEST_P(WireQueueTests, OnSubmittedWorkDoneInsideCallbackBeforeDisconnect) {
 }
 
 // Test releasing the default queue, then its device. Both should be released when the device is
-// released since the device holds a reference to the queue. Regresssion test for crbug.com/1332926.
+// released since the device holds a reference to the queue. Regression test for crbug.com/1332926.
 TEST_F(WireQueueTests, DefaultQueueThenDeviceReleased) {
     // Note: The test fixture gets the default queue.
 
@@ -230,16 +273,11 @@ TEST_F(WireQueueTests, DefaultQueueThenDeviceReleased) {
 
     EXPECT_CALL(api, QueueRelease(apiQueue));
     EXPECT_CALL(api, DeviceRelease(apiDevice));
-    // These set X callback methods are called before the device is released.
-    EXPECT_CALL(api, OnDeviceSetLoggingCallback(apiDevice, _)).Times(1);
     FlushClient();
-
-    // Indicate to the fixture that the device was already released.
-    DefaultApiDeviceWasReleased();
 }
 
 // Test the device, then its default queue. The default queue should be released when its external
-// reference is dropped since releasing the device drops the internal reference. Regresssion test
+// reference is dropped since releasing the device drops the internal reference. Regression test
 // for crbug.com/1332926.
 TEST_F(WireQueueTests, DeviceThenDefaultQueueReleased) {
     // Note: The test fixture gets the default queue.
@@ -250,17 +288,12 @@ TEST_F(WireQueueTests, DeviceThenDefaultQueueReleased) {
     device = nullptr;
 
     EXPECT_CALL(api, DeviceRelease(apiDevice));
-    // These set X callback methods are called before the device is released.
-    EXPECT_CALL(api, OnDeviceSetLoggingCallback(apiDevice, _)).Times(1);
     FlushClient();
 
     // Release the external queue reference. The queue should be released.
     queue = nullptr;
     EXPECT_CALL(api, QueueRelease(apiQueue));
     FlushClient();
-
-    // Indicate to the fixture that the device was already released.
-    DefaultApiDeviceWasReleased();
 }
 
 // Test that QueueSubmit does an implicit call to OnSubmittedWorkDone for its own tracking, and that
@@ -273,22 +306,22 @@ TEST_P(WireQueueTests, QueueSubmitDoesOnSubmittedWorkDone) {
     queue.Submit(0, nullptr);
     EXPECT_CALL(api, QueueSubmit(apiQueue, _, _)).InSequence(s);
     // The OnSubmittedWorkDone from the QueueSubmit will be answered with Success.
-    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _))
+    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _, _))
         .InSequence(s)
-        .WillOnce(InvokeWithoutArgs([&] {
+        .WillOnce(WithArg<2>([&](WGPUFuture future) {
             api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Success,
-                                                     kEmptyOutputStringView);
+                                                     kEmptyOutputStringView, future);
             ASSERT_EQ(0u, callbackIndex);
             callbackIndex++;
         }));
 
     // The user one will be answered with an error
     OnSubmittedWorkDone();
-    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _))
+    EXPECT_CALL(api, OnQueueOnSubmittedWorkDone(apiQueue, _, _))
         .InSequence(s)
-        .WillOnce(InvokeWithoutArgs([&] {
+        .WillOnce(WithArg<2>([&](WGPUFuture future) {
             api.CallQueueOnSubmittedWorkDoneCallback(apiQueue, WGPUQueueWorkDoneStatus_Error,
-                                                     ToOutputStringView("Some message"));
+                                                     ToOutputStringView("Some message"), future);
             ASSERT_EQ(1u, callbackIndex);
         }));
 

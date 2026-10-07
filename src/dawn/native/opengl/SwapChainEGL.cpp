@@ -25,18 +25,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/SwapChainEGL.h"
+#include "src/dawn/native/opengl/SwapChainEGL.h"
 
 #include <utility>
 
-#include "dawn/native/Surface.h"
-#include "dawn/native/opengl/ContextEGL.h"
-#include "dawn/native/opengl/DeviceGL.h"
-#include "dawn/native/opengl/DisplayEGL.h"
-#include "dawn/native/opengl/PhysicalDeviceGL.h"
-#include "dawn/native/opengl/TextureGL.h"
-#include "dawn/native/opengl/UtilsEGL.h"
-#include "dawn/native/opengl/UtilsGL.h"
+#include "src/dawn/native/Surface.h"
+#include "src/dawn/native/opengl/ContextEGL.h"
+#include "src/dawn/native/opengl/DeviceGL.h"
+#include "src/dawn/native/opengl/DisplayEGL.h"
+#include "src/dawn/native/opengl/PhysicalDeviceGL.h"
+#include "src/dawn/native/opengl/TextureGL.h"
+#include "src/dawn/native/opengl/UtilsEGL.h"
+#include "src/dawn/native/opengl/UtilsGL.h"
 
 namespace dawn::native::opengl {
 
@@ -92,7 +92,7 @@ MaybeError SwapChainEGL::Initialize(SwapChainBase* previousSwapChain) {
     }
 
     EGLint swapInterval = GetPresentMode() == wgpu::PresentMode::Immediate ? 0 : 1;
-    display->egl.SwapInterval(display->GetDisplay(), swapInterval);
+    display->egl->SwapInterval(display->GetDisplay(), swapInterval);
 
     return {};
 }
@@ -118,6 +118,7 @@ MaybeError SwapChainEGL::PresentImpl() {
         DAWN_GL_TRY(gl, GenFramebuffers(1, &readFbo));
         DAWN_GL_TRY(gl, BindFramebuffer(GL_READ_FRAMEBUFFER, readFbo));
         DAWN_TRY(mTextureView->BindToFramebuffer(gl, GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0));
+        DAWN_TRY(CheckFramebufferComplete(gl, GL_READ_FRAMEBUFFER));
 
         DAWN_GL_TRY(gl, BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
         DAWN_GL_TRY(gl, Scissor(0, 0, surfaceWidth, surfaceHeight));
@@ -173,12 +174,11 @@ MaybeError SwapChainEGL::CreateEGLSurface(const DisplayEGL* display) {
 
     EGLConfig config = display->ChooseConfig(EGL_WINDOW_BIT, GetFormat());
     if (config == kNoConfig) {
-        return DAWN_FORMAT_INTERNAL_ERROR("Couldn't find an EGLConfig for %s on %s.", GetFormat(),
-                                          GetSurface());
+        return DAWN_FORMAT_UNRECOVERABLE_ERROR("Couldn't find an EGLConfig for %s on %s.",
+                                               GetFormat(), GetSurface());
     }
 
-    // [[maybe_unused]] to prevent unused variable warnings when platform code is disabled.
-    [[maybe_unused]] const EGLFunctions& egl = display->egl;
+    [[maybe_unused]] const EGLFunctions& egl = display->egl.get();
     [[maybe_unused]] EGLDisplay eglDisplay = display->GetDisplay();
     Surface* surface = GetSurface();
 
@@ -220,7 +220,8 @@ MaybeError SwapChainEGL::CreateEGLSurface(const DisplayEGL* display) {
 #endif  // DAWN_PLATFORM_IS(WIN32)
 #if defined(DAWN_USE_X11)
             case Surface::Type::XlibWindow:
-                mEGLSurface = egl.CreateWindowSurface(eglDisplay, config, surface->GetXWindow(),
+                mEGLSurface = egl.CreateWindowSurface(eglDisplay, config,
+                                                      checked_cast<uint32_t>(surface->GetXWindow()),
                                                       attribs.data());
                 return {};
 #endif  // defined(DAWN_USE_X11)
@@ -230,13 +231,13 @@ MaybeError SwapChainEGL::CreateEGLSurface(const DisplayEGL* display) {
             case Surface::Type::WaylandSurface:
 
             default:
-                return DAWN_FORMAT_INTERNAL_ERROR("%s cannot be supported on EGL.", surface);
+                return DAWN_FORMAT_UNRECOVERABLE_ERROR("%s cannot be supported on EGL.", surface);
         }
     };
 
     DAWN_TRY(TryCreateSurface());
     if (mEGLSurface == EGL_NO_SURFACE) {
-        return DAWN_FORMAT_INTERNAL_ERROR("Couldn't create an EGLSurface for %s.", surface);
+        return DAWN_FORMAT_UNRECOVERABLE_ERROR("Couldn't create an EGLSurface for %s.", surface);
     }
     return {};
 }

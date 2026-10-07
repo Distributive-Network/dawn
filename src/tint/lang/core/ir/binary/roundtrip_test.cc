@@ -25,12 +25,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "src/tint/lang/core/ir/ir_helper_test.h"
-
 #include "src/tint/lang/core/io_attributes.h"
+#include "src/tint/lang/core/ir/array_count.h"
 #include "src/tint/lang/core/ir/binary/decode.h"
 #include "src/tint/lang/core/ir/binary/encode.h"
 #include "src/tint/lang/core/ir/disassembler.h"
+#include "src/tint/lang/core/ir/ir_helper_test.h"
 #include "src/tint/lang/core/type/depth_multisampled_texture.h"
 #include "src/tint/lang/core/type/depth_texture.h"
 #include "src/tint/lang/core/type/external_texture.h"
@@ -136,13 +136,15 @@ TEST_F(IRBinaryRoundtripTest, Fn_ParameterAttributes) {
     auto* p1 = b.FunctionParam(ty.u32());
     auto* p2 = b.FunctionParam(ty.f32());
     auto* p3 = b.FunctionParam(ty.bool_());
+    auto* p4 = b.FunctionParam(ty.u32());
     p0->SetBuiltin(BuiltinValue::kGlobalInvocationId);
     p1->SetInvariant(true);
     p2->SetLocation(10);
     p2->SetColor(50);
     p2->SetInterpolation(Interpolation{InterpolationType::kFlat, InterpolationSampling::kCenter});
     p3->SetBindingPoint(20, 30);
-    fn->SetParams({p0, p1, p2, p3});
+    p4->SetBuiltin(BuiltinValue::kViewIndex);
+    fn->SetParams({p0, p1, p2, p3, p4});
     RUN_TEST();
 }
 
@@ -207,12 +209,12 @@ TEST_F(IRBinaryRoundtripTest, f16) {
 }
 
 TEST_F(IRBinaryRoundtripTest, vec2_f32) {
-    b.Append(b.ir.root_block, [&] { b.Var<private_, vec2<f32>>(); });
+    b.Append(b.ir.root_block, [&] { b.Var<private_, vec2f>(); });
     RUN_TEST();
 }
 
 TEST_F(IRBinaryRoundtripTest, vec3_i32) {
-    b.Append(b.ir.root_block, [&] { b.Var<private_, vec3<i32>>(); });
+    b.Append(b.ir.root_block, [&] { b.Var<private_, vec3i>(); });
     RUN_TEST();
 }
 
@@ -222,12 +224,12 @@ TEST_F(IRBinaryRoundtripTest, vec4_bool) {
 }
 
 TEST_F(IRBinaryRoundtripTest, mat4x2_f32) {
-    b.Append(b.ir.root_block, [&] { b.Var<private_, vec4<mat4x2<f32>>>(); });
+    b.Append(b.ir.root_block, [&] { b.Var<private_, vec4<mat4x2f>>(); });
     RUN_TEST();
 }
 
 TEST_F(IRBinaryRoundtripTest, mat2x4_f16) {
-    b.Append(b.ir.root_block, [&] { b.Var<private_, vec4<mat2x4<f16>>>(); });
+    b.Append(b.ir.root_block, [&] { b.Var<private_, vec4<mat2x4h>>(); });
     RUN_TEST();
 }
 
@@ -398,28 +400,28 @@ TEST_F(IRBinaryRoundtripTest, Return_f16) {
 
 TEST_F(IRBinaryRoundtripTest, Return_vec3f_Composite) {
     auto* fn = b.Function("Function", ty.vec3f());
-    b.Append(fn->Block(), [&] { b.Return(fn, b.Composite<vec3<f32>>(1_f, 2_f, 3_f)); });
+    b.Append(fn->Block(), [&] { b.Return(fn, b.Composite<vec3f>(1_f, 2_f, 3_f)); });
     RUN_TEST();
 }
 
 TEST_F(IRBinaryRoundtripTest, Return_vec3f_Splat) {
     auto* fn = b.Function("Function", ty.vec3f());
-    b.Append(fn->Block(), [&] { b.Return(fn, b.Splat<vec3<f32>>(1_f)); });
+    b.Append(fn->Block(), [&] { b.Return(fn, b.Splat<vec3f>(1_f)); });
     RUN_TEST();
 }
 
 TEST_F(IRBinaryRoundtripTest, Return_mat2x3f_Composite) {
     auto* fn = b.Function("Function", ty.mat2x3<f32>());
     b.Append(fn->Block(), [&] {
-        b.Return(fn, b.Composite<mat2x3<f32>>(b.Composite<vec3<f32>>(1_f, 2_f, 3_f),
-                                              b.Composite<vec3<f32>>(4_f, 5_f, 6_f)));
+        b.Return(fn, b.Composite<mat2x3f>(b.Composite<vec3f>(1_f, 2_f, 3_f),
+                                          b.Composite<vec3f>(4_f, 5_f, 6_f)));
     });
     RUN_TEST();
 }
 
 TEST_F(IRBinaryRoundtripTest, Return_mat2x3f_Splat) {
     auto* fn = b.Function("Function", ty.mat2x3<f32>());
-    b.Append(fn->Block(), [&] { b.Return(fn, b.Splat<mat2x3<f32>>(b.Splat<vec3<f32>>(1_f))); });
+    b.Append(fn->Block(), [&] { b.Return(fn, b.Splat<mat2x3f>(b.Splat<vec3f>(1_f))); });
     RUN_TEST();
 }
 
@@ -438,7 +440,7 @@ TEST_F(IRBinaryRoundtripTest, Return_array_f32_Splat) {
 TEST_F(IRBinaryRoundtripTest, Construct) {
     auto* fn = b.Function("Function", ty.void_());
     b.Append(fn->Block(), [&] {
-        b.Construct<vec3<f32>>(1_f, 2_f, 3_f);
+        b.Construct<vec3f>(1_f, 2_f, 3_f);
         b.Return(fn);
     });
     RUN_TEST();
@@ -512,7 +514,7 @@ TEST_F(IRBinaryRoundtripTest, Store) {
 }
 
 TEST_F(IRBinaryRoundtripTest, LoadVectorElement) {
-    auto p = b.FunctionParam<ptr<function, vec3<f32>, read_write>>("p");
+    auto p = b.FunctionParam<ptr<function, vec3f, read_write>>("p");
     auto* fn = b.Function("Function", ty.f32());
     fn->SetParams({p});
     b.Append(fn->Block(), [&] { b.Return(fn, b.LoadVectorElement(p, 1_i)); });
@@ -520,7 +522,7 @@ TEST_F(IRBinaryRoundtripTest, LoadVectorElement) {
 }
 
 TEST_F(IRBinaryRoundtripTest, StoreVectorElement) {
-    auto p = b.FunctionParam<ptr<function, vec3<f32>, read_write>>("p");
+    auto p = b.FunctionParam<ptr<function, vec3f, read_write>>("p");
     auto* fn = b.Function("Function", ty.void_());
     fn->SetParams({p});
     b.Append(fn->Block(), [&] {
@@ -548,27 +550,26 @@ TEST_F(IRBinaryRoundtripTest, BinaryOp) {
 }
 
 TEST_F(IRBinaryRoundtripTest, Swizzle) {
-    auto* x = b.FunctionParam<vec4<f32>>("x");
+    auto* x = b.FunctionParam<vec4f>("x");
     auto* fn = b.Function("Function", ty.vec3f());
     fn->SetParams({x});
-    b.Append(fn->Block(),
-             [&] { b.Return(fn, b.Swizzle<vec3<f32>>(x, Vector<uint32_t, 3>{1, 0, 2})); });
+    b.Append(fn->Block(), [&] { b.Return(fn, b.Swizzle<vec3f>(x, Vector<uint32_t, 3>{1, 0, 2})); });
     RUN_TEST();
 }
 
 TEST_F(IRBinaryRoundtripTest, Bitcast) {
-    auto* x = b.FunctionParam<vec4<f32>>("x");
+    auto* x = b.FunctionParam<vec4f>("x");
     auto* fn = b.Function("Function", ty.vec4u());
     fn->SetParams({x});
-    b.Append(fn->Block(), [&] { b.Return(fn, b.Bitcast<vec4<u32>>(x)); });
+    b.Append(fn->Block(), [&] { b.Return(fn, b.Bitcast<vec4u>(x)); });
     RUN_TEST();
 }
 
 TEST_F(IRBinaryRoundtripTest, Convert) {
-    auto* x = b.FunctionParam<vec4<f32>>("x");
+    auto* x = b.FunctionParam<vec4f>("x");
     auto* fn = b.Function("Function", ty.vec4u());
     fn->SetParams({x});
-    b.Append(fn->Block(), [&] { b.Return(fn, b.Convert<vec4<u32>>(x)); });
+    b.Append(fn->Block(), [&] { b.Return(fn, b.Convert<vec4u>(x)); });
     RUN_TEST();
 }
 
@@ -749,6 +750,89 @@ TEST_F(IRBinaryRoundtripTest, InputAttachment) {
         auto* fn = b.Function("Function", ty.vec4i());
         b.Append(fn->Block(),
                  [&] { b.Return(fn, b.Call<i32>(core::BuiltinFn::kInputAttachmentLoad, v)); });
+    });
+    RUN_TEST();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Overrides
+////////////////////////////////////////////////////////////////////////////////
+
+TEST_F(IRBinaryRoundtripTest, Override_NoId) {
+    b.Append(b.ir.root_block, [&] { b.Override(ty.u32()); });
+    RUN_TEST();
+}
+
+TEST_F(IRBinaryRoundtripTest, Override_Id) {
+    b.Append(b.ir.root_block, [&] {
+        auto* o = b.Override(ty.u32());
+        o->SetOverrideId(OverrideId{42u});
+    });
+    RUN_TEST();
+}
+
+TEST_F(IRBinaryRoundtripTest, Override_Initializer) {
+    b.Append(b.ir.root_block, [&] { b.Override("o", 42_u); });
+    RUN_TEST();
+}
+
+TEST_F(IRBinaryRoundtripTest, Override_RootBlockExpressions) {
+    b.Append(b.ir.root_block, [&] {
+        auto* o1 = b.Override(ty.u32());
+        auto* o2 = b.Override(ty.u32());
+        b.Override("o3", b.Multiply(b.Add(o1, o2), 2_u));
+    });
+    RUN_TEST();
+}
+
+TEST_F(IRBinaryRoundtripTest, Override_ConstExprIf) {
+    b.Append(b.ir.root_block, [&] {
+        auto* o1 = b.Override(ty.u32());
+        auto* o2 = b.Override(ty.u32());
+        auto* if_ = b.ConstExprIf(b.Equal(o2, 0_u));
+        auto* result = b.InstructionResult<u32>();
+        if_->SetResult(result);
+        b.Append(if_->True(), [&] {  //
+            b.ExitIf(if_, o1);
+        });
+        b.Append(if_->False(), [&] {  //
+            b.ExitIf(if_, b.Divide(o1, o2));
+        });
+        b.Override("o3", result);
+    });
+    RUN_TEST();
+}
+
+TEST_F(IRBinaryRoundtripTest, Override_WorkgroupSize) {
+    b.Append(b.ir.root_block, [&] {
+        auto* o = b.Override(ty.u32());
+
+        auto* fn = b.ComputeFunction("main", o->Result(), 1_u, 1_u);
+        b.Append(fn->Block(), [&] { b.Return(fn); });
+    });
+    RUN_TEST();
+}
+
+TEST_F(IRBinaryRoundtripTest, Override_WorkgroupArraySize) {
+    b.Append(b.ir.root_block, [&] {
+        auto* o = b.Override(ty.u32());
+
+        auto* count = ty.Get<core::ir::type::ValueArrayCount>(o->Result());
+        auto* arr = ty.Get<core::type::Array>(ty.u32(), count, 0u);
+        b.Var("arr", ty.ptr<workgroup>(arr));
+    });
+    RUN_TEST();
+}
+
+TEST_F(IRBinaryRoundtripTest, Alignment) {
+    auto* v = b.Var("v", ty.ptr(workgroup, ty.u32()));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        auto* ld = b.Load(v);
+        ld->SetAlignment(128);
+        b.Return(foo);
     });
     RUN_TEST();
 }

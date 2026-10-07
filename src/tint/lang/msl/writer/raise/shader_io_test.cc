@@ -25,11 +25,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include "src/tint/lang/msl/writer/raise/shader_io.h"
+
 #include <utility>
 
 #include "src/tint/lang/core/ir/transform/helper_test.h"
 #include "src/tint/lang/core/type/struct.h"
-#include "src/tint/lang/msl/writer/raise/shader_io.h"
 
 namespace tint::msl::writer::raise {
 namespace {
@@ -393,8 +394,7 @@ TEST_F(MslWriter_ShaderIOTest, ReturnValue_NonStructBuiltin) {
     auto* src = R"(
 %foo = @vertex func():vec4<f32> [@invariant, @position] {
   $B1: {
-    %2:vec4<f32> = construct 0.5f
-    ret %2
+    ret vec4<f32>(0.5f)
   }
 }
 )";
@@ -407,18 +407,17 @@ foo_outputs = struct @align(16) {
 
 %foo_inner = func():vec4<f32> {
   $B1: {
-    %2:vec4<f32> = construct 0.5f
-    ret %2
+    ret vec4<f32>(0.5f)
   }
 }
 %foo = @vertex func():foo_outputs {
   $B2: {
-    %4:vec4<f32> = call %foo_inner
+    %3:vec4<f32> = call %foo_inner
     %tint_wrapper_result:ptr<function, foo_outputs, read_write> = var undef
-    %6:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
-    store %6, %4
-    %7:foo_outputs = load %tint_wrapper_result
-    ret %7
+    %5:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
+    store %5, %3
+    %6:foo_outputs = load %tint_wrapper_result
+    ret %6
   }
 }
 )";
@@ -442,8 +441,7 @@ TEST_F(MslWriter_ShaderIOTest, ReturnValue_NonStructLocation) {
     auto* src = R"(
 %foo = @fragment func():vec4<f32> [@location(1)] {
   $B1: {
-    %2:vec4<f32> = construct 0.5f
-    ret %2
+    ret vec4<f32>(0.5f)
   }
 }
 )";
@@ -456,18 +454,17 @@ foo_outputs = struct @align(16) {
 
 %foo_inner = func():vec4<f32> {
   $B1: {
-    %2:vec4<f32> = construct 0.5f
-    ret %2
+    ret vec4<f32>(0.5f)
   }
 }
 %foo = @fragment func():foo_outputs {
   $B2: {
-    %4:vec4<f32> = call %foo_inner
+    %3:vec4<f32> = call %foo_inner
     %tint_wrapper_result:ptr<function, foo_outputs, read_write> = var undef
-    %6:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
-    store %6, %4
-    %7:foo_outputs = load %tint_wrapper_result
-    ret %7
+    %5:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
+    store %5, %3
+    %6:foo_outputs = load %tint_wrapper_result
+    ret %6
   }
 }
 )";
@@ -527,9 +524,7 @@ Outputs = struct @align(16) {
 
 %foo = @vertex func():Outputs {
   $B1: {
-    %2:vec4<f32> = construct 0.0f
-    %3:Outputs = construct %2, 0.25f, 0.75f
-    ret %3
+    ret Outputs(vec4<f32>(0.0f), 0.25f, 0.75f)
   }
 }
 )";
@@ -550,26 +545,24 @@ foo_outputs = struct @align(16) {
 
 %foo_inner = func():Outputs {
   $B1: {
-    %2:vec4<f32> = construct 0.0f
-    %3:Outputs = construct %2, 0.25f, 0.75f
-    ret %3
+    ret Outputs(vec4<f32>(0.0f), 0.25f, 0.75f)
   }
 }
 %foo = @vertex func():foo_outputs {
   $B2: {
-    %5:Outputs = call %foo_inner
-    %6:vec4<f32> = access %5, 0u
-    %7:f32 = access %5, 1u
-    %8:f32 = access %5, 2u
+    %3:Outputs = call %foo_inner
+    %4:vec4<f32> = access %3, 0u
+    %5:f32 = access %3, 1u
+    %6:f32 = access %3, 2u
     %tint_wrapper_result:ptr<function, foo_outputs, read_write> = var undef
-    %10:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
+    %8:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
+    store %8, %4
+    %9:ptr<function, f32, read_write> = access %tint_wrapper_result, 1u
+    store %9, %5
+    %10:ptr<function, f32, read_write> = access %tint_wrapper_result, 2u
     store %10, %6
-    %11:ptr<function, f32, read_write> = access %tint_wrapper_result, 1u
-    store %11, %7
-    %12:ptr<function, f32, read_write> = access %tint_wrapper_result, 2u
-    store %12, %8
-    %13:foo_outputs = load %tint_wrapper_result
-    ret %13
+    %11:foo_outputs = load %tint_wrapper_result
+    ret %11
   }
 }
 )";
@@ -616,8 +609,7 @@ Output = struct @align(4) {
 
 %foo = @fragment func():Output {
   $B1: {
-    %2:Output = construct 0.25f, 0.75f
-    ret %2
+    ret Output(0.25f, 0.75f)
   }
 }
 )";
@@ -636,22 +628,21 @@ foo_outputs = struct @align(4) {
 
 %foo_inner = func():Output {
   $B1: {
-    %2:Output = construct 0.25f, 0.75f
-    ret %2
+    ret Output(0.25f, 0.75f)
   }
 }
 %foo = @fragment func():foo_outputs {
   $B2: {
-    %4:Output = call %foo_inner
-    %5:f32 = access %4, 0u
-    %6:f32 = access %4, 1u
+    %3:Output = call %foo_inner
+    %4:f32 = access %3, 0u
+    %5:f32 = access %3, 1u
     %tint_wrapper_result:ptr<function, foo_outputs, read_write> = var undef
-    %8:ptr<function, f32, read_write> = access %tint_wrapper_result, 0u
+    %7:ptr<function, f32, read_write> = access %tint_wrapper_result, 0u
+    store %7, %4
+    %8:ptr<function, f32, read_write> = access %tint_wrapper_result, 1u
     store %8, %5
-    %9:ptr<function, f32, read_write> = access %tint_wrapper_result, 1u
-    store %9, %6
-    %10:foo_outputs = load %tint_wrapper_result
-    ret %10
+    %9:foo_outputs = load %tint_wrapper_result
+    ret %9
   }
 }
 )";
@@ -803,8 +794,7 @@ $B1: {  # root
 
 %frag = @fragment func():void {
   $B2: {
-    %3:Outputs = construct
-    store %1, %3
+    store %1, Outputs(vec4<f32>(0.0f))
     ret
   }
 }
@@ -823,8 +813,7 @@ $B1: {  # root
 
 %frag = @fragment func():void {
   $B2: {
-    %3:Outputs = construct
-    store %1, %3
+    store %1, Outputs(vec4<f32>(0.0f))
     ret
   }
 }
@@ -849,8 +838,7 @@ TEST_F(MslWriter_ShaderIOTest, EmitVertexPointSize) {
     auto* src = R"(
 %foo = @vertex func():vec4<f32> [@position] {
   $B1: {
-    %2:vec4<f32> = construct 0.5f
-    ret %2
+    ret vec4<f32>(0.5f)
   }
 }
 )";
@@ -864,20 +852,19 @@ foo_outputs = struct @align(16) {
 
 %foo_inner = func():vec4<f32> {
   $B1: {
-    %2:vec4<f32> = construct 0.5f
-    ret %2
+    ret vec4<f32>(0.5f)
   }
 }
 %foo = @vertex func():foo_outputs {
   $B2: {
-    %4:vec4<f32> = call %foo_inner
+    %3:vec4<f32> = call %foo_inner
     %tint_wrapper_result:ptr<function, foo_outputs, read_write> = var undef
-    %6:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
-    store %6, %4
-    %7:ptr<function, f32, read_write> = access %tint_wrapper_result, 1u
-    store %7, 1.0f
-    %8:foo_outputs = load %tint_wrapper_result
-    ret %8
+    %5:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
+    store %5, %3
+    %6:ptr<function, f32, read_write> = access %tint_wrapper_result, 1u
+    store %6, 1.0f
+    %7:foo_outputs = load %tint_wrapper_result
+    ret %7
   }
 }
 )";
@@ -886,7 +873,6 @@ foo_outputs = struct @align(16) {
     ShaderIOConfig config{immediate_data};
     config.emit_vertex_point_size = true;
 
-    capabilities.Set(core::ir::Capability::kAllowPointSizeBuiltin, true);
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
@@ -972,8 +958,7 @@ Outputs = struct @align(16) {
 
 %foo = @fragment func():Outputs {
   $B1: {
-    %2:Outputs = construct vec4<f32>(0.5f), 270544960u
-    ret %2
+    ret Outputs(vec4<f32>(0.5f), 270544960u)
   }
 }
 )";
@@ -992,22 +977,21 @@ foo_outputs = struct @align(16) {
 
 %foo_inner = func():Outputs {
   $B1: {
-    %2:Outputs = construct vec4<f32>(0.5f), 270544960u
-    ret %2
+    ret Outputs(vec4<f32>(0.5f), 270544960u)
   }
 }
 %foo = @fragment func():foo_outputs {
   $B2: {
-    %4:Outputs = call %foo_inner
-    %5:vec4<f32> = access %4, 0u
-    %6:u32 = access %4, 1u
+    %3:Outputs = call %foo_inner
+    %4:vec4<f32> = access %3, 0u
+    %5:u32 = access %3, 1u
     %tint_wrapper_result:ptr<function, foo_outputs, read_write> = var undef
-    %8:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
+    %7:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
+    store %7, %4
+    %8:ptr<function, u32, read_write> = access %tint_wrapper_result, 1u
     store %8, %5
-    %9:ptr<function, u32, read_write> = access %tint_wrapper_result, 1u
-    store %9, %6
-    %10:foo_outputs = load %tint_wrapper_result
-    ret %10
+    %9:foo_outputs = load %tint_wrapper_result
+    ret %9
   }
 }
 )";
@@ -1096,8 +1080,7 @@ Outputs = struct @align(16) {
 
 %foo = @fragment func():Outputs {
   $B1: {
-    %2:Outputs = construct vec4<f32>(0.5f), 270544960u
-    ret %2
+    ret Outputs(vec4<f32>(0.5f), 270544960u)
   }
 }
 )";
@@ -1116,23 +1099,22 @@ foo_outputs = struct @align(16) {
 
 %foo_inner = func():Outputs {
   $B1: {
-    %2:Outputs = construct vec4<f32>(0.5f), 270544960u
-    ret %2
+    ret Outputs(vec4<f32>(0.5f), 270544960u)
   }
 }
 %foo = @fragment func():foo_outputs {
   $B2: {
-    %4:Outputs = call %foo_inner
-    %5:vec4<f32> = access %4, 0u
-    %6:u32 = access %4, 1u
-    %7:u32 = and %6, 12345678u
+    %3:Outputs = call %foo_inner
+    %4:vec4<f32> = access %3, 0u
+    %5:u32 = access %3, 1u
+    %6:u32 = and %5, 12345678u
     %tint_wrapper_result:ptr<function, foo_outputs, read_write> = var undef
-    %9:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
-    store %9, %5
-    %10:ptr<function, u32, read_write> = access %tint_wrapper_result, 1u
-    store %10, %7
-    %11:foo_outputs = load %tint_wrapper_result
-    ret %11
+    %8:ptr<function, vec4<f32>, read_write> = access %tint_wrapper_result, 0u
+    store %8, %4
+    %9:ptr<function, u32, read_write> = access %tint_wrapper_result, 1u
+    store %9, %6
+    %10:foo_outputs = load %tint_wrapper_result
+    ret %10
   }
 }
 )";
@@ -1315,8 +1297,7 @@ Outputs = struct @align(4) {
 
 %foo = @fragment func():Outputs {
   $B1: {
-    %2:Outputs = construct 0.5f, 2.0f
-    ret %2
+    ret Outputs(0.5f, 2.0f)
   }
 }
 )";
@@ -1344,43 +1325,276 @@ $B1: {  # root
 
 %foo_inner = func():Outputs {
   $B2: {
-    %3:Outputs = construct 0.5f, 2.0f
-    ret %3
+    ret Outputs(0.5f, 2.0f)
   }
 }
 %foo = @fragment func():foo_outputs {
   $B3: {
-    %5:Outputs = call %foo_inner
-    %6:f32 = access %5, 0u
-    %7:f32 = access %5, 1u
-    %8:ptr<immediate, f32, read> = access %tint_immediate_data, 0u
-    %9:f32 = load %8
-    %10:ptr<immediate, f32, read> = access %tint_immediate_data, 1u
-    %11:f32 = load %10
-    %12:f32 = clamp %7, %9, %11
+    %4:Outputs = call %foo_inner
+    %5:f32 = access %4, 0u
+    %6:f32 = access %4, 1u
+    %7:ptr<immediate, f32, read> = access %tint_immediate_data, 0u
+    %8:f32 = load %7
+    %9:ptr<immediate, f32, read> = access %tint_immediate_data, 1u
+    %10:f32 = load %9
+    %11:f32 = clamp %6, %8, %10
     %tint_wrapper_result:ptr<function, foo_outputs, read_write> = var undef
-    %14:ptr<function, f32, read_write> = access %tint_wrapper_result, 0u
-    store %14, %6
-    %15:ptr<function, f32, read_write> = access %tint_wrapper_result, 1u
-    store %15, %12
-    %16:foo_outputs = load %tint_wrapper_result
-    ret %16
+    %13:ptr<function, f32, read_write> = access %tint_wrapper_result, 0u
+    store %13, %5
+    %14:ptr<function, f32, read_write> = access %tint_wrapper_result, 1u
+    store %14, %11
+    %15:foo_outputs = load %tint_wrapper_result
+    ret %15
   }
 }
 )";
 
     core::ir::transform::PrepareImmediateDataConfig immediate_data_config;
     ASSERT_EQ(
-        immediate_data_config.AddInternalImmediateData(4, mod.symbols.New("depth_min"), ty.f32()),
+        immediate_data_config.AddInternalImmediateData(core::InternalImmediate::kFragDepthMin, 4,
+                                                       mod.symbols.New("depth_min"), ty.f32()),
         Success);
     ASSERT_EQ(
-        immediate_data_config.AddInternalImmediateData(8, mod.symbols.New("depth_max"), ty.f32()),
+        immediate_data_config.AddInternalImmediateData(core::InternalImmediate::kFragDepthMax, 8,
+                                                       mod.symbols.New("depth_max"), ty.f32()),
         Success);
     auto immediate_data = PrepareImmediateData(mod, immediate_data_config);
     EXPECT_EQ(immediate_data, Success);
 
     ShaderIOConfig config{immediate_data.Get()};
-    config.depth_range_offsets = {4, 8};
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_ShaderIOTest, WorkgroupIndex_ReuseExistingBuiltins) {
+    auto* workgroup_id = b.FunctionParam("wgid", ty.vec3u());
+    workgroup_id->SetBuiltin(core::BuiltinValue::kWorkgroupId);
+
+    auto* num_workgroups = b.FunctionParam("numwgs", ty.vec3u());
+    num_workgroups->SetBuiltin(core::BuiltinValue::kNumWorkgroups);
+
+    auto* workgroup_index = b.FunctionParam("wgindex", ty.u32());
+    workgroup_index->SetBuiltin(core::BuiltinValue::kWorkgroupIndex);
+
+    auto* ep = b.ComputeFunction("foo", 3_u, 2_u, 1_u);
+    ep->SetParams({workgroup_id, num_workgroups, workgroup_index});
+    b.Append(ep->Block(), [&] {
+        b.Let("x", b.Add(workgroup_index, 0_u));
+        b.Return(ep);
+    });
+
+    auto* src = R"(
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%wgid:vec3<u32> [@workgroup_id], %numwgs:vec3<u32> [@num_workgroups], %wgindex:u32 [@workgroup_index]):void {
+  $B1: {
+    %5:u32 = add %wgindex, 0u
+    %x:u32 = let %5
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo_inner = func(%wgid:vec3<u32>, %numwgs:vec3<u32>, %wgindex:u32):void {
+  $B1: {
+    %5:u32 = add %wgindex, 0u
+    %x:u32 = let %5
+    ret
+  }
+}
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%wgid_1:vec3<u32> [@workgroup_id], %numwgs_1:vec3<u32> [@num_workgroups]):void {  # %wgid_1: 'wgid', %numwgs_1: 'numwgs'
+  $B2: {
+    %10:u32 = access %numwgs_1, 0u
+    %11:u32 = access %numwgs_1, 1u
+    %12:u32 = mul %10, %11
+    %13:u32 = access %wgid_1, 2u
+    %14:u32 = mul %13, %12
+    %15:u32 = access %wgid_1, 1u
+    %16:u32 = mul %15, %10
+    %17:u32 = access %wgid_1, 0u
+    %18:u32 = add %17, %16
+    %19:u32 = add %18, %14
+    %20:void = call %foo_inner, %wgid_1, %numwgs_1, %19
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_ShaderIOTest, WorkgroupIndex_AddMissingBuiltins) {
+    auto* workgroup_index = b.FunctionParam("wgindex", ty.u32());
+    workgroup_index->SetBuiltin(core::BuiltinValue::kWorkgroupIndex);
+
+    auto* ep = b.ComputeFunction("foo", 3_u, 2_u, 1_u);
+    ep->SetParams({workgroup_index});
+    b.Append(ep->Block(), [&] {
+        b.Let("x", b.Add(workgroup_index, 0_u));
+        b.Return(ep);
+    });
+
+    auto* src = R"(
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%wgindex:u32 [@workgroup_index]):void {
+  $B1: {
+    %3:u32 = add %wgindex, 0u
+    %x:u32 = let %3
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo_inner = func(%wgindex:u32):void {
+  $B1: {
+    %3:u32 = add %wgindex, 0u
+    %x:u32 = let %3
+    ret
+  }
+}
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%workgroup_id:vec3<u32> [@workgroup_id], %num_workgroups:vec3<u32> [@num_workgroups]):void {
+  $B2: {
+    %8:u32 = access %num_workgroups, 0u
+    %9:u32 = access %num_workgroups, 1u
+    %10:u32 = mul %8, %9
+    %11:u32 = access %workgroup_id, 2u
+    %12:u32 = mul %11, %10
+    %13:u32 = access %workgroup_id, 1u
+    %14:u32 = mul %13, %8
+    %15:u32 = access %workgroup_id, 0u
+    %16:u32 = add %15, %14
+    %17:u32 = add %16, %12
+    %18:void = call %foo_inner, %17
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_ShaderIOTest, GlobalInvocationIndex_ReuseExistingBuiltins) {
+    auto* num_workgroups = b.FunctionParam("numwgs", ty.vec3u());
+    num_workgroups->SetBuiltin(core::BuiltinValue::kNumWorkgroups);
+
+    auto* global_index = b.FunctionParam("gindex", ty.u32());
+    global_index->SetBuiltin(core::BuiltinValue::kGlobalInvocationIndex);
+
+    auto* ep = b.ComputeFunction("foo", 3_u, 2_u, 1_u);
+    ep->SetParams({num_workgroups, global_index});
+    b.Append(ep->Block(), [&] {
+        b.Let("x", b.Add(global_index, 0_u));
+        b.Return(ep);
+    });
+
+    auto* src = R"(
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%numwgs:vec3<u32> [@num_workgroups], %gindex:u32 [@global_invocation_index]):void {
+  $B1: {
+    %4:u32 = add %gindex, 0u
+    %x:u32 = let %4
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo_inner = func(%numwgs:vec3<u32>, %gindex:u32):void {
+  $B1: {
+    %4:u32 = add %gindex, 0u
+    %x:u32 = let %4
+    ret
+  }
+}
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%numwgs_1:vec3<u32> [@num_workgroups], %global_invocation_id:vec3<u32> [@global_invocation_id]):void {  # %numwgs_1: 'numwgs'
+  $B2: {
+    %9:u32 = access %global_invocation_id, 0u
+    %10:u32 = access %global_invocation_id, 1u
+    %11:u32 = access %global_invocation_id, 2u
+    %12:u32 = access %numwgs_1, 0u
+    %13:u32 = access %numwgs_1, 1u
+    %14:u32 = mul %12, 3u
+    %15:u32 = mul %13, 2u
+    %16:u32 = mul %14, %15
+    %17:u32 = mul %11, %16
+    %18:u32 = mul %10, %14
+    %19:u32 = add %9, %18
+    %20:u32 = add %19, %17
+    %21:void = call %foo_inner, %numwgs_1, %20
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_ShaderIOTest, GlobalInvocationIndex_AddMissingBuiltins) {
+    auto* global_index = b.FunctionParam("gindex", ty.u32());
+    global_index->SetBuiltin(core::BuiltinValue::kGlobalInvocationIndex);
+
+    auto* ep = b.ComputeFunction("foo", 3_u, 2_u, 1_u);
+    ep->SetParams({global_index});
+    b.Append(ep->Block(), [&] {
+        b.Let("x", b.Add(global_index, 0_u));
+        b.Return(ep);
+    });
+
+    auto* src = R"(
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%gindex:u32 [@global_invocation_index]):void {
+  $B1: {
+    %3:u32 = add %gindex, 0u
+    %x:u32 = let %3
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo_inner = func(%gindex:u32):void {
+  $B1: {
+    %3:u32 = add %gindex, 0u
+    %x:u32 = let %3
+    ret
+  }
+}
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%num_workgroups:vec3<u32> [@num_workgroups], %global_invocation_id:vec3<u32> [@global_invocation_id]):void {
+  $B2: {
+    %8:u32 = access %global_invocation_id, 0u
+    %9:u32 = access %global_invocation_id, 1u
+    %10:u32 = access %global_invocation_id, 2u
+    %11:u32 = access %num_workgroups, 0u
+    %12:u32 = access %num_workgroups, 1u
+    %13:u32 = mul %11, 3u
+    %14:u32 = mul %12, 2u
+    %15:u32 = mul %13, %14
+    %16:u32 = mul %10, %15
+    %17:u32 = mul %9, %13
+    %18:u32 = add %8, %17
+    %19:u32 = add %18, %16
+    %20:void = call %foo_inner, %19
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());

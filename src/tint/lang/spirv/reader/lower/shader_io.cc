@@ -33,7 +33,7 @@
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/referenced_module_vars.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 namespace tint::spirv::reader::lower {
 
@@ -210,8 +210,7 @@ struct State {
 
                     auto* a = b.Access(mem->Type(), from, u32(mem->Index()));
 
-                    AddOutput(output_descriptors, results, a->Result(), Symbol{}, mem->Type(),
-                              mem_attrs);
+                    AddOutput(output_descriptors, results, a, Symbol{}, mem->Type(), mem_attrs);
                     attributes.location = mem_attrs.location;
                 }
             },
@@ -222,16 +221,14 @@ struct State {
                 auto* ary_ty = ary->ElemType();
                 for (size_t i = 0; i < cnt; ++i) {
                     auto* a = b.Access(ary_ty, from, u32(i));
-                    AddOutput(output_descriptors, results, a->Result(), Symbol{}, ary_ty,
-                              attributes);
+                    AddOutput(output_descriptors, results, a, Symbol{}, ary_ty, attributes);
                 }
             },
             [&](const core::type::Matrix* mat) {
                 auto* row_ty = ty.vec(mat->DeepestElement(), mat->Rows());
                 for (size_t i = 0; i < mat->Columns(); ++i) {
                     auto* a = b.Access(row_ty, from, u32(i));
-                    AddOutput(output_descriptors, results, a->Result(), Symbol{}, row_ty,
-                              attributes);
+                    AddOutput(output_descriptors, results, a, Symbol{}, row_ty, attributes);
                 }
             },  //
             TINT_ICE_ON_NO_MATCH);
@@ -338,10 +335,10 @@ struct State {
                     if (var_attributes.builtin == core::BuiltinValue::kSampleMask) {
                         // The SPIR-V mask can be either i32 or u32, but WGSL is only u32. So,
                         // convert if necessary.
-                        auto* access =
-                            b.Access(ld->Result()->Type()->DeepestElement(), ld, u32(0))->Result();
+                        core::ir::Value* access =
+                            b.Access(ld->Result()->Type()->DeepestElement(), ld, u32(0));
                         if (access->Type()->IsSignedIntegerScalar()) {
-                            access = b.Convert(ty.u32(), access)->Result();
+                            access = b.Convert(ty.u32(), access);
                         }
                         from = access;
                         var_type = ty.u32();
@@ -460,7 +457,7 @@ struct State {
             if (!chain) {
                 continue;
             }
-            TINT_ASSERT(chain->Indices().Length() >= 1);
+            TINT_ASSERT(chain->Indices().size() >= 1);
 
             // A member access has to be a constant index
             auto* cnst = chain->Indices()[0]->As<core::ir::Constant>();
@@ -498,8 +495,9 @@ struct State {
                 },
                 [&](core::ir::LoadVectorElement* lve) {
                     // Replace the vector element load with an access instruction.
-                    auto* access = b.AccessWithResult(lve->DetachResult(), object, lve->Index());
-                    access->InsertBefore(lve);
+                    b.InsertBefore(lve, [&] {
+                        b.AccessReplaceResult(lve->DetachResult(), object, lve->Index());
+                    });
                     to_destroy.Push(lve);
                 },
                 [&](core::ir::Access* a) {
@@ -547,6 +545,7 @@ struct State {
                 }
                 case core::BuiltinValue::kInstanceIndex:
                 case core::BuiltinValue::kPrimitiveIndex:
+                case core::BuiltinValue::kViewIndex:
                 case core::BuiltinValue::kVertexIndex:
                 case core::BuiltinValue::kLocalInvocationIndex:
                 case core::BuiltinValue::kSubgroupInvocationId:
@@ -590,14 +589,14 @@ struct State {
                     // If the SPIR-V mask was an i32, need to convert from the u32 provided by
                     // WGSL.
                     if (mask_ty->ElemType()->IsSignedIntegerScalar()) {
-                        auto* conv = b.Convert(ty.i32(), result);
+                        auto* conv = b.Convert(ty.i32(), result)->AsInstruction();
                         func->Block()->Prepend(conv);
 
-                        auto* construct = b.Construct(mask_ty, conv);
+                        auto* construct = b.Construct(mask_ty, conv)->AsInstruction();
                         construct->InsertAfter(conv);
                         result = construct->Result();
                     } else {
-                        auto* construct = b.Construct(mask_ty, result);
+                        auto* construct = b.Construct(mask_ty, result)->AsInstruction();
                         func->Block()->Prepend(construct);
                         result = construct->Result();
                     }
@@ -605,6 +604,7 @@ struct State {
                 }
                 case core::BuiltinValue::kInstanceIndex:
                 case core::BuiltinValue::kPrimitiveIndex:
+                case core::BuiltinValue::kViewIndex:
                 case core::BuiltinValue::kVertexIndex:
                 case core::BuiltinValue::kLocalInvocationIndex:
                 case core::BuiltinValue::kSubgroupInvocationId:
@@ -612,7 +612,7 @@ struct State {
                 case core::BuiltinValue::kSampleIndex: {
                     auto* idx_ty = var->Result()->Type()->UnwrapPtr();
                     if (idx_ty->IsSignedIntegerScalar()) {
-                        auto* conv = b.Convert(ty.i32(), result);
+                        auto* conv = b.Convert(ty.i32(), result)->AsInstruction();
                         func->Block()->Prepend(conv);
                         result = conv->Result();
                     }
@@ -625,7 +625,8 @@ struct State {
                     auto* idx_ty = var->Result()->Type()->UnwrapPtr();
                     auto* elem_ty = idx_ty->DeepestElement();
                     if (elem_ty->IsSignedIntegerScalar()) {
-                        auto* conv = b.Convert(ty.MatchWidth(ty.i32(), idx_ty), result);
+                        auto* conv =
+                            b.Convert(ty.MatchWidth(ty.i32(), idx_ty), result)->AsInstruction();
                         func->Block()->Prepend(conv);
                         result = conv->Result();
                     }
@@ -733,27 +734,22 @@ struct State {
             },  //
             TINT_ICE_ON_NO_MATCH);
 
-        return b.Construct(type, params)->Result();
+        return b.Construct(type, params);
     }
 };
 
 }  // namespace
 
 Result<SuccessType> ShaderIO(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(
-        ValidateAndDumpIfNeeded(ir, "spirv.ShaderIO",
-                                core::ir::Capabilities{
-                                    core::ir::Capability::kAllowMultipleEntryPoints,
-                                    core::ir::Capability::kAllowOverrides,
-                                    core::ir::Capability::kAllowPhonyInstructions,
-                                    core::ir::Capability::kAllowNonCoreTypes,
-                                    core::ir::Capability::kAllowStructMatrixDecorations,
-                                    core::ir::Capability::kAllowLocationForNumericElements,
-                                    core::ir::Capability::kAllowPointerToHandle,
-                                    core::ir::Capability::kLoosenValidationForShaderIO,
-                                }));
+    AssertValid(ir, "before spirv.ShaderIO");
 
-    return State{ir}.Process();
+    TINT_CHECK_RESULT(State{ir}.Process());
+
+    ir.properties.Remove(core::ir::Property::kAllowBackendSpecificShaderIO);
+    ir.properties.Remove(core::ir::Property::kAllowLocationForNumericComposites);
+    ir.properties.Remove(core::ir::Property::kAllowPointSizeBuiltin);
+
+    return Success;
 }
 
 }  // namespace tint::spirv::reader::lower

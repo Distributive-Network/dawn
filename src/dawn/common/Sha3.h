@@ -31,7 +31,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <type_traits>
+
+#include "src/utils/span.h"
 
 namespace dawn {
 
@@ -40,7 +43,7 @@ namespace dawn {
 // string of bits it is in the order defined for S in FIPS 202. When accessed as a state,
 // A[x, y, z] is the z-th bit of element x + 5y.
 using Sha3Lane = uint64_t;
-static_assert(25 * 8 * sizeof(Sha3Lane) == 1600);
+static_assert(25ULL * 8 * sizeof(Sha3Lane) == 1600);
 using Sha3State = std::array<Sha3Lane, 25>;
 static_assert(sizeof(Sha3State) == 25 * sizeof(Sha3Lane), "Sha3State must be packed.");
 
@@ -49,24 +52,15 @@ template <size_t BitOutputLength>
 class Sha3 {
   public:
     static constexpr size_t kByteOutputLength = BitOutputLength / 8;
-    using Output = std::array<uint8_t, kByteOutputLength>;
+    using Output = std::array<std::byte, kByteOutputLength>;
 
     // APIs to stream data into the hash function chunk by chunk by calling Update repeatedly.
     // After Finalize is called, it is no longer valid to use this SHA3 object.
-    void Update(const void* data, size_t size);
-
-    template <typename T>
-        requires std::is_trivially_copyable_v<T>
-    void Update(const T& data) {
-        const uint8_t* dataAsBytes = reinterpret_cast<const uint8_t*>(&data);
-        size_t size = sizeof(T);
-        Update(dataAsBytes, size);
-    }
-
+    void Update(Span<const std::byte> data);
     Output Finalize();
 
-    // Helper function to compute the hash directly.
-    static Output Hash(const void* data, size_t size);
+    // Helper functions to compute the hash directly.
+    static Output Hash(Span<const std::byte> data);
 
   private:
     static_assert(BitOutputLength == 224 || BitOutputLength == 256 || BitOutputLength == 384 ||

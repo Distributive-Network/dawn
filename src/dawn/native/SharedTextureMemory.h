@@ -28,25 +28,27 @@
 #ifndef SRC_DAWN_NATIVE_SHAREDTEXTUREMEMORY_H_
 #define SRC_DAWN_NATIVE_SHAREDTEXTUREMEMORY_H_
 
-#include "dawn/common/WeakRef.h"
-#include "dawn/common/WeakRefSupport.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/Forward.h"
-#include "dawn/native/IntegerTypes.h"
-#include "dawn/native/ObjectBase.h"
-#include "dawn/native/SharedFence.h"
-#include "dawn/native/SharedResourceMemory.h"
-#include "dawn/native/dawn_platform.h"
+#include "src/dawn/common/WeakRef.h"
+#include "src/dawn/common/WeakRefSupport.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/Forward.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/ObjectBase.h"
+#include "src/dawn/native/SharedFence.h"
+#include "src/dawn/native/SharedResourceMemory.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace dawn::native {
 
-class SharedTextureMemoryContents;
-class SharedResourceMemoryContents;
 struct SharedTextureMemoryDescriptor;
 struct SharedTextureMemoryBeginAccessDescriptor;
 struct SharedTextureMemoryEndAccessState;
 struct SharedTextureMemoryProperties;
 struct TextureDescriptor;
+
+// Type alias to keep specific names for SharedTextureMemoryTexture/BufferContents for when they
+// gain new members in addition to the ones in SharedResourceMemoryContents.
+using SharedTextureMemoryContents = SharedResourceMemoryContents;
 
 class SharedTextureMemoryBase : public SharedResourceMemory {
   public:
@@ -61,8 +63,6 @@ class SharedTextureMemoryBase : public SharedResourceMemory {
 
     ObjectType GetType() const override;
 
-    SharedTextureMemoryContents* GetContents() const;
-
   protected:
     SharedTextureMemoryBase(DeviceBase* device,
                             StringView label,
@@ -71,9 +71,12 @@ class SharedTextureMemoryBase : public SharedResourceMemory {
                             const SharedTextureMemoryDescriptor* descriptor,
                             ObjectBase::ErrorTag tag);
 
-    MaybeError GetProperties(SharedTextureMemoryProperties* properties) const;
+    void SetProperties(const SharedTextureMemoryProperties& properties);
+
+    MaybeValError GetProperties(SharedTextureMemoryProperties* properties) const;
 
   private:
+    MaybeValError ValidateCreateTexture(const TextureDescriptor* rawDescriptor);
     ResultOrError<Ref<TextureBase>> CreateTexture(const TextureDescriptor* rawDescriptor);
 
     Ref<SharedResourceMemoryContents> CreateContents() override;
@@ -81,25 +84,12 @@ class SharedTextureMemoryBase : public SharedResourceMemory {
     virtual ResultOrError<Ref<TextureBase>> CreateTextureImpl(
         const UnpackedPtr<TextureDescriptor>& descriptor) = 0;
 
-    virtual MaybeError GetChainedProperties(
+    virtual MaybeValError GetChainedProperties(
         UnpackedPtr<SharedTextureMemoryProperties>& properties) const {
         return {};
     }
 
     SharedTextureMemoryProperties mProperties;
-};
-
-class SharedTextureMemoryContents : public SharedResourceMemoryContents {
-  public:
-    explicit SharedTextureMemoryContents(WeakRef<SharedTextureMemoryBase> sharedTextureMemory);
-
-    SampleTypeBit GetExternalFormatSupportedSampleTypes() const;
-    void SetExternalFormatSupportedSampleTypes(SampleTypeBit supportedSampleType);
-
-  private:
-    friend class SharedTextureMemoryBase;
-
-    SampleTypeBit mSupportedExternalSampleTypes;
 };
 
 }  // namespace dawn::native

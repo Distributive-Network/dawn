@@ -30,20 +30,21 @@
 
 #include <memory>
 
-#include "dawn/common/MutexProtected.h"
-#include "dawn/common/SerialMap.h"
-#include "dawn/common/WeakRefSupport.h"
-#include "dawn/native/CallbackTaskManager.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/ExecutionQueue.h"
-#include "dawn/native/Forward.h"
-#include "dawn/native/IntegerTypes.h"
-#include "dawn/native/ObjectBase.h"
-#include "partition_alloc/pointers/raw_ptr.h"
-
+#include "absl/container/flat_hash_set.h"
 #include "dawn/native/DawnNative.h"
-#include "dawn/native/dawn_platform.h"
 #include "dawn/platform/DawnPlatform.h"
+#include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/MutexProtected.h"
+#include "src/dawn/common/SerialMap.h"
+#include "src/dawn/common/WeakRefSupport.h"
+#include "src/dawn/native/CallbackTaskManager.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/ExecutionQueue.h"
+#include "src/dawn/native/Forward.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/ObjectBase.h"
+#include "src/dawn/native/dawn_platform.h"
+#include "src/utils/span.h"
 
 namespace dawn::native {
 
@@ -64,6 +65,8 @@ struct TrackTaskCallback : CallbackTask {
 
 class QueueBase : public ExecutionQueueBase, public WeakRefSupport<QueueBase> {
   public:
+    using BufferSet = absl::flat_hash_set<BufferBase*>;
+
     ~QueueBase() override;
 
     static Ref<QueueBase> MakeError(DeviceBase* device, StringView label);
@@ -72,12 +75,11 @@ class QueueBase : public ExecutionQueueBase, public WeakRefSupport<QueueBase> {
     void FormatLabel(absl::FormatSink* s) const override;
 
     // Dawn API
-    void APISubmit(uint32_t commandCount, CommandBufferBase* const* commands);
+    void APISubmit(Span<CommandBufferBase* const> commands);
     Future APIOnSubmittedWorkDone(const WGPUQueueWorkDoneCallbackInfo& callbackInfo);
-    void APIWriteBuffer(BufferBase* buffer, uint64_t bufferOffset, const void* data, size_t size);
+    void APIWriteBuffer(BufferBase* buffer, uint64_t bufferOffset, Span<const std::byte> data);
     void APIWriteTexture(const TexelCopyTextureInfo* destination,
-                         const void* data,
-                         size_t dataSize,
+                         Span<const std::byte> data,
                          const TexelCopyBufferLayout* dataLayout,
                          const Extent3D* writeSize);
     void APICopyTextureForBrowser(const TexelCopyTextureInfo* source,
@@ -89,10 +91,7 @@ class QueueBase : public ExecutionQueueBase, public WeakRefSupport<QueueBase> {
                                           const Extent3D* copySize,
                                           const CopyTextureForBrowserOptions* options);
 
-    MaybeError WriteBuffer(BufferBase* buffer,
-                           uint64_t bufferOffset,
-                           const void* data,
-                           size_t size);
+    MaybeError WriteBuffer(BufferBase* buffer, uint64_t bufferOffset, Span<const std::byte> data);
 
     // Ensure a flush occurs if needed, and track this task as complete after the
     // scheduled work is complete.
@@ -115,21 +114,18 @@ class QueueBase : public ExecutionQueueBase, public WeakRefSupport<QueueBase> {
 
     void DestroyImpl(DestroyReason reason) override;
 
-    virtual MaybeError SubmitImpl(uint32_t commandCount, CommandBufferBase* const* commands) = 0;
+    virtual MaybeError SubmitImpl(Span<CommandBufferBase* const> commands) = 0;
     virtual MaybeError WriteBufferImpl(BufferBase* buffer,
                                        uint64_t bufferOffset,
-                                       const void* data,
-                                       size_t size);
+                                       Span<const std::byte> data);
     virtual MaybeError WriteTextureImpl(const TexelCopyTextureInfo& destination,
-                                        const void* data,
-                                        size_t dataSize,
+                                        Span<const std::byte> data,
                                         const TexelCopyBufferLayout& dataLayout,
                                         const Extent3D& writeSize);
 
   private:
     MaybeError WriteTextureInternal(const TexelCopyTextureInfo* destination,
-                                    const void* data,
-                                    size_t dataSize,
+                                    Span<const std::byte> data,
                                     const TexelCopyBufferLayout& dataLayout,
                                     const Extent3D* writeSize);
     MaybeError CopyTextureForBrowserInternal(const TexelCopyTextureInfo* source,
@@ -140,15 +136,15 @@ class QueueBase : public ExecutionQueueBase, public WeakRefSupport<QueueBase> {
                                                      const TexelCopyTextureInfo* destination,
                                                      const Extent3D* copySize,
                                                      const CopyTextureForBrowserOptions* options);
+    MaybeValError ValidateSubmit(Span<CommandBufferBase* const> commands,
+                                 BufferSet& buffersFromCommands) const;
+    MaybeValError ValidateOnSubmittedWorkDone() const;
+    MaybeValError ValidateWriteTexture(const TexelCopyTextureInfo* destination,
+                                       size_t dataSize,
+                                       const TexelCopyBufferLayout& dataLayout,
+                                       const Extent3D* writeSize) const;
 
-    MaybeError ValidateSubmit(uint32_t commandCount, CommandBufferBase* const* commands) const;
-    MaybeError ValidateOnSubmittedWorkDone() const;
-    MaybeError ValidateWriteTexture(const TexelCopyTextureInfo* destination,
-                                    size_t dataSize,
-                                    const TexelCopyBufferLayout& dataLayout,
-                                    const Extent3D* writeSize) const;
-
-    MaybeError SubmitInternal(uint32_t commandCount, CommandBufferBase* const* commands);
+    MaybeError SubmitInternal(Span<CommandBufferBase* const> commands);
 
     MutexProtected<SerialMap<ExecutionSerial, std::unique_ptr<TrackTaskCallback>>> mTasksInFlight;
 };

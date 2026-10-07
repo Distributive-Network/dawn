@@ -28,8 +28,8 @@
 #ifndef SRC_DAWN_NATIVE_D3D_SHARED_TEXTURE_MEMORY_D3D_H_
 #define SRC_DAWN_NATIVE_D3D_SHARED_TEXTURE_MEMORY_D3D_H_
 
-#include "dawn/native/SharedTextureMemory.h"
-#include "dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/native/SharedTextureMemory.h"
+#include "src/dawn/native/d3d/d3d_platform.h"
 
 namespace dawn::native::d3d {
 
@@ -39,8 +39,8 @@ class SharedTextureMemory : public SharedTextureMemoryBase {
   protected:
     SharedTextureMemory(Device* device, StringView label, SharedTextureMemoryProperties properties);
 
-    MaybeError BeginAccessImpl(TextureBase* texture,
-                               const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
+    MaybeValError BeginAccessImpl(TextureBase* texture,
+                                  const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
     ResultOrError<FenceAndSignalValue> EndAccessImpl(TextureBase* texture,
                                                      ExecutionSerial lastUsageSerial,
                                                      UnpackedPtr<EndAccessState>& state) override;

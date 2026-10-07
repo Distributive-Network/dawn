@@ -33,7 +33,7 @@
 
 #include "gtest/gtest.h"
 #include "src/tint/lang/core/ir/builder.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/msl/validate/validate.h"
 #include "src/tint/lang/msl/writer/printer/printer.h"
 #include "src/tint/lang/msl/writer/writer.h"
@@ -43,21 +43,6 @@ namespace tint::msl::writer {
 /// Metal header declaration
 constexpr auto kMetalHeader = R"(#include <metal_stdlib>
 using namespace metal;
-)";
-
-/// Metal array declaration
-constexpr auto kMetalArray = R"(
-template<typename T, size_t N>
-struct tint_array {
-  const constant T& operator[](size_t i) const constant { return elements[i]; }
-  device T& operator[](size_t i) device { return elements[i]; }
-  const device T& operator[](size_t i) const device { return elements[i]; }
-  thread T& operator[](size_t i) thread { return elements[i]; }
-  const thread T& operator[](size_t i) const thread { return elements[i]; }
-  threadgroup T& operator[](size_t i) threadgroup { return elements[i]; }
-  const threadgroup T& operator[](size_t i) const threadgroup { return elements[i]; }
-  T elements[N];
-};
 )";
 
 /// Base helper class for testing the MSL writer implementation.
@@ -72,8 +57,7 @@ class MslWriterTestHelperBase : public BASE {
     core::type::Manager& ty{mod.Types()};
 
   protected:
-    /// Validation errors
-    std::string err_;
+    void SetUp() override { mod.properties.Add(core::ir::Property::kAllow16BitFloats); }
 
     /// Generated MSL
     Output output_;
@@ -81,17 +65,17 @@ class MslWriterTestHelperBase : public BASE {
     /// Run the writer on the IR module and validate the result.
     /// @param options the writer options
     /// @returns true if generation and validation succeeded
-    bool Generate(Options options = {},
-                  validate::MslVersion msl_version = validate::MslVersion::kMsl_2_3) {
+    Result<SuccessType> Generate(
+        Options options = {},
+        validate::MslVersion msl_version = validate::MslVersion::kMsl_2_3) {
+        mod.enable_validation_asserts = true;
+
         if (options.entry_point_name.empty()) {
             options.entry_point_name = "entry";
         }
 
         auto result = writer::Generate(mod, options);
-        if (result != Success) {
-            err_ = result.Failure().reason;
-            return false;
-        }
+        TINT_CHECK_RESULT(result);
         output_ = result.Get();
 
         return Validate(msl_version);
@@ -100,13 +84,10 @@ class MslWriterTestHelperBase : public BASE {
     /// Run the printer on the MSL IR module and validate the result.
     /// @param options the writer options
     /// @returns true if generation and validation succeeded
-    bool Print(Options options = {},
-               validate::MslVersion msl_version = validate::MslVersion::kMsl_2_3) {
+    Result<SuccessType> Print(Options options = {},
+                              validate::MslVersion msl_version = validate::MslVersion::kMsl_2_3) {
         auto result = writer::Print(mod, options);
-        if (result != Success) {
-            err_ = result.Failure().reason;
-            return false;
-        }
+        TINT_CHECK_RESULT(result);
         output_ = result.Get();
 
         return Validate(msl_version);
@@ -115,21 +96,15 @@ class MslWriterTestHelperBase : public BASE {
     /// Validate the output.
     /// @param msl_version the MSL version to validate against
     /// @returns true if validation succeeded
-    bool Validate([[maybe_unused]] validate::MslVersion msl_version) {
+    Result<SuccessType> Validate([[maybe_unused]] validate::MslVersion msl_version) {
 #if TINT_BUILD_IS_MAC
-        auto msl_validation = validate::ValidateUsingMetal(output_.msl, msl_version);
-        if (msl_validation.failed) {
-            err_ = msl_validation.output;
-            return false;
-        }
+        TINT_CHECK_RESULT(validate::ValidateUsingMetal(output_.msl, msl_version));
 #endif
-        return true;
+        return Success;
     }
 
     /// @returns the metal header string
     std::string MetalHeader() const { return kMetalHeader; }
-    /// @return the metal array string
-    std::string MetalArray() const { return kMetalArray; }
 };
 
 /// Printer tests

@@ -34,17 +34,23 @@
 #                       Do not modify this file directly
 ################################################################################
 
+if(TINT_BUILD_MSL_WRITER)
 ################################################################################
 # Target:    tint_lang_msl_type
 # Kind:      lib
+# Condition: TINT_BUILD_MSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_msl_type lib
   lang/msl/type/bias.cc
   lang/msl/type/bias.h
+  lang/msl/type/cooperative_tensor.cc
+  lang/msl/type/cooperative_tensor.h
   lang/msl/type/gradient.cc
   lang/msl/type/gradient.h
   lang/msl/type/level.cc
   lang/msl/type/level.h
+  lang/msl/type/tensor_inline.cc
+  lang/msl/type/tensor_inline.h
 )
 
 tint_target_add_dependencies(tint_lang_msl_type lib
@@ -57,6 +63,7 @@ tint_target_add_dependencies(tint_lang_msl_type lib
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -66,28 +73,42 @@ tint_target_add_external_dependencies(tint_lang_msl_type lib
   "src_utils"
 )
 
+endif(TINT_BUILD_MSL_WRITER)
+if(TINT_BUILD_MSL_WRITER)
 ################################################################################
 # Target:    tint_lang_msl_type_test
 # Kind:      test
+# Condition: TINT_BUILD_MSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_msl_type_test test
   lang/msl/type/bias_test.cc
+  lang/msl/type/cooperative_tensor_test.cc
   lang/msl/type/gradient_test.cc
   lang/msl/type/level_test.cc
+  lang/msl/type/tensor_inline_test.cc
 )
 
 tint_target_add_dependencies(tint_lang_msl_type_test test
+  tint_api_common
+  tint_lang_core
   tint_lang_core_type
+  tint_lang_core_type_test
   tint_lang_msl_type
+  tint_utils
   tint_utils_containers
   tint_utils_ice
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
+  tint_utils_symbol
+  tint_utils_text
 )
 
 tint_target_add_external_dependencies(tint_lang_msl_type_test test
   "gtest"
   "src_utils"
 )
+
+endif(TINT_BUILD_MSL_WRITER)

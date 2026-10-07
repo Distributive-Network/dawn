@@ -28,16 +28,17 @@
 #ifndef SRC_DAWN_NATIVE_D3D11_TEXTURED3D11_H_
 #define SRC_DAWN_NATIVE_D3D11_TEXTURED3D11_H_
 
+#include <array>
 #include <utility>
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
 #include "dawn/native/DawnNative.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/IntegerTypes.h"
-#include "dawn/native/PassResourceUsage.h"
-#include "dawn/native/Texture.h"
-#include "dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/PassResourceUsage.h"
+#include "src/dawn/native/Texture.h"
+#include "src/dawn/native/d3d/d3d_platform.h"
 
 namespace dawn::native {
 struct CopyTextureToTextureCmd;
@@ -87,10 +88,10 @@ class Texture final : public TextureBase {
                      const SubresourceRange& subresources,
                      const Origin3D& origin,
                      const Extent3D& size,
-                     const uint8_t* data,
+                     Span<const std::byte> data,
                      uint32_t bytesPerRow,
                      uint32_t rowsPerImage);
-    using ReadCallback = std::function<MaybeError(const uint8_t* data, size_t offset, size_t size)>;
+    using ReadCallback = std::function<MaybeError(Span<const std::byte> data, size_t offset)>;
     MaybeError Read(const ScopedCommandRecordingContext* commandContext,
                     const SubresourceRange& subresources,
                     const Origin3D& origin,
@@ -101,9 +102,17 @@ class Texture final : public TextureBase {
     static MaybeError Copy(const ScopedCommandRecordingContext* commandContext,
                            CopyTextureToTextureCmd* copy);
 
+    // Returns a Span of mappedResource with the correct size:
+    // totalBytes = (depth - 1) × DepthPitch + (heightInBlocks - 1) × RowPitch + bytesPerRow
+    Span<const std::byte> GetMappedData(const D3D11_MAPPED_SUBRESOURCE& mappedResource) const;
+    Span<std::byte> GetMappedData(const D3D11_MAPPED_SUBRESOURCE& mappedResource);
+
     // As D3D11 SRV doesn't support 'Shader4ComponentMapping' for depth-stencil textures, we can't
     // sample the stencil component directly. As a workaround we create an internal R8Uint texture,
-    // holding the copy of its stencil data, and use the internal texture's SRV instead.
+    // holding the copy of its stencil data.
+    MaybeError UpdateStencilCopyForView(const ScopedCommandRecordingContext* commandContext,
+                                        const TextureView* view);
+
     ResultOrError<ComPtr<ID3D11ShaderResourceView>> GetStencilSRV(
         const ScopedCommandRecordingContext* commandContext,
         const TextureView* view);
@@ -123,7 +132,7 @@ class Texture final : public TextureBase {
     enum class Kind { Normal, Staging, Interim };
 
     struct D3D11ClearValue {
-        float color[4];
+        std::array<float, 4> color;
         float depth;
         uint8_t stencil;
     };
@@ -146,6 +155,8 @@ class Texture final : public TextureBase {
     // Dawn API
     void SetLabelImpl() override;
     void DestroyImpl(DestroyReason reason) override;
+
+    std::optional<DeviceGuard> UseDeviceGuardForDestroy() override;
 
     MaybeError Clear(const ScopedCommandRecordingContext* commandContext,
                      const SubresourceRange& range,
@@ -174,7 +185,7 @@ class Texture final : public TextureBase {
                              const SubresourceRange& subresources,
                              const Origin3D& origin,
                              const Extent3D& size,
-                             const uint8_t* data,
+                             Span<const std::byte> data,
                              uint32_t bytesPerRow,
                              uint32_t rowsPerImage);
 
@@ -183,7 +194,7 @@ class Texture final : public TextureBase {
                                          const SubresourceRange& subresources,
                                          const Origin3D& origin,
                                          const Extent3D& size,
-                                         const uint8_t* data,
+                                         Span<const std::byte> data,
                                          uint32_t bytesPerRow,
                                          uint32_t rowsPerImage);
 
@@ -204,7 +215,8 @@ class TextureView final : public TextureViewBase {
     static Ref<TextureView> Create(TextureBase* texture,
                                    const UnpackedPtr<TextureViewDescriptor>& descriptor);
 
-    ResultOrError<ID3D11ShaderResourceView*> GetOrCreateD3D11ShaderResourceView();
+    ResultOrError<ID3D11ShaderResourceView*> GetOrCreateD3D11ShaderResourceView(
+        const ScopedCommandRecordingContext* commandContext);
     ResultOrError<ID3D11RenderTargetView*> GetOrCreateD3D11RenderTargetView(
         uint32_t depthSlice = 0u);
     ResultOrError<ID3D11DepthStencilView*> GetOrCreateD3D11DepthStencilView(bool depthReadOnly,

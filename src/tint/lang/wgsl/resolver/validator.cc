@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <bitset>
+#include <limits>
 #include <string_view>
 #include <tuple>
 #include <utility>
@@ -39,6 +40,7 @@
 #include "src/tint/lang/core/type/binding_array.h"
 #include "src/tint/lang/core/type/i8.h"
 #include "src/tint/lang/core/type/input_attachment.h"
+#include "src/tint/lang/core/type/memory_view.h"
 #include "src/tint/lang/core/type/multisampled_texture.h"
 #include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/core/type/reference.h"
@@ -46,8 +48,11 @@
 #include "src/tint/lang/core/type/sampler.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/core/type/subgroup_matrix.h"
+#include "src/tint/lang/core/type/swizzle_view.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
+#include "src/tint/lang/core/type/u16.h"
 #include "src/tint/lang/core/type/u8.h"
+#include "src/tint/lang/core/type/vector.h"
 #include "src/tint/lang/wgsl/ast/alias.h"
 #include "src/tint/lang/wgsl/ast/assignment_statement.h"
 #include "src/tint/lang/wgsl/ast/blend_src_attribute.h"
@@ -58,7 +63,6 @@
 #include "src/tint/lang/wgsl/ast/return_statement.h"
 #include "src/tint/lang/wgsl/ast/subgroup_size_attribute.h"
 #include "src/tint/lang/wgsl/ast/switch_statement.h"
-#include "src/tint/lang/wgsl/ast/traverse_expressions.h"
 #include "src/tint/lang/wgsl/ast/variable_decl_statement.h"
 #include "src/tint/lang/wgsl/ast/workgroup_attribute.h"
 #include "src/tint/lang/wgsl/sem/array.h"
@@ -79,6 +83,7 @@
 #include "src/tint/lang/wgsl/sem/while_statement.h"
 #include "src/tint/utils/internal_limits.h"
 #include "src/tint/utils/math/math.h"
+#include "src/tint/utils/rtti/switch.h"
 #include "src/tint/utils/text/string.h"
 #include "src/tint/utils/text/styled_text.h"
 #include "src/tint/utils/text/text_style.h"
@@ -175,15 +180,13 @@ Validator::Validator(
     SemHelper& sem,
     const wgsl::Extensions& enabled_extensions,
     const wgsl::AllowedFeatures& allowed_features,
-    const Hashmap<const core::type::Type*, const Source*, 8>& atomic_composite_info,
-    Hashset<TypeAndAddressSpace, 8>& valid_type_storage_layouts)
+    const Hashmap<const core::type::Type*, const Source*, 8>& atomic_composite_info)
     : symbols_(builder->Symbols()),
       diagnostics_(builder->Diagnostics()),
       sem_(sem),
       enabled_extensions_(enabled_extensions),
       allowed_features_(allowed_features),
-      atomic_composite_info_(atomic_composite_info),
-      valid_type_storage_layouts_(valid_type_storage_layouts) {
+      atomic_composite_info_(atomic_composite_info) {
     // Set default severities for filterable diagnostic rules.
     diagnostic_filters_.Set(wgsl::CoreDiagnosticRule::kDerivativeUniformity,
                             wgsl::DiagnosticSeverity::kError);
@@ -226,7 +229,7 @@ bool Validator::IsPlain(const core::type::Type* type) const {
     return type->IsAnyOf<core::type::Scalar, core::type::Atomic, core::type::Vector,
                          core::type::Matrix, sem::Array, core::type::Struct,
                          core::type::SubgroupMatrix>() &&
-           !type->IsAnyOf<core::type::I8, core::type::U8>();
+           !type->IsAnyOf<core::type::I8, core::type::U8, core::type::U16>();
 }
 
 // https://gpuweb.github.io/gpuweb/wgsl.html#storable-types
@@ -295,11 +298,10 @@ bool Validator::Enables(VectorRef<const ast::Enable*> enables) const {
         }
     }
 
-    if (enabled_extensions_.Contains(wgsl::Extension::kChromiumExperimentalSubgroupSizeControl) &&
+    if (enabled_extensions_.Contains(wgsl::Extension::kSubgroupSizeControl) &&
         !enabled_extensions_.Contains(wgsl::Extension::kSubgroups)) {
-        AddError(source_of(wgsl::Extension::kChromiumExperimentalSubgroupSizeControl))
-            << "extension "
-            << style::Code(wgsl::Extension::kChromiumExperimentalSubgroupSizeControl)
+        AddError(source_of(wgsl::Extension::kSubgroupSizeControl))
+            << "extension " << style::Code(wgsl::Extension::kSubgroupSizeControl)
             << " cannot be used without extension " << style::Code(wgsl::Extension::kSubgroups);
         return false;
     }
@@ -309,14 +311,29 @@ bool Validator::Enables(VectorRef<const ast::Enable*> enables) const {
 
 bool Validator::Atomic(const ast::TemplatedIdentifier* a, const core::type::Atomic* s) const {
     // https://gpuweb.github.io/gpuweb/wgsl/#atomic-types
-    // T must be either u32 or i32.
-    if (!s->Type()->IsAnyOf<core::type::U32, core::type::I32>()) {
-        AddError(a->arguments[0]->source)
-            << style::Type("atomic") << " only supports " << style::Type("i32") << " or "
-            << style::Type("u32") << " types";
-        return false;
+    // T must be either u32, i32 or (with atomic_vec2u_min_max extension) vec2u.
+    if (s->Type()->IsAnyOf<core::type::U32, core::type::I32>()) {
+        return true;
     }
-    return true;
+
+    if (auto* vec = s->Type()->As<core::type::Vector>()) {
+        if (vec->Width() == 2 && vec->Type()->Is<core::type::U32>()) {
+            if (enabled_extensions_.Contains(wgsl::Extension::kAtomicVec2UMinMax)) {
+                return true;
+            } else {
+                AddError(a->arguments[0]->source)
+                    << " The type " << style::Type("atomic<vec2u>")
+                    << " cannot be used without the extension "
+                    << style::Code(wgsl::Extension::kAtomicVec2UMinMax);
+                return false;
+            }
+        }
+    }
+
+    AddError(a->arguments[0]->source)
+        << style::Type("atomic") << " only supports " << style::Type("i32") << ", "
+        << style::Type("u32") << " or " << style::Type("vec2u") << " types";
+    return false;
 }
 
 bool Validator::Pointer(const ast::TemplatedIdentifier* a, const core::type::Pointer* s) const {
@@ -357,23 +374,7 @@ bool Validator::Pointer(const ast::TemplatedIdentifier* a, const core::type::Poi
 bool Validator::StorageTexture(const core::type::StorageTexture* t, const Source& source) const {
     switch (t->Access()) {
         case core::Access::kRead:
-            if (allowed_features_.features.count(
-                    wgsl::LanguageFeature::kReadonlyAndReadwriteStorageTextures) == 0u) {
-                AddError(source) << "read-only storage textures require the "
-                                    "readonly_and_readwrite_storage_textures language feature, "
-                                    "which is not allowed in the current environment";
-                return false;
-            }
-            break;
         case core::Access::kReadWrite:
-            if (allowed_features_.features.count(
-                    wgsl::LanguageFeature::kReadonlyAndReadwriteStorageTextures) == 0u) {
-                AddError(source) << "read-write storage textures require the "
-                                    "readonly_and_readwrite_storage_textures language feature, "
-                                    "which is not allowed in the current environment";
-                return false;
-            }
-            break;
         case core::Access::kWrite:
             break;
         case core::Access::kUndefined:
@@ -396,18 +397,26 @@ bool Validator::StorageTexture(const core::type::StorageTexture* t, const Source
 }
 
 bool Validator::SampledTexture(const core::type::SampledTexture* t, const Source& source) const {
-    if (!t->Type()->UnwrapRef()->IsAnyOf<core::type::F32, core::type::I32, core::type::U32>()) {
+    if (!t->Type()->IsAnyOf<core::type::F32, core::type::I32, core::type::U32>()) {
         AddError(source) << "texture_2d<type>: type must be f32, i32 or u32";
         return false;
     }
-
     return true;
 }
 
 bool Validator::MultisampledTexture(const core::type::MultisampledTexture* t,
                                     const Source& source) const {
-    if (t->Dim() != core::type::TextureDimension::k2d) {
-        AddError(source) << "only 2d multisampled textures are supported";
+    if (t->Dim() != core::type::TextureDimension::k2d &&
+        t->Dim() != core::type::TextureDimension::k2dArray) {
+        AddError(source) << "only 2d and 2d_array multisampled textures are supported";
+        return false;
+    }
+
+    if (t->Dim() == core::type::TextureDimension::k2dArray &&
+        !allowed_features_.features.contains(wgsl::LanguageFeature::kMultisampledArrayTextures)) {
+        AddError(source) << "use of " << style::Type("texture_multisampled_2d_array")
+                         << " requires the " << style::Code("multisampled_array_textures")
+                         << " language feature, which is not allowed in the current environment";
         return false;
     }
 
@@ -458,7 +467,7 @@ bool Validator::InputAttachmentIndexAttribute(const ast::InputAttachmentIndexAtt
 }
 
 bool Validator::BindingArray(const core::type::BindingArray* t, const Source& source) const {
-    if (allowed_features_.features.count(wgsl::LanguageFeature::kSizedBindingArray) == 0) {
+    if (!allowed_features_.features.contains(wgsl::LanguageFeature::kSizedBindingArray)) {
         AddError(source) << "use of " << style::Type("binding_array") << " requires the "
                          << style::Code("sized_binding_array")
                          << "language feature, which is not allowed in the current environment";
@@ -495,19 +504,27 @@ bool Validator::SubgroupMatrix(const core::type::SubgroupMatrix* t, const Source
     return true;
 }
 
-bool Validator::Buffer(const core::type::Buffer*, const Source& source) const {
-    if (!allowed_features_.features.count(wgsl::LanguageFeature::kBufferView)) {
+bool Validator::Buffer(const core::type::Buffer* buffer, const Source& source) const {
+    if (!allowed_features_.features.contains(wgsl::LanguageFeature::kBufferView)) {
         AddError(source) << "use of " << style::Type("buffer")
                          << " requires the buffer_view language feature, which is not allowed in "
                             "the current environment";
         return false;
     }
 
+    if (auto count = buffer->ConstantCount()) {
+        const uint32_t divisor = enabled_extensions_.Contains(wgsl::Extension::kF16) ? 2 : 4;
+        if (count.value() % divisor != 0) {
+            AddError(source) << "buffer size must be divisible by " << divisor;
+            return false;
+        }
+    }
+
     return true;
 }
 
 bool Validator::TexelBuffer(const core::type::TexelBuffer* t, const Source& source) const {
-    if (!allowed_features_.features.count(wgsl::LanguageFeature::kTexelBuffers)) {
+    if (!allowed_features_.features.contains(wgsl::LanguageFeature::kTexelBuffers)) {
         AddError(source) << "use of " << style::Type("texel_buffer")
                          << " requires the texel_buffer language feature, which is not allowed "
                             "in the current environment";
@@ -561,179 +578,6 @@ bool Validator::VariableInitializer(const ast::Variable* v,
                             << style::Type(sem_.TypeNameOf(storage_ty)) << " with value of type "
                             << style::Type(sem_.TypeNameOf(initializer_ty));
         return false;
-    }
-
-    return true;
-}
-
-bool Validator::AddressSpaceLayout(const core::type::Type* store_ty,
-                                   core::AddressSpace address_space,
-                                   Source source) const {
-    // https://gpuweb.github.io/gpuweb/wgsl/#storage-class-layout-constraints
-
-    auto is_uniform_struct_or_array = [address_space](const core::type::Type* ty) {
-        return address_space == core::AddressSpace::kUniform &&
-               ty->IsAnyOf<sem::Array, core::type::Struct>();
-    };
-
-    auto is_uniform_struct = [address_space](const core::type::Type* ty) {
-        return address_space == core::AddressSpace::kUniform && ty->Is<core::type::Struct>();
-    };
-
-    auto required_alignment_of = [&](const core::type::Type* ty) {
-        uint32_t actual_align = ty->Align();
-        uint32_t required_align = actual_align;
-        if (is_uniform_struct_or_array(ty) &&
-            !allowed_features_.features.contains(
-                wgsl::LanguageFeature::kUniformBufferStandardLayout)) {
-            required_align = tint::RoundUp(16u, actual_align);
-        }
-        return required_align;
-    };
-
-    auto member_name_of = [](const core::type::StructMember* sm) { return sm->Name().Name(); };
-
-    // Only validate the [type + address space] once
-    if (!valid_type_storage_layouts_.Add(TypeAndAddressSpace{store_ty, address_space})) {
-        return true;
-    }
-
-    auto note_usage = [&] {
-        AddNote(source) << style::Type(store_ty->FriendlyName()) << " used in address space "
-                        << style::Enum(address_space) << " here";
-    };
-
-    // Among three host-shareable address spaces, f16 is supported in "uniform" and
-    // "storage" address space, but not "immediate" address space yet.
-    if (Is<core::type::F16>(store_ty->DeepestElement()) &&
-        address_space == core::AddressSpace::kImmediate) {
-        AddError(source) << "using " << style::Type("f16") << " in " << style::Enum("immediate")
-                         << " address space is not implemented yet";
-        return false;
-    }
-
-    if (auto* str = store_ty->As<sem::Struct>()) {
-        auto& str_source = str->Declaration()->name->source;
-        for (size_t i = 0; i < str->Members().Length(); ++i) {
-            auto* const m = str->Members()[i];
-            uint32_t required_align = required_alignment_of(m->Type());
-
-            // Recurse into the member type.
-            if (!AddressSpaceLayout(m->Type(), address_space, m->Declaration()->type->source)) {
-                AddNote(str_source) << "see layout of struct:\n" << str->Layout();
-                note_usage();
-                return false;
-            }
-
-            // Validate that member is at a valid byte offset
-            if (m->Offset() % required_align != 0) {
-                AddError(m->Declaration()->source)
-                    << "the offset of a struct member of type "
-                    << style::Type(m->Type()->UnwrapRef()->FriendlyName()) << " in address space "
-                    << style::Enum(address_space) << " must be a multiple of " << required_align
-                    << " bytes, but " << style::Variable(member_name_of(m))
-                    << " is currently at offset " << m->Offset() << ". Consider setting "
-                    << style::Attribute("@align") << style::Code("(", required_align, ")")
-                    << " on this member";
-
-                AddNote(str_source) << "see layout of struct:\n" << str->Layout();
-
-                if (auto* member_str = m->Type()->As<sem::Struct>()) {
-                    AddNote(member_str->Declaration()->name->source)
-                        << "and layout of struct member:\n"
-                        << member_str->Layout();
-                }
-
-                note_usage();
-                return false;
-            }
-
-            // For uniform buffers, validate that the number of bytes between the previous member of
-            // type struct and the current is a multiple of 16 bytes.
-            auto* const prev_member = (i == 0) ? nullptr : str->Members()[i - 1];
-            if (prev_member && is_uniform_struct(prev_member->Type()) &&
-                !allowed_features_.features.contains(
-                    wgsl::LanguageFeature::kUniformBufferStandardLayout)) {
-                const uint32_t prev_to_curr_offset = m->Offset() - prev_member->Offset();
-                if (prev_to_curr_offset % 16 != 0) {
-                    AddError(m->Declaration()->source)
-                        << style::Enum("uniform")
-                        << " storage requires that the number of bytes between the start of the "
-                           "previous member of type struct and the current member be a "
-                           "multiple of 16 bytes, but there are currently "
-                        << prev_to_curr_offset << " bytes between "
-                        << style::Variable(member_name_of(prev_member)) << " and "
-                        << style::Variable(member_name_of(m)) << ". Consider setting "
-                        << style::Attribute("@align") << style::Code("(16)") << " on this member";
-
-                    AddNote(str_source) << "see layout of struct:\n" << str->Layout();
-
-                    auto* prev_member_str = prev_member->Type()->As<sem::Struct>();
-                    AddNote(prev_member_str->Declaration()->name->source)
-                        << "and layout of previous member struct:\n"
-                        << prev_member_str->Layout();
-                    note_usage();
-                    return false;
-                }
-            }
-
-            // If an alignment was explicitly specified, we need to validate that it satisfies the
-            // alignment requirement of the address space.
-            auto* align_attr =
-                ast::GetAttribute<ast::StructMemberAlignAttribute>(m->Declaration()->attributes);
-            if (align_attr != nullptr) {
-                auto align = sem_.GetVal(align_attr->expr)->ConstantValue()->ValueAs<uint32_t>();
-                if (align % required_align != 0) {
-                    AddError(align_attr->expr->source)
-                        << "alignment must be a multiple of " << style::Literal(required_align)
-                        << " bytes for the " << style::Enum(address_space) << " address space";
-                    note_usage();
-                    return false;
-                }
-            }
-        }
-    }
-
-    // For uniform buffer array members, validate that array elements are aligned to 16 bytes
-    if (auto* arr = store_ty->As<sem::Array>()) {
-        // Recurse into the element type.
-        // TODO(crbug.com/tint/1388): Ideally we'd pass the source for nested element type here, but
-        // we can't easily get that from the semantic node. We should consider recursing through the
-        // AST type nodes instead.
-        if (!AddressSpaceLayout(arr->ElemType(), address_space, source)) {
-            return false;
-        }
-
-        if (address_space == core::AddressSpace::kUniform &&
-            !allowed_features_.features.contains(
-                wgsl::LanguageFeature::kUniformBufferStandardLayout)) {
-            // We already validated that this array member is itself aligned to 16 bytes above, so
-            // we only need to validate that stride is a multiple of 16 bytes.
-            if (arr->ImplicitStride() % 16 != 0) {
-                // Since WGSL has no stride attribute, try to provide a useful hint for how the
-                // shader author can resolve the issue.
-                StyledText hint;
-                if (arr->ElemType()->Is<core::type::Scalar>()) {
-                    hint << "Consider using a vector or struct as the element type instead.";
-                } else if (auto* vec = arr->ElemType()->As<core::type::Vector>();
-                           vec && vec->Type()->Size() == 4) {
-                    hint << "Consider using a vec4 instead.";
-                } else if (arr->ElemType()->Is<sem::Struct>()) {
-                    hint << "Consider using the " << style::Attribute("@size")
-                         << " attribute on the last struct member.";
-                } else {
-                    hint << "Consider wrapping the element type in a struct and using the "
-                         << style::Attribute("@size") << " attribute.";
-                }
-                AddError(source) << style::Enum("uniform")
-                                 << " storage requires that array elements are aligned to 16 "
-                                    "bytes, but array element of type "
-                                 << style::Type(arr->ElemType()->FriendlyName())
-                                 << " has a stride of " << arr->ImplicitStride() << " bytes. "
-                                 << hint;
-                return false;
-            }
-        }
     }
 
     return true;
@@ -871,20 +715,15 @@ bool Validator::Var(const sem::Variable* v) const {
         }
     }
 
-    if (auto* buffer = store_ty->As<core::type::Buffer>()) {
-        if (buffer->Count()->Is<core::type::RuntimeArrayCount>() &&
-            (v->AddressSpace() == core::AddressSpace::kUniform ||
-             v->AddressSpace() == core::AddressSpace::kWorkgroup)) {
-            AddError(var->source) << "buffer type must be sized in "
-                                  << style::Enum(v->AddressSpace()) << " address space";
-            return false;
-        }
-        if (!(buffer->Count()->Is<core::type::RuntimeArrayCount>() ||
-              buffer->Count()->Is<core::type::ConstantArrayCount>()) &&
-            v->AddressSpace() != core::AddressSpace::kWorkgroup) {
-            AddError(var->source) << "buffer type must not be sized with an override-expression in "
-                                  << style::Enum(v->AddressSpace()) << " address space";
-            return false;
+    // With buffer_view, this is alternative validation to runtime-sized array checks.
+    if (allowed_features_.features.contains(wgsl::LanguageFeature::kBufferView)) {
+        if (v->AddressSpace() != core::AddressSpace::kStorage &&
+            v->AddressSpace() != core::AddressSpace::kHandle) {
+            if (!store_ty->HasFixedFootprint()) {
+                AddError(var->source) << "variables in " << style::Enum(v->AddressSpace())
+                                      << " address space must have a fixed footprint";
+                return false;
+            }
         }
     }
 
@@ -977,28 +816,19 @@ bool Validator::Parameter(const sem::Variable* var) const {
     auto* decl = var->Declaration();
 
     if (auto* ref = var->Type()->As<core::type::Pointer>()) {
-        bool ok = false;
-
         auto sc = ref->AddressSpace();
         switch (sc) {
             case core::AddressSpace::kFunction:
             case core::AddressSpace::kPrivate:
-                ok = true;
-                break;
             case core::AddressSpace::kImmediate:
             case core::AddressSpace::kStorage:
             case core::AddressSpace::kUniform:
             case core::AddressSpace::kWorkgroup:
-                ok = allowed_features_.features.count(
-                         wgsl::LanguageFeature::kUnrestrictedPointerParameters) != 0;
                 break;
             default:
-                break;
-        }
-        if (!ok) {
-            AddError(decl->source) << "function parameter of pointer type cannot be in "
-                                   << style::Enum(sc) << " address space";
-            return false;
+                AddError(decl->source) << "function parameter of pointer type cannot be in "
+                                       << style::Enum(sc) << " address space";
+                return false;
         }
     }
 
@@ -1094,6 +924,24 @@ bool Validator::BuiltinAttribute(const ast::BuiltinAttribute* attr,
             }
             break;
         case core::BuiltinValue::kLocalInvocationIndex:
+            if (stage != ast::PipelineStage::kNone &&
+                !(stage == ast::PipelineStage::kCompute && is_input)) {
+                is_stage_mismatch = true;
+            }
+            if (!type->Is<core::type::U32>()) {
+                err_builtin_type("u32");
+                return false;
+            }
+            break;
+        case core::BuiltinValue::kGlobalInvocationIndex:
+        case core::BuiltinValue::kWorkgroupIndex:
+            if (!allowed_features_.features.contains(wgsl::LanguageFeature::kLinearIndexing)) {
+                AddError(attr->source)
+                    << "use of " << style::Attribute("@builtin")
+                    << style::Code("(", style::Enum(builtin), ")") << " attribute requires the "
+                    << style::Code("linear_indexing") << " language feature";
+                return false;
+            }
             if (stage != ast::PipelineStage::kNone &&
                 !(stage == ast::PipelineStage::kCompute && is_input)) {
                 is_stage_mismatch = true;
@@ -1253,6 +1101,25 @@ bool Validator::BuiltinAttribute(const ast::BuiltinAttribute* attr,
             }
             break;
         }
+        case core::BuiltinValue::kViewIndex: {
+            if (!enabled_extensions_.Contains(wgsl::Extension::kViewInstancing)) {
+                AddError(attr->source)
+                    << "use of " << style::Attribute("@builtin")
+                    << style::Code("(", style::Enum(builtin), ")")
+                    << " requires enabling extension " << style::Code("view_instancing");
+                return false;
+            }
+            if (!type->Is<core::type::U32>()) {
+                err_builtin_type("u32");
+                return false;
+            }
+            if (stage != ast::PipelineStage::kNone && !((stage == ast::PipelineStage::kVertex ||
+                                                         stage == ast::PipelineStage::kFragment) &&
+                                                        is_input)) {
+                is_stage_mismatch = true;
+            }
+            break;
+        }
         case core::BuiltinValue::kBarycentricCoord: {
             if (!enabled_extensions_.Contains(
                     wgsl::Extension::kChromiumExperimentalBarycentricCoord)) {
@@ -1375,12 +1242,10 @@ bool Validator::Function(const sem::Function* func, ast::PipelineStage stage) co
                 return true;
             },
             [&](const ast::SubgroupSizeAttribute*) {
-                if (!enabled_extensions_.Contains(
-                        wgsl::Extension::kChromiumExperimentalSubgroupSizeControl)) {
+                if (!enabled_extensions_.Contains(wgsl::Extension::kSubgroupSizeControl)) {
                     AddError(attr->source)
                         << "use of " << style::Attribute("@subgroup_size")
-                        << " requires enabling extension "
-                        << style::Code("chromium_experimental_subgroup_size_control");
+                        << " requires enabling extension " << style::Code("subgroup_size_control");
                     return false;
                 }
                 if (decl->PipelineStage() != ast::PipelineStage::kCompute) {
@@ -2021,9 +1886,24 @@ bool Validator::BuiltinCall(const sem::Call* call) const {
     // The `print()` builtin requires the chromium_print language feature to be available.
     if (auto* fn = call->Target()->As<sem::BuiltinFn>()) {
         if (fn->Fn() == wgsl::BuiltinFn::kPrint) {
-            if (!allowed_features_.features.count(wgsl::LanguageFeature::kChromiumPrint)) {
+            if (!allowed_features_.features.contains(wgsl::LanguageFeature::kChromiumPrint)) {
                 AddError(call->Declaration()->source) << "the 'chromium_print' language feature is "
                                                          "not allowed in the current environment";
+                return false;
+            }
+        }
+        if (fn->Fn() == wgsl::BuiltinFn::kSubgroupMatrixLoad ||
+            fn->Fn() == wgsl::BuiltinFn::kSubgroupMatrixStore) {
+            const auto* ident = call->Declaration()->target->identifier;
+            uint32_t num_templates = 0;
+            if (const auto* templ_ident = ident->As<ast::TemplatedIdentifier>()) {
+                num_templates = static_cast<uint32_t>(templ_ident->arguments.Length());
+            }
+            const bool majorness_template =
+                (fn->Fn() == wgsl::BuiltinFn::kSubgroupMatrixLoad && num_templates == 2) ||
+                (fn->Fn() == wgsl::BuiltinFn::kSubgroupMatrixStore && num_templates == 1);
+            if (!CheckSubgroupMatrixOpOffset(fn, call->Arguments()[0], call->Arguments()[1],
+                                             majorness_template)) {
                 return false;
             }
         }
@@ -2117,47 +1997,268 @@ bool Validator::BufferView(const sem::Call* call) const {
             << "return type of " << builtin->str() << " cannot contain an atomic type";
         return false;
     }
+    if (builtin->Fn() == wgsl::BuiltinFn::kBufferArrayView) {
+        if (ret_store_type->HasFixedFootprint()) {
+            AddError(call->Declaration()->source)
+                << "return type of " << builtin->str() << " cannot have a fixed footprint";
+            return false;
+        }
+    }
 
     if (!CheckTypeAccessAddressSpace(ret_store_type, ret_ptr_type->Access(),
                                      ret_ptr_type->AddressSpace(), call->Declaration()->source)) {
         return false;
     }
 
-    TINT_ASSERT(call->Arguments().Length() == 2);
+    TINT_ASSERT(builtin->Fn() == wgsl::BuiltinFn::kBufferView ? call->Arguments().Length() == 2
+                                                              : call->Arguments().Length() == 3);
+
+    uint64_t ret_min_size = 0;
+    uint64_t ret_offset = 0;
+    uint64_t ret_stride = 0;
+    if (ret_store_type->HasFixedFootprint()) {
+        ret_min_size = ret_store_type->Size();
+    } else {
+        if (const auto* str_ty = ret_store_type->As<core::type::Struct>()) {
+            const auto* last = str_ty->Members().Back();
+            const auto* last_ty = last->Type();
+            TINT_ASSERT(last_ty->Is<core::type::Array>());
+            ret_offset = last->Offset();
+            ret_stride = last_ty->As<core::type::Array>()->ImplicitStride();
+        } else {
+            TINT_ASSERT(ret_store_type->Is<core::type::Array>());
+            ret_stride = ret_store_type->As<core::type::Array>()->ImplicitStride();
+        }
+        ret_min_size = ret_offset + ret_stride;
+    }
 
     auto* buffer_ptr = call->Arguments()[0];
     auto* buffer_type =
         buffer_ptr->Type()->As<core::type::Pointer>()->StoreType()->As<core::type::Buffer>();
     auto* offset = call->Arguments()[1];
-    auto* constant_value = offset->ConstantValue();
-    if (!constant_value || !offset->Type()->IsIntegerScalar()) {
+    auto* offset_constant_value = offset->ConstantValue();
+    uint64_t offset_value = 0;
+    if (offset_constant_value) {
+        if (offset->Type()->IsUnsignedIntegerScalar()) {
+            offset_value = offset_constant_value->ValueAs<u32>();
+        } else {
+            TINT_ASSERT(offset->Type()->IsSignedIntegerScalar());
+            int32_t ivalue = offset_constant_value->ValueAs<i32>();
+            if (ivalue < 0) {
+                AddError(offset->Declaration()->source)
+                    << "the offset argument of " << builtin->str() << " must be non-negative";
+                return false;
+            }
+            offset_value = static_cast<uint32_t>(ivalue);
+        }
+        if (offset_value % ret_store_type->Align() != 0) {
+            AddError(offset->Declaration()->source)
+                << "the offset argument of " << builtin->str()
+                << " must evenly divide the alignment of the return type ("
+                << ret_store_type->Align() << ")";
+            return false;
+        }
+    }
+
+    auto count = buffer_type->ConstantCount();
+    if (builtin->Fn() == wgsl::BuiltinFn::kBufferView) {
+        if (offset_value + ret_min_size > std::numeric_limits<uint32_t>::max()) {
+            AddError(offset->Declaration()->source)
+                << "the offset argument of " << builtin->str()
+                << " plus the minimum size of the return type must not overflow a 32-bit unsigned "
+                   "integer";
+            return false;
+        }
+        if (count != std::nullopt && offset_value + ret_min_size > count.value()) {
+            AddError(offset->Declaration()->source)
+                << "the offset argument of " << builtin->str()
+                << " plus the minimum size of the return type must be less than or equal to the "
+                   "buffer size";
+            return false;
+        }
+
         return true;
     }
 
-    uint32_t value;
-    if (offset->Type()->IsUnsignedIntegerScalar()) {
-        value = constant_value->ValueAs<u32>();
-    } else {
-        int32_t ivalue = constant_value->ValueAs<i32>();
-        if (ivalue < 0) {
-            AddError(offset->Declaration()->source)
-                << "the offset argument of " << builtin->str() << " must be non-negative";
+    // bufferArrayView specific checks
+    // Return type must not have a fixed footprint.
+    uint64_t size_value = 0;
+    auto* size = call->Arguments()[2];
+    auto* size_constant_value = size->ConstantValue();
+    if (size_constant_value) {
+        size_value = std::numeric_limits<uint32_t>::max();
+        if (size->Type()->IsUnsignedIntegerScalar()) {
+            size_value = size_constant_value->ValueAs<u32>();
+        } else {
+            TINT_ASSERT(size->Type()->IsSignedIntegerScalar());
+            int32_t ivalue = size_constant_value->ValueAs<i32>();
+            if (ivalue < 0) {
+                AddError(size->Declaration()->source)
+                    << "the size argument of " << builtin->str() << " must be non-negative";
+                return false;
+            }
+            size_value = static_cast<uint32_t>(ivalue);
+        }
+
+        if (size_value < ret_min_size) {
+            AddError(size->Declaration()->source)
+                << "the size argument (" << size_value << " bytes) of " << builtin->str()
+                << " must be large enough to include one element of the runtime-sized array ("
+                << ret_min_size << " bytes)";
             return false;
         }
-        value = static_cast<uint32_t>(ivalue);
+
+        if ((size_value - ret_offset) % ret_stride != 0) {
+            AddError(size->Declaration()->source)
+                << "the size argument (" << size_value << " bytes) of " << builtin->str()
+                << " minus the return type offset (" << ret_offset
+                << " bytes) must be evenly divisible by the stride of the runtime-sized array ("
+                << ret_stride << " bytes)";
+            return false;
+        }
     }
-    if (value % ret_store_type->Align() != 0) {
-        AddError(offset->Declaration()->source)
-            << "the offset argument of " << builtin->str()
-            << " must evenly divide the alignment of the return type (" << ret_store_type->Align()
-            << ")";
+
+    if (offset_value + size_value + ret_min_size > std::numeric_limits<uint32_t>::max()) {
+        AddError(call->Declaration()->source)
+            << "the offset and size arguments of " << builtin->str()
+            << " plus the minimum return type size must not overflow a 32-bit unsigned integer";
         return false;
     }
-    auto count = buffer_type->ConstantCount();
-    if (count != std::nullopt && value + ret_store_type->Size() >= count.value()) {
-        AddError(offset->Declaration()->source)
-            << "the offset argument of " << builtin->str()
-            << " plus the size of the return type must be smaller than the buffer size";
+    if (count != std::nullopt &&
+        (offset_value + std::max(size_value, ret_min_size) > count.value())) {
+        std::string msg;
+        std::ostringstream str(msg);
+        str << "the buffer (" << count.value()
+            << " bytes) must be large enough to include one element of the runtime-sized array ("
+            << ret_min_size << " bytes)";
+        if (offset_value != 0 || size_value != 0) {
+            str << " with the given";
+        }
+        if (offset_value != 0) {
+            str << " offset (" << offset_value << " bytes)";
+        }
+        if (size_value != 0) {
+            str << (offset_value != 0 ? " and" : "") << " size (" << size_value << " bytes)";
+        }
+        AddError(call->Declaration()->source) << str.str();
+        return false;
+    }
+
+    return true;
+}
+
+bool Validator::SubgroupMatrixLoadStore(const sem::Call* call) const {
+    auto* builtin = call->Target()->As<sem::BuiltinFn>();
+    if (!builtin) {
+        return false;
+    }
+
+    const bool is_load = builtin->Fn() == wgsl::BuiltinFn::kSubgroupMatrixLoad;
+    auto* ptr_arg = call->Arguments()[0];
+    auto* ptr_arr_ty = ptr_arg->Type()->UnwrapPtr()->As<core::type::Array>();
+    auto* offset_arg = call->Arguments()[1];
+    const sem::ValueExpression* stride_arg = nullptr;
+    auto* templated_ident = call->Declaration()->target->identifier->As<ast::TemplatedIdentifier>();
+    bool col_major = false;
+    const core::type::SubgroupMatrix* mat_ty = nullptr;
+    if (is_load) {
+        TINT_ASSERT(templated_ident);
+        // Don't validate deprecated variant.
+        // TODO(b/529415904): remove this after deprecated variant is removed.
+        if (templated_ident->arguments.Length() != 2) {
+            return true;
+        }
+        auto* sem_expr = sem_.Get(templated_ident->arguments[1]);
+        auto* arg_major = sem_expr->As<sem::BuiltinEnumExpression<core::Majorness>>();
+        TINT_ASSERT(arg_major);
+        col_major = arg_major->Value() == core::Majorness::kColMajor;
+        stride_arg = call->Arguments()[2];
+        mat_ty = call->Target()->ReturnType()->As<core::type::SubgroupMatrix>();
+    } else {
+        // Don't validate deprecated variant.
+        // TODO(b/529415904): remove this after deprecated variant is removed.
+        if (!templated_ident) {
+            return true;
+        }
+        TINT_ASSERT(templated_ident->arguments.Length() == 1);
+        auto* sem_expr = sem_.Get(templated_ident->arguments[0]);
+        auto* arg_major = sem_expr->As<sem::BuiltinEnumExpression<core::Majorness>>();
+        TINT_ASSERT(arg_major);
+        col_major = arg_major->Value() == core::Majorness::kColMajor;
+        stride_arg = call->Arguments()[3];
+        mat_ty = call->Arguments()[2]->Type()->As<core::type::SubgroupMatrix>();
+    }
+
+    uint32_t major_size = col_major ? mat_ty->Columns() : mat_ty->Rows();
+    uint32_t minor_size = col_major ? mat_ty->Rows() : mat_ty->Columns();
+    auto* ele_ty = mat_ty->Type();
+
+    if (ptr_arr_ty->ImplicitStride() < ele_ty->Size()) {
+        AddError(call->Declaration()->source)
+            << "the stride of the array (" << ptr_arr_ty->ImplicitStride()
+            << " bytes) must be greater than or equal to the matrix element size ("
+            << ele_ty->Size() << " bytes)";
+        return false;
+    }
+
+    const uint32_t min_stride = ele_ty->Size() * minor_size;
+
+    uint64_t stride_value = 0;
+    if (stride_arg->ConstantValue()) {
+        if (stride_arg->Type()->IsUnsignedIntegerScalar()) {
+            stride_value = stride_arg->ConstantValue()->ValueAs<uint64_t>();
+        } else {
+            TINT_ASSERT(stride_arg->Type()->IsSignedIntegerScalar());
+            int32_t ivalue = stride_arg->ConstantValue()->ValueAs<int32_t>();
+            if (ivalue < 0) {
+                AddError(stride_arg->Declaration()->source)
+                    << "the stride argument of " << builtin->str() << " must be non-negative";
+                return false;
+            }
+            stride_value = static_cast<uint64_t>(ivalue);
+        }
+        stride_value *= ptr_arr_ty->ElemType()->Size();
+        if (stride_value < min_stride) {
+            AddError(stride_arg->Declaration()->source)
+                << "the stride argument (" << stride_value / ptr_arr_ty->ElemType()->Size() << ", "
+                << stride_value << " bytes) of " << builtin->str()
+                << " must be greater than the minimum stride (" << min_stride << " bytes)";
+            return false;
+        }
+    } else {
+        // Use the minimum stride value so we can validate the required matrix size below. Minimum
+        // stride (and 0 offset) allow us to avoid predication.
+        stride_value = min_stride;
+    }
+
+    uint64_t offset_value = 0;
+    if (offset_arg->ConstantValue()) {
+        if (offset_arg->Type()->IsUnsignedIntegerScalar()) {
+            offset_value = offset_arg->ConstantValue()->ValueAs<uint64_t>();
+        } else {
+            TINT_ASSERT(offset_arg->Type()->IsSignedIntegerScalar());
+            int32_t ivalue = offset_arg->ConstantValue()->ValueAs<int32_t>();
+            if (ivalue < 0) {
+                AddError(offset_arg->Declaration()->source)
+                    << "the offset argument of " << builtin->str() << " must be non-negative";
+                return false;
+            }
+            offset_value = static_cast<uint64_t>(ivalue);
+        }
+        offset_value *= ptr_arr_ty->ElemType()->Size();
+    }
+
+    if (!ptr_arr_ty->ConstantCount()) {
+        return true;
+    }
+
+    uint64_t mat_required_size = stride_value * (major_size - 1) +
+                                 static_cast<uint64_t>(minor_size) * ele_ty->Size() + offset_value;
+    uint64_t arr_size = ptr_arr_ty->Size();
+    if (arr_size < mat_required_size) {
+        AddError(call->Declaration()->source)
+            << "the pointer operand of " << builtin->str() << " is too small (" << arr_size
+            << " bytes) for the matrix access (" << mat_required_size << " bytes)";
         return false;
     }
 
@@ -2173,43 +2274,40 @@ bool Validator::TextureBuiltinFn(const sem::Call* call) const {
     std::string func_name = builtin->str();
     auto& signature = builtin->Signature();
 
-    auto check_arg_is_constexpr = [&](core::ParameterUsage usage, int min, int max) {
+    auto check_const_arg_range = [&](core::ParameterUsage usage, int min, int max) {
         auto signed_index = signature.IndexOf(usage);
         if (signed_index < 0) {
             return true;
         }
         auto index = static_cast<size_t>(signed_index);
         auto* arg = call->Arguments()[index];
-        if (auto values = arg->ConstantValue()) {
-            if (auto* vector = values->Type()->As<core::type::Vector>()) {
-                for (size_t i = 0; i < vector->Width(); i++) {
-                    auto value = values->Index(i)->ValueAs<AInt>();
-                    if (value < min || value > max) {
-                        AddError(arg->Declaration()->source)
-                            << "each component of the " << usage << " argument must be at least "
-                            << min << " and at most " << max << ". " << usage << " component " << i
-                            << " is " << value;
-                        return false;
-                    }
-                }
-            } else {
-                auto value = values->ValueAs<AInt>();
+        auto values = arg->ConstantValue();
+        TINT_ASSERT(values);
+        if (auto* vector = values->Type()->As<core::type::Vector>()) {
+            for (size_t i = 0; i < vector->Width(); i++) {
+                auto value = values->Index(i)->ValueAs<AInt>();
                 if (value < min || value > max) {
                     AddError(arg->Declaration()->source)
-                        << "the " << usage << " argument must be at least " << min
-                        << " and at most " << max << ". " << usage << " is " << value;
+                        << "each component of the " << usage << " argument must be at least " << min
+                        << " and at most " << max << ". " << usage << " component " << i << " is "
+                        << value;
                     return false;
                 }
             }
-            return true;
+        } else {
+            auto value = values->ValueAs<AInt>();
+            if (value < min || value > max) {
+                AddError(arg->Declaration()->source)
+                    << "the " << usage << " argument must be at least " << min << " and at most "
+                    << max << ". " << usage << " is " << value;
+                return false;
+            }
         }
-        AddError(arg->Declaration()->source)
-            << "the " << usage << " argument must be a const-expression";
-        return false;
+        return true;
     };
 
-    return check_arg_is_constexpr(core::ParameterUsage::kOffset, -8, 7) &&
-           check_arg_is_constexpr(core::ParameterUsage::kComponent, 0, 3);
+    return check_const_arg_range(core::ParameterUsage::kOffset, -8, 7) &&
+           check_const_arg_range(core::ParameterUsage::kComponent, 0, 3);
 }
 
 bool Validator::SubgroupBroadcast(const sem::Call* call) const {
@@ -2221,12 +2319,7 @@ bool Validator::SubgroupBroadcast(const sem::Call* call) const {
     TINT_ASSERT(call->Arguments().Length() == 2);
     auto* id = call->Arguments()[1];
     auto* constant_value = id->ConstantValue();
-
-    if (!constant_value) {
-        AddError(id->Declaration()->source)
-            << "the sourceLaneIndex argument of subgroupBroadcast must be a const-expression";
-        return false;
-    }
+    TINT_ASSERT(constant_value);
 
     if (id->Type()->IsSignedIntegerScalar()) {
         if (constant_value->ValueAs<i32>() < 0) {
@@ -2264,12 +2357,7 @@ bool Validator::QuadBroadcast(const sem::Call* call) const {
     TINT_ASSERT(call->Arguments().Length() == 2);
     auto* id = call->Arguments()[1];
     auto* constant_value = id->ConstantValue();
-
-    if (!constant_value) {
-        AddError(id->Declaration()->source)
-            << "the id argument of quadBroadcast must be a const-expression";
-        return false;
-    }
+    TINT_ASSERT(constant_value);
 
     if (id->Type()->IsSignedIntegerScalar()) {
         if (constant_value->ValueAs<i32>() < 0) {
@@ -2323,7 +2411,7 @@ bool Validator::RequiredFeaturesForBuiltinFn(const sem::Call* call) const {
 
     const auto feature = builtin->RequiredLanguageFeature();
     if (feature != wgsl::LanguageFeature::kUndefined) {
-        if (!allowed_features_.features.count(feature)) {
+        if (!allowed_features_.features.contains(feature)) {
             AddError(call->Declaration()->source)
                 << "built-in function " << style::Function(builtin->Fn()) << " requires the "
                 << style::Code(wgsl::ToString(feature))
@@ -2410,14 +2498,18 @@ bool Validator::FunctionCall(const sem::Call* call, sem::Statement* current_stat
             auto* param_store_type = param_ptr_type->StoreType();
             if (arg_store_type->Is<core::type::Buffer>() &&
                 param_store_type->Is<core::type::Buffer>()) {
-                const bool param_unsized = param_store_type->As<core::type::Buffer>()
-                                               ->Count()
-                                               ->Is<core::type::RuntimeArrayCount>();
-                auto arg_count = arg_store_type->As<core::type::Buffer>()->ConstantCount();
-                auto param_count = param_store_type->As<core::type::Buffer>()->ConstantCount();
+                auto* arg_buffer_ty = arg_store_type->As<core::type::Buffer>();
+                auto* param_buffer_ty = param_store_type->As<core::type::Buffer>();
+                const bool param_unsized =
+                    param_buffer_ty->Count()->Is<core::type::RuntimeArrayCount>();
+                const bool both_constant =
+                    arg_buffer_ty->Count()->Is<core::type::ConstantArrayCount>() &&
+                    param_buffer_ty->Count()->Is<core::type::ConstantArrayCount>();
+                auto arg_count = arg_buffer_ty->ConstantCount().value_or(0);
+                auto param_count = param_buffer_ty->ConstantCount().value_or(0);
                 if (arg_ptr_type->AddressSpace() == param_ptr_type->AddressSpace() &&
                     arg_ptr_type->Access() == param_ptr_type->Access() &&
-                    (param_unsized || arg_count.value_or(0) > param_count.value_or(0))) {
+                    (param_unsized || (both_constant && arg_count > param_count))) {
                     // Any buffer argument can match an unsized buffer parameter.
                     // A larger buffer argument can match a smaller buffer parameter.
                     allow_mismatch = true;
@@ -2431,32 +2523,6 @@ bool Validator::FunctionCall(const sem::Call* call, sem::Statement* current_stat
                                        << style::Type(sem_.TypeNameOf(param_type)) << ", got "
                                        << style::Type(sem_.TypeNameOf(arg_type));
             return false;
-        }
-
-        if (param_type->Is<core::type::Pointer>() &&
-            (allowed_features_.features.count(
-                 wgsl::LanguageFeature::kUnrestrictedPointerParameters) == 0u)) {
-            // https://gpuweb.github.io/gpuweb/wgsl/#function-restriction
-            // Each argument of pointer type to a user-defined function must have the same memory
-            // view as its root identifier.
-            // We can validate this by just comparing the store type of the argument with that of
-            // its root identifier, as these will match iff the memory view is the same.
-            auto* arg_store_type = arg_type->As<core::type::Pointer>()->StoreType();
-            auto* root = call->Arguments()[i]->RootIdentifier();
-            auto* root_ptr_ty = root->Type()->As<core::type::Pointer>();
-            auto* root_ref_ty = root->Type()->As<core::type::Reference>();
-            TINT_ASSERT(root_ptr_ty || root_ref_ty);
-            const core::type::Type* root_store_type;
-            if (root_ptr_ty) {
-                root_store_type = root_ptr_ty->StoreType();
-            } else {
-                root_store_type = root_ref_ty->StoreType();
-            }
-            if (root_store_type != arg_store_type) {
-                AddError(arg_expr->source) << "arguments of pointer type must not point to a "
-                                              "subset of the originating variable";
-                return false;
-            }
         }
     }
 
@@ -2513,12 +2579,6 @@ bool Validator::StructureInitializer(const ast::CallExpression* ctor,
 bool Validator::ArrayConstructor(const ast::CallExpression* ctor,
                                  const sem::Array* array_type) const {
     auto& values = ctor->args;
-    if (values.Length() > internal_limits::kMaxArrayConstructorElements) {
-        AddError(ctor->target->source) << "array constructor has excessive number of elements (>"
-                                       << internal_limits::kMaxArrayConstructorElements << ")";
-        return false;
-    }
-
     auto* elem_ty = array_type->ElemType();
     for (auto* value : values) {
         auto* value_ty = sem_.TypeOf(value)->UnwrapRef();
@@ -2862,6 +2922,30 @@ bool Validator::Structure(const sem::Struct* str, ast::PipelineStage stage) cons
                     }
                     return true;
                 },
+                [&](const ast::StructMemberAlignAttribute* align_attr) {
+                    // From align attribute in WGSL spec:
+                    // If align(n) is applied to a member of S with type T, and S can be the store
+                    // type for a variable in address space AS, where AS is not uniform, then n must
+                    // satisfy: n = k * RequiredAlignOf(T, AS), for some positive k
+                    //
+                    // Since it can only be put on a struct, we can limit the check to
+                    // host-shareable and/or constructible types. Host-shareable catches anything
+                    // instantiable in storage, constructible catches everything else (workgroup,
+                    // function, private, immediate).
+                    //
+                    // RequiredAlignOf == AlignOf for applicable address spaces.
+                    if (str->IsHostShareable() || str->IsConstructible()) {
+                        auto align =
+                            sem_.GetVal(align_attr->expr)->ConstantValue()->ValueAs<uint32_t>();
+                        if (align % member->Type()->Align() != 0) {
+                            AddError(align_attr->expr->source)
+                                << "alignment must be a multiple of "
+                                << style::Literal(member->Type()->Align()) << " bytes";
+                            return false;
+                        }
+                    }
+                    return true;
+                },
                 [&](Default) { return true; });
             if (!ok) {
                 return false;
@@ -3163,9 +3247,21 @@ bool Validator::Assignment(const ast::Statement* a, const core::type::Type* rhs_
     auto const* lhs_sem = sem_.GetVal(lhs);
     auto const* lhs_ty = lhs_sem->Type();
 
-    auto* lhs_ref = lhs_ty->As<core::type::Reference>();
+    const core::type::MemoryView* lhs_ref = lhs_ty->As<core::type::Reference>();
+
+    // Allow lhs_ref to be a swizzle view if the swizzle assignment language feature is enabled.
+    if (!lhs_ref &&
+        allowed_features_.features.contains(wgsl::LanguageFeature::kSwizzleAssignment)) {
+        lhs_ref = lhs_ty->As<core::type::SwizzleView>();
+        auto const* sem_swizzle = lhs_sem->As<sem::Swizzle>();
+
+        if (sem_swizzle && !SwizzleAssignment(sem_swizzle, lhs->source)) {
+            return false;
+        }
+    }
+
     if (!lhs_ref) {
-        // LHS is not a reference, so it has no storage.
+        // LHS is not a reference or swizzle view, so it has no storage.
         AddError(lhs->source) << "cannot assign to " << sem_.Describe(lhs_sem);
 
         auto* expr = lhs;
@@ -3346,10 +3442,6 @@ bool Validator::CheckTypeAccessAddressSpace(const core::type::Type* store_ty,
                                             core::Access access,
                                             core::AddressSpace address_space,
                                             const Source& source) const {
-    if (!AddressSpaceLayout(store_ty, address_space, source)) {
-        return false;
-    }
-
     switch (address_space) {
         case core::AddressSpace::kPixelLocal:
             if (auto* str = store_ty->As<sem::Struct>()) {
@@ -3374,8 +3466,8 @@ bool Validator::CheckTypeAccessAddressSpace(const core::type::Type* store_ty,
             }
             break;
         case core::AddressSpace::kImmediate:
-            if (DAWN_UNLIKELY(allowed_features_.features.count(
-                                  wgsl::LanguageFeature::kImmediateAddressSpace) == 0u)) {
+            if (DAWN_UNLIKELY(!allowed_features_.features.contains(
+                    wgsl::LanguageFeature::kImmediateAddressSpace))) {
                 AddError(source) << "use of variable address space " << style::Enum("immediate")
                                  << " requires the immediate_address_space language feature, which "
                                     "is not allowed in the current environment";
@@ -3507,6 +3599,86 @@ bool Validator::CheckNoMultipleModuleScopeVarsOfAddressSpace(sem::Function* entr
             return false;
         }
     }
+    return true;
+}
+
+bool Validator::CheckSubgroupMatrixOpOffset(const sem::BuiltinFn* fn,
+                                            const sem::ValueExpression* p_arg,
+                                            const sem::ValueExpression* offset_arg,
+                                            bool majorness_template) const {
+    auto* ptr_ty = p_arg->Type()->As<core::type::Pointer>();
+    if (!ptr_ty) {
+        return true;
+    }
+    auto* arr_ty = ptr_ty->StoreType()->As<core::type::Array>();
+    if (!arr_ty) {
+        return true;
+    }
+    auto const_count = arr_ty->ConstantCount();
+    if (!const_count) {
+        return true;
+    }
+    auto* offset_val = offset_arg->ConstantValue();
+    if (!offset_val) {
+        return true;
+    }
+
+    const core::type::SubgroupMatrix* mat_ty = nullptr;
+    if (fn->Fn() == wgsl::BuiltinFn::kSubgroupMatrixLoad) {
+        mat_ty = fn->ReturnType()->As<core::type::SubgroupMatrix>();
+    } else if (fn->Fn() == wgsl::BuiltinFn::kSubgroupMatrixStore) {
+        mat_ty = fn->Parameters()[2]->Type()->As<core::type::SubgroupMatrix>();
+    }
+    if (!mat_ty) {
+        return true;
+    }
+
+    auto arr_stride = arr_ty->ImplicitStride();
+    auto mat_comp_size = mat_ty->Type()->Size();
+    if (mat_comp_size == 0) {
+        return true;
+    }
+
+    auto limit = const_count.value() * arr_stride;
+    if (!majorness_template) {
+        limit /= mat_comp_size;
+    }
+
+    uint32_t offset = 0;
+    if (offset_arg->Type()->IsUnsignedIntegerScalar()) {
+        offset = offset_val->ValueAs<u32>();
+    } else if (offset_arg->Type()->IsSignedIntegerScalar()) {
+        int32_t ival = offset_val->ValueAs<i32>();
+        if (ival < 0) {
+            AddError(offset_arg->Declaration()->source)
+                << "the offset argument of " << fn->str() << " must be non-negative";
+            return false;
+        }
+        offset = static_cast<uint32_t>(ival);
+    }
+
+    if (offset >= limit) {
+        AddError(offset_arg->Declaration()->source)
+            << "the offset argument of " << fn->str() << " (" << offset
+            << ") is out of bounds of the array type of size " << limit;
+        return false;
+    }
+
+    return true;
+}
+
+bool Validator::SwizzleAssignment(const sem::Swizzle* lhs, const Source& source) const {
+    // Check whether the final collapsed swizzle has duplicated components.
+    auto collapsed = sem::CollapseLhsSwizzle(lhs);
+    tint::Hashset<uint32_t, 4> seen_indices;
+    for (auto index : collapsed.indices) {
+        if (!seen_indices.Add(index)) {
+            AddError(source) << "cannot assign to vector swizzle with "
+                                "duplicate target components";
+            return false;
+        }
+    }
+
     return true;
 }
 

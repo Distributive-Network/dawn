@@ -29,7 +29,7 @@
 
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/reflection.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/null/writer/raise/raise.h"
 
 namespace tint::null::writer {
@@ -46,6 +46,7 @@ Result<Output> Generate(core::ir::Module& ir, const Options& options) {
         .y = wg_info.y,
         .z = wg_info.z,
         .storage_size = wg_info.storage_size,
+        .subgroup_size = wg_info.subgroup_size,
     };
 
     return output;

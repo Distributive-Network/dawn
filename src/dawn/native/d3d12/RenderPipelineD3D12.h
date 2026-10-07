@@ -28,10 +28,11 @@
 #ifndef SRC_DAWN_NATIVE_D3D12_RENDERPIPELINED3D12_H_
 #define SRC_DAWN_NATIVE_D3D12_RENDERPIPELINED3D12_H_
 
-#include "dawn/native/RenderPipeline.h"
-
-#include "dawn/native/d3d12/ShaderModuleD3D12.h"
-#include "dawn/native/d3d12/d3d12_platform.h"
+#include "src/dawn/native/RenderPipeline.h"
+#include "src/dawn/native/d3d12/DeviceD3D12.h"
+#include "src/dawn/native/d3d12/PipelineLayoutHandle.h"
+#include "src/dawn/native/d3d12/ShaderModuleD3D12.h"
+#include "src/dawn/native/d3d12/d3d12_platform.h"
 
 namespace dawn::native::d3d12 {
 
@@ -49,14 +50,13 @@ class RenderPipeline final : public RenderPipelineBase {
     D3D12_PRIMITIVE_TOPOLOGY GetD3D12PrimitiveTopology() const;
     ID3D12PipelineState* GetPipelineState() const;
 
-    bool UsesVertexOrInstanceIndex() const;
+    PipelineLayoutHandle* GetPipelineLayoutHandle() const;
 
     // Dawn API
     void SetLabelImpl() override;
 
-    ComPtr<ID3D12CommandSignature> GetDrawIndirectCommandSignature();
-
-    ComPtr<ID3D12CommandSignature> GetDrawIndexedIndirectCommandSignature();
+    const CommandSignature& GetDrawIndirectCommandSignature();
+    const CommandSignature& GetDrawIndexedIndirectCommandSignature();
 
   private:
     ~RenderPipeline() override;
@@ -68,9 +68,9 @@ class RenderPipeline final : public RenderPipelineBase {
         std::array<D3D12_INPUT_ELEMENT_DESC, kMaxVertexAttributes>* inputElementDescriptors);
     D3D12_DEPTH_STENCIL_DESC ComputeDepthStencilDesc();
 
-    D3D12_PRIMITIVE_TOPOLOGY mD3d12PrimitiveTopology;
+    Ref<PipelineLayoutHandle> mPipelineLayoutHandle;
+    D3D12_PRIMITIVE_TOPOLOGY mD3d12PrimitiveTopology{};
     ComPtr<ID3D12PipelineState> mPipelineState;
-    bool mUsesVertexOrInstanceIndex;
 };
 
 }  // namespace dawn::native::d3d12

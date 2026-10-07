@@ -46,9 +46,11 @@ Case C(Value input, Value expected) {
     return Case{std::move(input), std::move(expected)};
 }
 
-/// Convenience overload to creates a Case with just scalars
-template <typename T, typename U, typename = std::enable_if_t<!IsValue<T>>>
-Case C(T input, U expected) {
+/// Convenience overload to create a Case with just scalars
+template <typename T, typename U>
+Case C(T input, U expected)
+    requires(!IsValue<T>)
+{
     return Case{Val(input), Val(expected)};
 }
 
@@ -169,7 +171,6 @@ INSTANTIATE_TEST_SUITE_P(Negation,
 TEST_F(ConstEvalTest, UnaryNegateLowestAbstract) {
     // const break_me = -(-9223372036854775808);
     auto* c = GlobalConst("break_me", Negation(Negation(Expr(9223372036854775808_a))));
-    (void)c;
     EXPECT_TRUE(r()->Resolve()) << r()->error();
     auto* sem = Sem().Get(c);
     EXPECT_EQ(sem->ConstantValue()->ValueAs<AInt>(), 9223372036854775808_a);

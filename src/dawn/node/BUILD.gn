@@ -27,7 +27,7 @@
 
 import("../../../scripts/dawn_overrides_with_defaults.gni")
 
-if (is_win) {
+if (host_os == "win") {
   _exe = ".exe"
 } else {
   _exe = ""
@@ -61,14 +61,17 @@ dawn_go_executable =
     "$dawn_root/tools/golang/${_cipd_os}-${_cipd_arch}/bin/go${_exe}"
 
 # TODO(amaiorano): Figure out why path_exists doesn't work
-# assert(path_exists(dawn_node_addon_api_dir) && path_exists(dawn_node_api_headers_dir) && path_exists(dawn_webgpu_idl_path), "dawn_build_node_bindings missing dependencies. Please follow the 'Fetch dependencies' instructions at: ./src/dawn/node/README.md")
+#assert(
+#    path_exists(dawn_node_addon_api_dir) &&
+#        path_exists(dawn_node_api_headers_dir) &&
+#        path_exists(dawn_webgpu_idl_path),
+#    "dawn_build_node_bindings missing dependencies. Please follow the 'Fetch dependencies' instructions at: ./src/dawn/node/README.md")
 
 dawn_node_gen_dir = target_gen_dir
 interop_gen_dir = "$dawn_node_gen_dir/src/dawn/node/interop"
 
 # TODO(amaiorano): Move run_built_binary.py to a common dir
-run_built_binary_script =
-    "$dawn_root/third_party/gn/dxc/build/run_built_binary.py"
+run_built_binary_script = "${dawn_dxc_gn_dir}/build/run_built_binary.py"
 
 config("common_config") {
   # Add include paths for Node API headers.
@@ -130,6 +133,7 @@ idlgen("idlgen_webgpu_h") {
   depends = [ "interop/WebGPUCommon.tmpl" ]
   output = "$interop_gen_dir/WebGPU.h"
 }
+
 idlgen("idlgen_webgpu_cpp") {
   template = "interop/WebGPU.cpp.tmpl"
   idls = [
@@ -162,7 +166,8 @@ static_library("dawn_node_interop") {
 static_library("dawn_node_binding") {
   public_configs = [ ":common_config" ]
   if (is_win) {
-    # Use multibyte character set so that Win32 functions map the ANSI ones, not the UNICODE ones.
+    # Use multibyte character set so that Win32 functions map the ANSI ones, not
+    # the UNICODE ones.
     configs -= [ "//build/config/win:unicode" ]
   }
   sources = [
@@ -212,6 +217,8 @@ static_library("dawn_node_binding") {
     "binding/GPURenderPassEncoder.h",
     "binding/GPURenderPipeline.cpp",
     "binding/GPURenderPipeline.h",
+    "binding/GPUResourceTable.cpp",
+    "binding/GPUResourceTable.h",
     "binding/GPUSampler.cpp",
     "binding/GPUSampler.h",
     "binding/GPUShaderModule.cpp",
@@ -235,6 +242,7 @@ static_library("dawn_node_binding") {
   deps = [
     "$dawn_root/src/dawn/native",
     "$dawn_root/src/dawn/utils:wgpu_utils",
+    "$dawn_root/src/utils",
   ]
 }
 
@@ -254,6 +262,7 @@ action("gen_napi_symbols") {
 
 if (is_win) {
   import("//build/config/clang/clang.gni")
+
   action("napi_symbols_lib") {
     inputs = [ "$dawn_node_gen_dir/NapiSymbols.def" ]
     outputs = [ "$dawn_node_gen_dir/NapiSymbols.lib" ]
@@ -282,6 +291,7 @@ copy("copy_index_js") {
   sources = [ "$dawn_root/src/dawn/node/index.js" ]
   outputs = [ "$root_build_dir/index.js" ]
 }
+
 copy("copy_cts_js") {
   sources = [ "$dawn_root/src/dawn/node/cts.cjs" ]
   outputs = [ "$root_build_dir/cts.cjs" ]
@@ -321,13 +331,42 @@ shared_library("dawn_node") {
     # Don't pass '-z,defs' linker arg when compiling weak symbols
     configs -= [ "//build/config/compiler:no_unresolved_symbols" ]
 
-    # TODO(crbug.com/404499678): GN build doesn't like when weak functions have a definition
+    # TODO(crbug.com/404499678): GN build doesn't like when weak functions have
+    # a definition
     defines = [ "NAPI_SYMBOL_WEAK_DECL_ONLY" ]
     if (is_mac) {
-      # On mac, make undefined weak functions dynamic to bind with node functions at runtime
+      # On mac, make undefined weak functions dynamic to bind with node
+      # functions at runtime
       ldflags = [ "-Wl,-undefined,dynamic_lookup" ]
     }
     sources += [ "NapiSymbols.cpp" ]
   }
   include_dirs = [ "${dawn_node_gen_dir}" ]
+}
+
+if (checkout_v8 && dawn_node) {
+  executable("dawn_standalone_cts_runner") {
+    sources = [
+      "ManualConstructors.cpp",
+      "ManualConstructors.h",
+      "Module.cpp",
+      "Module.h",
+      "standalone/main.cpp",
+    ]
+    public_configs = [
+      ":common_config",
+      "${dawn_root}/src/dawn/node/standalone:polyfills_public_config",
+    ]
+    include_dirs = [ "${dawn_node_gen_dir}" ]
+    deps = [
+      ":dawn_node_binding",
+      "$dawn_root/src/dawn:proc",
+      "$dawn_root/src/dawn/native",
+      "$dawn_root/src/dawn/utils:system_utils",
+      "${dawn_root}/src/dawn/node/napi_v8",
+      "${dawn_root}/src/dawn/node/standalone:polyfills",
+      "//third_party/v8/src:v8",
+      "//third_party/v8/src:v8_libplatform",
+    ]
+  }
 }

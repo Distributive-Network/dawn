@@ -30,16 +30,18 @@
 
 #include <vector>
 
-#include "dawn/common/NonMovable.h"
-#include "dawn/common/Ref.h"
-#include "dawn/common/WeakRefSupport.h"
-#include "dawn/common/ityp_span.h"
-#include "dawn/common/ityp_vector.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/Forward.h"
-#include "dawn/native/IntegerTypes.h"
-#include "dawn/native/ObjectBase.h"
-#include "dawn/native/dawn_platform.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/functional/function_ref.h"
+#include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/Ref.h"
+#include "src/dawn/common/WeakRefSupport.h"
+#include "src/dawn/common/ityp_vector.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/Forward.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/ObjectBase.h"
+#include "src/dawn/native/Sampler.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace tint {
 enum class ResourceType : uint32_t;
@@ -47,15 +49,8 @@ enum class ResourceType : uint32_t;
 
 namespace dawn::native {
 
-// Returns the order in which we will put the default bindings at the end of the dynamic binding
-// array.
-// TODO(https://issues.chromium.org/463925499): Take the device in parameter to know if we have
-// sampling vs. full resource table.
-ityp::span<ResourceTableSlot, const tint::ResourceType> GetDefaultResourceOrder();
-ResourceTableSlot GetDefaultResourceCount();
-
-MaybeError ValidateResourceTableDescriptor(const DeviceBase* device,
-                                           const ResourceTableDescriptor* descriptor);
+MaybeValError ValidateResourceTableDescriptor(const DeviceBase* device,
+                                              const ResourceTableDescriptor* descriptor);
 
 // ResourceTableBase implements the frontend tracking for GPUResourceTable, a sparse array of
 // heterogeneous resources that can be accessed in shaders. It needs logic for multiple aspects:
@@ -68,9 +63,6 @@ MaybeError ValidateResourceTableDescriptor(const DeviceBase* device,
 //    may be accessed. Tint enum values are used since Tint is the place where shader-side
 //    validation is implemented..
 //  - The updates of resources in slots and of the metadata buffer are batched.
-//  - Textures must be pinned to be accessible via the resource table, which requires
-//    bidirectional communication so that textures know in which slot they are and notify them of
-//    pinning/unpinning. This is why ResourceTable is WeakRefSupport.
 //  - Default resources are inserted at the end of the table, in a way invisible to the
 //    application, which means that there are two different sizes for the table (the API visible
 //    size and the real one).
@@ -89,19 +81,22 @@ class ResourceTableBase : public ApiObjectBase, public WeakRefSupport<ResourceTa
 
     BufferBase* GetMetadataBuffer() const;
     bool IsDestroyed() const;
-    MaybeError ValidateCanUseInSubmitNow() const;
-
-    // Methods used by resources to notify when pinning state changes, which in turns may need to
-    // update the contents of the metadata buffer.
-    void OnPinned(ResourceTableSlot slot, TextureBase* texture);
-    void OnUnpinned(ResourceTableSlot slot, TextureBase* texture);
+    MaybeValError ValidateCanUseInSubmitNow() const;
 
     // Dawn API
     void APIDestroy();
     wgpu::Status APIUpdate(uint32_t slot, const BindingResource* resource);
-    uint32_t APIInsertBinding(const BindingResource* resource);
-    wgpu::Status APIRemoveBinding(uint32_t slot);
+    uint32_t APIInsert(const BindingResource* resource);
+    wgpu::Status APIRemove(uint32_t slot);
     uint32_t APIGetSize() const;
+
+    // Computes the tint::ResourceType that should be in the metadata buffer for the resource.
+    static tint::ResourceType ComputeTypeId(
+        const std::variant<std::monostate, Ref<TextureViewBase>, Ref<SamplerBase>>& resource);
+
+    // Notify the table of a texture state change (destroyed, begin/end access)
+    void OnTextureStateChange(TextureBase* texture);
+    void OnTextureDestroyed(TextureBase* texture);
 
   protected:
     ResourceTableBase(DeviceBase* device, const ResourceTableDescriptor* descriptor);
@@ -116,22 +111,36 @@ class ResourceTableBase : public ApiObjectBase, public WeakRefSupport<ResourceTa
     void Update(ResourceTableSlot slot, const BindingResource* contents);
     void Remove(ResourceTableSlot slot);
 
-    // AcquireDirtySlotUpdates returns all the batched updates that need to be applied before uses
-    // of the ResourceTable (since the last call to AcquireDirtySlotUpdates or creation of the
+    // Performs the steps for wgpu::ResourceTable::Update that are after the validation returning a
+    // synchronous error. This is to allow factoring the code between APIUpdate and APIInsert.
+    void UpdateWithDeviceValidation(ResourceTableSlot slot,
+                                    const BindingResource* resource,
+                                    std::string_view methodName);
+
+    // The ApplyUpdateFn takes all the batched updates that need to be applied before uses of the
+    // ResourceTable (since the last call to ApplyDirtySlotUpdatesWith or creation of the
     // ResourceTable).
     struct MetadataUpdate {
-        uint32_t offset;
-        uint32_t data;
+        ResourceTableSlot slot{0u};  // Slot index to update
+        uint32_t offset = 0;         // Byte offset resource array
+        uint32_t data = 0;           // tint::ResourceType in the low 16 bits
     };
-    struct ResourceUpdate {
-        ResourceTableSlot slot;
-        TextureViewBase* textureView = nullptr;
+    struct ResourceDiff {
+        using Resource = std::variant<std::monostate, Ref<TextureViewBase>, Ref<SamplerBase>>;
+        ResourceTableSlot slot = ResourceTableSlot(0u);
+        Resource removed;  // Resource removed from 'slot', if any
+        Resource added;    // Resource added to 'slot', if any
     };
-    struct Updates {
-        std::vector<MetadataUpdate> metadataUpdates;
-        std::vector<ResourceUpdate> resourceUpdates;
-    };
-    Updates AcquireDirtySlotUpdates();
+    using ApplyUpdateFn =
+        MaybeError(const std::vector<MetadataUpdate>& metadataUpdates,
+                   const std::vector<ResourceDiff>& resourceDiffs,
+                   const absl::flat_hash_set<raw_ptr<TextureBase>>& texturesToTransition);
+
+    // Wrapper for the code that handles dirty slot updates in the backend so we can run code right
+    // after it that ignores unnecessarily dirty textures added while transitioning them for this
+    // table.
+    MaybeError ApplyDirtySlotUpdatesWith(const absl::flat_hash_set<TextureBase*>& writableTextures,
+                                         absl::FunctionRef<ApplyUpdateFn> ApplyUpdate);
 
   private:
     ResourceTableBase(DeviceBase* device,
@@ -140,14 +149,26 @@ class ResourceTableBase : public ApiObjectBase, public WeakRefSupport<ResourceTa
 
     bool IsValidSlot(ResourceTableSlot slot) const;
 
-    // Helper method that does the bulk of the shared work between Update and RemoveBinding.
+    // Helper method that does the bulk of the shared work between Update and Remove.
     void SetEntry(ResourceTableSlot slot, const BindingResource* contents);
 
     // Helper method that must be called when anything in the SlotState changes (except
     // `availableAfter`), so that the slot updates are included in the next batch of updates.
     void MarkStateDirty(ResourceTableSlot slot);
 
-    ResourceTableSlot mAPISize = ResourceTableSlot(0);
+    // Functions used to compute all the updates needed to apply the latest state for this table.
+    struct Updates {
+        std::vector<MetadataUpdate> metadataUpdates;
+        std::vector<ResourceDiff> resourceDiffs;
+        absl::flat_hash_set<raw_ptr<TextureBase>> texturesToTransition;
+        absl::flat_hash_set<raw_ptr<TextureBase>> texturesDirtyAfterUpdate;
+    };
+    // Fills only texturesToTransition and texturesDirtyAfterUpdate.
+    Updates MakeResourcesVisibleExcept(const absl::flat_hash_set<TextureBase*>& writableTextures);
+    // Fills the whole Updates structure.
+    Updates AcquireDirtySlotUpdates(const absl::flat_hash_set<TextureBase*>& writableTextures);
+
+    ResourceTableSlot mAPISize = ResourceTableSlot(0u);
     bool mDestroyed = false;
 
     // Buffer that contains a WGSL metadata struct of the following shape:
@@ -159,29 +180,36 @@ class ResourceTableBase : public ApiObjectBase, public WeakRefSupport<ResourceTa
     Ref<BufferBase> mMetadataBuffer;
 
     struct SlotState {
-        Ref<TextureViewBase> resource;
+        using Resource = std::variant<std::monostate, Ref<TextureViewBase>, Ref<SamplerBase>>;
+        // The last bound resource
+        Resource lastResource;
+        // The currently bound resource
+        Resource resource;
+
         // Matches the value of the Tint enum for type IDs but kept as u32 to keep usage of Tint
         // headers local.
         tint::ResourceType typeId = tint::ResourceType(0);
         ExecutionSerial availableAfter = kBeginningOfGPUTime;
         bool dirty = false;
         bool resourceDirty = false;  // resourceDirty implies dirty.
-        bool pinned = false;
+        bool visible = false;        // Applies to textures
     };
     ityp::vector<ResourceTableSlot, SlotState> mSlots;
 
-    // The list of slots that need to be updated before the next use of the dynamic array.
+    // The list of slots that need to be updated before the next use of the resource table.
     std::vector<ResourceTableSlot> mDirtySlots;
-};
 
-// Used to cache the default resources on the device so they can be reused between resource tables.
-class ResourceTableDefaultResources : public NonMovable {
-  public:
-    ResultOrError<ityp::span<ResourceTableSlot, Ref<TextureViewBase>>>
-    GetOrCreateSampledTextureDefaults(DeviceBase* device);
+    // The state of textures in the table
+    struct TextureState {
+        bool visible = false;
+        // std::vector<ResourceTableSlot> slots;
+        absl::flat_hash_set<ResourceTableSlot> slots;
+    };
+    absl::flat_hash_map<TextureBase*, TextureState> mTextureState;
 
-  private:
-    ityp::vector<ResourceTableSlot, Ref<TextureViewBase>> mSampledTextureDefaults;
+    // Textures that are "dirty" for some reason, e.g. destroyed, access change, r/w change. Handled
+    // by MakeResourcesVisibleExcept.
+    absl::flat_hash_set<raw_ptr<TextureBase>> mDirtyStateTextures;
 };
 
 }  // namespace dawn::native

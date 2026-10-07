@@ -28,23 +28,21 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "dawn/common/Constants.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderBundleEncoderDescriptor.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
-#include "webgpu/webgpu_glfw.h"
-
 #include "GLFW/glfw3.h"
+#include "dawn/replay/Replay.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderBundleEncoderDescriptor.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/compiler.h"
+#include "webgpu/webgpu_glfw.h"
 
 namespace dawn {
 namespace {
-
-struct GLFWindowDestroyer {
-    void operator()(GLFWwindow* ptr) { glfwDestroyWindow(ptr); }
-};
 
 class SurfaceTests : public DawnTest {
   protected:
@@ -80,11 +78,11 @@ class SurfaceTests : public DawnTest {
 
         // Set GLFW_NO_API to avoid GLFW bringing up a GL context that we won't use.
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        window.reset(glfwCreateWindow(400, 500, "SurfaceTests window", nullptr, nullptr));
+        mWindow.reset(glfwCreateWindow(400, 500, "SurfaceTests window", nullptr, nullptr));
 
         int width;
         int height;
-        glfwGetFramebufferSize(window.get(), &width, &height);
+        glfwGetFramebufferSize(mWindow.get(), &width, &height);
 
         baseConfig.device = device;
         baseConfig.width = width;
@@ -95,13 +93,14 @@ class SurfaceTests : public DawnTest {
     }
 
     void TearDown() override {
-        // Destroy the surface before the window as required by webgpu-native.
-        window.reset();
         DawnTest::TearDown();
+
+        // Destroy the window after the `wgpu::Surface surface` created in test body released.
+        mWindow.reset();
     }
 
     wgpu::Surface CreateTestSurface() {
-        return wgpu::glfw::CreateSurfaceForWindow(GetInstance(), window.get());
+        return wgpu::glfw::CreateSurfaceForWindow(GetInstance(), mWindow.get());
     }
 
     wgpu::SurfaceConfiguration GetPreferredConfiguration(wgpu::Surface surface) {
@@ -118,6 +117,7 @@ class SurfaceTests : public DawnTest {
     void ClearTexture(wgpu::Texture texture,
                       wgpu::Color color,
                       wgpu::Device preferredDevice = nullptr) {
+        ASSERT_NE(texture, nullptr);
         if (preferredDevice == nullptr) {
             preferredDevice = device;
         }
@@ -203,7 +203,7 @@ class SurfaceTests : public DawnTest {
     bool SupportsPresentMode(const wgpu::SurfaceCapabilities& capabilities,
                              wgpu::PresentMode mode) {
         for (size_t i = 0; i < capabilities.presentModeCount; ++i) {
-            if (capabilities.presentModes[i] == mode) {
+            if (DAWN_UNSAFE_TODO(capabilities.presentModes[i]) == mode) {
                 return true;
             }
         }
@@ -211,7 +211,7 @@ class SurfaceTests : public DawnTest {
     }
 
   protected:
-    std::unique_ptr<GLFWwindow, GLFWindowDestroyer> window = nullptr;
+    std::unique_ptr<GLFWwindow, GLFWindowDestroyer> mWindow = nullptr;
     wgpu::SurfaceConfiguration baseConfig;
 };
 
@@ -256,6 +256,10 @@ TEST_P(SurfaceTests, ReconfigureBasic) {
 
 // Test reconfiguring the surface after GetCurrentTexture
 TEST_P(SurfaceTests, ReconfigureAfterGetCurrentTexture) {
+    // TODO(crbug.com/500793592): Causes cascading failures on Windows 11/AMD
+    // RX 5500 XT w/ backend validation.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsVulkan() && IsBackendValidationEnabled());
+
     wgpu::Surface surface = CreateTestSurface();
     wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
 
@@ -301,6 +305,14 @@ TEST_P(SurfaceTests, ReconfigureAfterUnconfigure) {
 
 // Test unconfiguring after GetCurrentTexture but before the Present
 TEST_P(SurfaceTests, UnconfigureAfterGet) {
+    // TODO(crbug.com/500793592): Causes cascading failures on Windows 11/AMD
+    // RX 5500 XT w/ backend validation.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsVulkan() && IsBackendValidationEnabled());
+
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
     wgpu::Surface surface = CreateTestSurface();
     wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
     wgpu::SurfaceTexture surfaceTexture;
@@ -324,9 +336,9 @@ TEST_P(SurfaceTests, SwitchPresentMode) {
     // crbug.com/358166481
     DAWN_SUPPRESS_TEST_IF(IsLinux() && IsNvidia() && IsVulkan());
 
-    // TODO(crbug.com/463614521): Flakily causes a device loss on Snapdragon X
-    // Elite SoCs which causes all subsequent tests to fail.
-    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsQualcomm() && IsD3D12());
+    // TODO(crbug.com/568452623): Flakily fails with DXGI_ERROR_DEVICE_REMOVED in
+    // IDXGISwapChain::Present on D3D11 WARP.
+    DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsWARP());
 
     constexpr wgpu::PresentMode kAllPresentModes[] = {
         wgpu::PresentMode::Immediate,
@@ -356,6 +368,8 @@ TEST_P(SurfaceTests, SwitchPresentMode) {
 
                 wgpu::SurfaceTexture surfaceTexture;
                 surface.GetCurrentTexture(&surfaceTexture);
+                ASSERT_EQ(surfaceTexture.status,
+                          wgpu::SurfaceGetCurrentTextureStatus::SuccessOptimal);
                 ClearTexture(surfaceTexture.texture, {0.0, 0.0, 0.0, 1.0});
                 ASSERT_EQ(wgpu::Status::Success, surface.Present());
             }
@@ -366,6 +380,8 @@ TEST_P(SurfaceTests, SwitchPresentMode) {
 
                 wgpu::SurfaceTexture surfaceTexture;
                 surface.GetCurrentTexture(&surfaceTexture);
+                ASSERT_EQ(surfaceTexture.status,
+                          wgpu::SurfaceGetCurrentTextureStatus::SuccessOptimal);
                 ClearTexture(surfaceTexture.texture, {0.0, 0.0, 0.0, 1.0});
                 ASSERT_EQ(wgpu::Status::Success, surface.Present());
                 surface.Unconfigure();
@@ -376,8 +392,9 @@ TEST_P(SurfaceTests, SwitchPresentMode) {
 
 // Test resizing the surface and without resizing the window.
 TEST_P(SurfaceTests, ResizingSurfaceOnly) {
-    // TODO(crbug.com/468228358): Flaky on Snapdragon X Elite SoCs w/ D3D12.
-    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsQualcomm() && IsD3D12());
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
 
     wgpu::Surface surface = CreateTestSurface();
 
@@ -401,13 +418,17 @@ TEST_P(SurfaceTests, ResizingWindowOnly) {
     // TODO(crbug.com/42241486): Crashes on Linux NVIDIA GTX 1660 with 535.183.01 driver
     DAWN_SUPPRESS_TEST_IF(IsLinux() && IsVulkan() && IsNvidia());
 
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
     wgpu::Surface surface = CreateTestSurface();
     wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
 
     surface.Configure(&config);
 
     for (int i = 0; i < 10; i++) {
-        glfwSetWindowSize(window.get(), 400 - 10 * i, 400 + 10 * i);
+        glfwSetWindowSize(mWindow.get(), 400 - 10 * i, 400 + 10 * i);
         glfwPollEvents();
 
         wgpu::SurfaceTexture surfaceTexture;
@@ -422,19 +443,19 @@ TEST_P(SurfaceTests, ResizingWindowAndSurface) {
     // TODO(crbug.com/dawn/1205): Currently failing on new NVIDIA GTX 1660s on Linux/Vulkan.
     DAWN_SUPPRESS_TEST_IF(IsLinux() && IsVulkan() && IsNvidia());
 
-    // TODO(crbug.com/465497433): Flakily loses device on Snapdragon X Elite
-    // SoCs.
-    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsQualcomm() && IsD3D12());
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
 
     wgpu::Surface surface = CreateTestSurface();
 
     for (int i = 0; i < 10; i++) {
-        glfwSetWindowSize(window.get(), 400 - 10 * i, 400 + 10 * i);
+        glfwSetWindowSize(mWindow.get(), 400 - 10 * i, 400 + 10 * i);
         glfwPollEvents();
 
         int width;
         int height;
-        glfwGetFramebufferSize(window.get(), &width, &height);
+        glfwGetFramebufferSize(mWindow.get(), &width, &height);
 
         wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
         config.width = width;
@@ -551,6 +572,146 @@ TEST_P(SurfaceTests, PresentWithoutGet) {
     ASSERT_EQ(wgpu::Status::Success, presentStatus);
 }
 
+// Releasing a configured surface after its device was destroyed must not crash. Regression test
+// for the Vulkan backend dereferencing the destroyed device's FencedDeleter when the swapchain was
+// detached by the surface destructor.
+TEST_P(SurfaceTests, ReleaseSurfaceAfterDeviceDestroy) {
+    wgpu::Surface surface = CreateTestSurface();
+    wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
+    surface.Configure(&config);
+
+    wgpu::SurfaceTexture surfaceTexture;
+    surface.GetCurrentTexture(&surfaceTexture);
+    ClearTexture(surfaceTexture.texture, {1.0, 0.0, 0.0, 1.0});
+    ASSERT_EQ(wgpu::Status::Success, surface.Present());
+
+    DestroyDevice();
+
+    // The surface is released at the end of the test body, after the device was destroyed.
+}
+
+// Same as ReleaseSurfaceAfterDeviceDestroy but with the swapchain parked as the surface's recycled
+// swapchain by Unconfigure() instead of being the current one.
+TEST_P(SurfaceTests, ReleaseSurfaceAfterUnconfigureThenDeviceDestroy) {
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
+    wgpu::Surface surface = CreateTestSurface();
+    wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
+    surface.Configure(&config);
+
+    wgpu::SurfaceTexture surfaceTexture;
+    surface.GetCurrentTexture(&surfaceTexture);
+    ClearTexture(surfaceTexture.texture, {1.0, 0.0, 0.0, 1.0});
+    ASSERT_EQ(wgpu::Status::Success, surface.Present());
+
+    surface.Unconfigure();
+    DestroyDevice();
+}
+
+// Releasing a configured surface after the last external reference to its device was dropped
+// (which destroys the device) must not crash.
+TEST_P(SurfaceTests, ReleaseSurfaceAfterDeviceReleased) {
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
+    wgpu::Device device2 = CreateDevice();
+
+    wgpu::Surface surface = CreateTestSurface();
+    wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
+    config.device = device2;
+    surface.Configure(&config);
+
+    wgpu::SurfaceTexture surfaceTexture;
+    surface.GetCurrentTexture(&surfaceTexture);
+    ClearTexture(surfaceTexture.texture, {1.0, 0.0, 0.0, 1.0}, device2);
+    ASSERT_EQ(wgpu::Status::Success, surface.Present());
+
+    surfaceTexture.texture = nullptr;
+    device2 = nullptr;
+}
+
+// A surface configured with a destroyed device can be configured again with a new device.
+TEST_P(SurfaceTests, ReconfigureWithNewDeviceAfterDestroy) {
+    // TODO(crbug.com/dawn/269): Creating the IDXGISwapChain1 for the new device fails with
+    // E_ACCESSDENIED on D3D11 because the swapchain of the destroyed device is still alive, like
+    // in SwitchingDevice.
+    DAWN_SUPPRESS_TEST_IF(IsD3D11());
+
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
+    wgpu::Surface surface = CreateTestSurface();
+    wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
+    surface.Configure(&config);
+
+    wgpu::SurfaceTexture surfaceTexture;
+    surface.GetCurrentTexture(&surfaceTexture);
+    ClearTexture(surfaceTexture.texture, {1.0, 0.0, 0.0, 1.0});
+    ASSERT_EQ(wgpu::Status::Success, surface.Present());
+
+    DestroyDevice();
+
+    wgpu::Device device2 = CreateDevice();
+    config.device = device2;
+    surface.Configure(&config);
+
+    surface.GetCurrentTexture(&surfaceTexture);
+    ASSERT_EQ(wgpu::SurfaceGetCurrentTextureStatus::SuccessOptimal, surfaceTexture.status);
+    ClearTexture(surfaceTexture.texture, {0.0, 1.0, 0.0, 1.0}, device2);
+    ASSERT_EQ(wgpu::Status::Success, surface.Present());
+}
+
+// Unconfiguring a surface after its device was destroyed must not crash. Destroying the device
+// already unconfigured the surface, so this is a no-op like unconfiguring an unconfigured surface.
+TEST_P(SurfaceTests, UnconfigureAfterDeviceDestroy) {
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
+    wgpu::Surface surface = CreateTestSurface();
+    wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
+    surface.Configure(&config);
+
+    wgpu::SurfaceTexture surfaceTexture;
+    surface.GetCurrentTexture(&surfaceTexture);
+    ClearTexture(surfaceTexture.texture, {1.0, 0.0, 0.0, 1.0});
+    ASSERT_EQ(wgpu::Status::Success, surface.Present());
+
+    DestroyDevice();
+
+    surface.Unconfigure();
+}
+
+// Getting the current texture or presenting after the device was destroyed must not crash. The
+// surface behaves as if it was unconfigured.
+TEST_P(SurfaceTests, GetCurrentTextureAfterDeviceDestroy) {
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
+    wgpu::Surface surface = CreateTestSurface();
+    wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
+    surface.Configure(&config);
+
+    wgpu::SurfaceTexture surfaceTexture;
+    surface.GetCurrentTexture(&surfaceTexture);
+    ClearTexture(surfaceTexture.texture, {1.0, 0.0, 0.0, 1.0});
+    ASSERT_EQ(wgpu::Status::Success, surface.Present());
+
+    DestroyDevice();
+
+    // The surface is unconfigured and has no device anymore, so the validation errors are
+    // reported to the instance.
+    surface.GetCurrentTexture(&surfaceTexture);
+    EXPECT_EQ(surfaceTexture.status, wgpu::SurfaceGetCurrentTextureStatus::Error);
+    EXPECT_EQ(surfaceTexture.texture, nullptr);
+    ASSERT_EQ(wgpu::Status::Error, surface.Present());
+}
+
 // Check that all surfaces must support RenderAttachment.
 TEST_P(SurfaceTests, RenderAttachmentAlwaysSupported) {
     wgpu::Surface surface = CreateTestSurface();
@@ -584,6 +745,10 @@ TEST_P(SurfaceTests, Sampling) {
 
 // Test copying from the surface when it is supported.
 TEST_P(SurfaceTests, CopyFrom) {
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
     wgpu::Surface surface = CreateTestSurface();
     wgpu::SurfaceCapabilities caps;
     surface.GetCapabilities(adapter, &caps);
@@ -612,6 +777,10 @@ TEST_P(SurfaceTests, CopyFrom) {
 
 // Test copying to the surface when it is supported.
 TEST_P(SurfaceTests, CopyTo) {
+    // TODO(crbug.com/500766623): Fails due to backend validation errors on
+    // Windows 11/AMD RX 5500 XT w/ D3D12.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
     wgpu::Surface surface = CreateTestSurface();
     wgpu::SurfaceCapabilities caps;
     surface.GetCapabilities(adapter, &caps);
@@ -667,8 +836,8 @@ TEST_P(SurfaceTests, Storage) {
 
     wgpu::TextureFormat storageCapableFormat = wgpu::TextureFormat::Undefined;
     for (uint32_t i = 0; i < caps.formatCount; i++) {
-        if (utils::TextureFormatSupportsStorageTexture(caps.formats[i], device, false)) {
-            storageCapableFormat = caps.formats[i];
+        if (utils::TextureFormatSupportsStorageTexture(device, DAWN_UNSAFE_TODO(caps.formats[i]))) {
+            storageCapableFormat = DAWN_UNSAFE_TODO(caps.formats[i]);
             break;
         }
     }
@@ -688,6 +857,71 @@ TEST_P(SurfaceTests, Storage) {
     ASSERT_EQ(wgpu::Status::Success, surface.Present());
 }
 
+// Test acquiring a texture from a surface configured with viewFormats.
+TEST_P(SurfaceTests, ConfigureWithViewFormats) {
+    // Reinterpreting the surface format as its srgb counterpart isn't allowed in compatibility
+    // mode: viewFormats must match the format there.
+    DAWN_TEST_UNSUPPORTED_IF(IsCompatibilityMode());
+
+    // TODO(crbug.com/564910787): Fails due to backend validation errors on Windows 11 AMD RX 5500
+    // XT.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
+    wgpu::Surface surface = CreateTestSurface();
+    wgpu::SurfaceCapabilities caps;
+    surface.GetCapabilities(adapter, &caps);
+    wgpu::SurfaceConfiguration config = GetPreferredConfiguration(surface);
+
+    // Reinterpretation between a format and its srgb counterpart is always
+    // allowed; pick the counterpart of whatever the surface prefers.
+    wgpu::TextureFormat viewFormat;
+    switch (config.format) {
+        case wgpu::TextureFormat::BGRA8Unorm:
+            viewFormat = wgpu::TextureFormat::BGRA8UnormSrgb;
+            break;
+        case wgpu::TextureFormat::RGBA8Unorm:
+            viewFormat = wgpu::TextureFormat::RGBA8UnormSrgb;
+            break;
+        default:
+            // Add a case above if a platform starts preferring another format.
+            DAWN_UNREACHABLE();
+    }
+    config.viewFormatCount = 1;
+    config.viewFormats = &viewFormat;
+    // When supported, also request CopySrc so the reinterpreted values can be read back.
+    if (caps.usages & wgpu::TextureUsage::CopySrc) {
+        config.usage |= wgpu::TextureUsage::CopySrc;
+    }
+    surface.Configure(&config);
+
+    wgpu::SurfaceTexture surfaceTexture;
+    surface.GetCurrentTexture(&surfaceTexture);
+
+    // Clear through a view using the reinterpreted format to check the texture really
+    // supports its viewFormats.
+    wgpu::TextureViewDescriptor viewDesc;
+    viewDesc.format = viewFormat;
+    utils::ComboRenderPassDescriptor renderPassDesc({surfaceTexture.texture.CreateView(&viewDesc)});
+    renderPassDesc.cColorAttachments[0].loadOp = wgpu::LoadOp::Clear;
+    renderPassDesc.cColorAttachments[0].clearValue = {0.5, 0.5, 0.5, 1.0};
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPassDesc);
+    pass.End();
+    wgpu::CommandBuffer commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    if (surfaceTexture.texture.GetUsage() & wgpu::TextureUsage::CopySrc) {
+        // The sRGB view encodes the linear 0.5 clear value to ~0.735 on store, so the raw
+        // non-sRGB pixels read back as ~187.5 instead of 128 if the reinterpretation took
+        // effect. A gray value keeps the check independent of the BGRA/RGBA channel order.
+        EXPECT_PIXEL_RGBA8_BETWEEN(utils::RGBA8(187, 187, 187, 255),
+                                   utils::RGBA8(188, 188, 188, 255), surfaceTexture.texture, 0, 0);
+    }
+
+    surface.Present();
+}
+
 // TODO(crbug.com/465183957): Implement swap chain for WebGPUBackend.
 DAWN_INSTANTIATE_TEST(SurfaceTests,
                       D3D11Backend(),
@@ -696,7 +930,8 @@ DAWN_INSTANTIATE_TEST(SurfaceTests,
                       MetalBackend(),
                       OpenGLBackend(),
                       OpenGLESBackend(),
-                      VulkanBackend());
+                      VulkanBackend(),
+                      WebGPUBackend());
 
 }  // anonymous namespace
 }  // namespace dawn

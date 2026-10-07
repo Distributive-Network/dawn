@@ -25,18 +25,21 @@
 //* OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 //* OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+{% from 'dawn/cpp_macros.tmpl' import as_annotated_dawnType with context %}
+
 // Command handlers & doers
 {% for command in cmd_records["return command"] %}
     {% set Suffix = command.name.CamelCase() %}
+    {% set CmdName = "Return" + Suffix + "Cmd" %}
     WireResult Handle{{Suffix}}(DeserializeBuffer* deserializeBuffer);
     WireResult Do{{Suffix}}(
-        {%- for member in command.members -%}
+        {%- for member in command.members if not member.is_length -%}
+            {%- if not loop.first -%}, {% endif %}
             {%- if member.handle_type -%}
                 {{as_wireType(member.handle_type)}} {{as_varName(member.name)}}
             {%- else -%}
-                {{as_annotated_wireType(member)}}
+                {{as_annotated_dawnType(member)}}
             {%- endif -%}
-            {%- if not loop.last -%}, {% endif %}
         {%- endfor -%}
     );
 

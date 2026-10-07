@@ -30,10 +30,10 @@
 #include <string>
 #include <vector>
 
-#include "dawn/common/Log.h"
-#include "dawn/native/SubresourceStorage.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "src/dawn/native/SubresourceStorage.h"
+#include "src/utils/log.h"
 
 namespace dawn::native {
 
@@ -248,10 +248,10 @@ TEST(SubresourceStorageTest, IterateMaybeError) {
             if (!errorLayer) {
                 errorLayer = layer;
             }
-            return DAWN_VALIDATION_ERROR("Errored at layer: %d", layer);
+            return DAWN_FORMAT_UNRECOVERABLE_ERROR("Errored at layer: %d", layer);
         });
     ASSERT_TRUE(maybeError.IsError());
-    std::unique_ptr<ErrorData> error = maybeError.AcquireError();
+    std::unique_ptr<UnrecoverableError> error = maybeError.AcquireError();
     EXPECT_THAT(error->GetFormattedMessage(), HasSubstr(std::to_string(errorLayer)));
 }
 

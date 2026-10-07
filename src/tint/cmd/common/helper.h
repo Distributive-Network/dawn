@@ -25,33 +25,49 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/439062058): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #ifndef SRC_TINT_CMD_COMMON_HELPER_H_
 #define SRC_TINT_CMD_COMMON_HELPER_H_
 
+#include <algorithm>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
 
+#if TINT_BUILD_WGSL_READER || TINT_BUILD_WGSL_WRITER
 #include "src/tint/lang/wgsl/inspector/inspector.h"
+#endif
 #include "src/tint/utils/diagnostic/source.h"
+#include "src/utils/compiler.h"
 
 #if TINT_BUILD_SPV_READER
 #include "src/tint/lang/spirv/reader/common/options.h"
 #endif
 
+#if TINT_BUILD_WGSL_WRITER
+#include "src/tint/lang/wgsl/writer/common/options.h"
+#endif
+
 // Forward declarations
 namespace tint {
 class Program;
-class InternalCompilerError;
+class StyledTextPrinter;
 }  // namespace tint
 
 namespace tint::cmd {
+
+enum class InputFormat {
+    kUnknown,
+    kWgsl,
+    kSpirvBin,
+    kSpirvAsm,
+};
+
+/// The formatting mode for program diagnostics.
+enum class DiagnosticsFormat {
+    kPlain,
+    kJson,
+};
 
 /// Information on a loaded program
 struct ProgramInfo {
@@ -67,6 +83,7 @@ struct ProgramInfo {
 /// @param program the program
 void PrintWGSL(std::ostream& out, const tint::Program& program);
 
+#if TINT_BUILD_WGSL_READER || TINT_BUILD_WGSL_WRITER
 /// Prints inspector data information to stderr
 /// @param inspector the inspector to print.
 void PrintInspectorData(tint::inspector::Inspector& inspector);
@@ -74,17 +91,26 @@ void PrintInspectorData(tint::inspector::Inspector& inspector);
 /// Prints inspector binding information to stderr
 /// @param inspector the inspector to print.
 void PrintInspectorBindings(tint::inspector::Inspector& inspector);
+#endif
 
 /// Options for the LoadProgramInfo call
 struct LoadProgramOptions {
-    /// The file to be loaded
+    /// The file to be loaded, might be "-" for stdin
     std::string filename;
+    /// The input format. Optional for files, mandatory for stdin
+    InputFormat input_format = InputFormat::kUnknown;
 #if TINT_BUILD_SPV_READER
     /// Spirv-reader options
     tint::spirv::reader::Options spirv_reader_options;
 #endif
+#if TINT_BUILD_WGSL_WRITER
+    /// WGSL writer options
+    tint::wgsl::writer::Options wgsl_writer_options;
+#endif
     /// The text printer to use for output
     StyledTextPrinter* printer = nullptr;
+    /// The diagnostics format to use
+    DiagnosticsFormat diagnostics_format = DiagnosticsFormat::kPlain;
 };
 
 /// Loads the source and program information for the given file.
@@ -92,6 +118,14 @@ struct LoadProgramOptions {
 /// returning.
 /// @param opts the loading options
 ProgramInfo LoadProgramInfo(const LoadProgramOptions& opts);
+
+/// Prints diagnostics to standard error using the specified format.
+/// @param diagnostics the diagnostics to print
+/// @param format the format to use
+/// @param printer the plain text printer (optional, used for plain format)
+void PrintDiagnostics(const tint::diag::List& diagnostics,
+                      DiagnosticsFormat format,
+                      StyledTextPrinter* printer);
 
 /// @param stage the pipeline stage
 /// @returns the string representation
@@ -104,6 +138,10 @@ std::string TextureDimensionToString(tint::inspector::ResourceBinding::TextureDi
 /// @param kind the sample kind
 /// @returns the text name
 std::string SampledKindToString(tint::inspector::ResourceBinding::SampledKind kind);
+
+/// @param type the sampler type
+/// @returns the text name
+std::string SamplerTypeToString(tint::inspector::ResourceBinding::SamplerType type);
 
 /// @param format the texel format
 /// @returns the text name
@@ -136,6 +174,13 @@ std::string OverrideTypeToString(tint::inspector::Override::Type type);
 /// Returns true if the given `name` is either empty or `-` which signifies `stdout` is selected.
 bool IsStdout(const std::string& name);
 
+/// Returns true if the given `name` is either empty or `-` which signifies `stdin` is selected.
+bool IsStdin(const std::string& name);
+
+/// On Windows, sets the standard input stream stdin into binary mode. Non-Windows platforms are
+/// not affected. If stdin is in text mode reading the byte 0x1A might be interpreted as EOF signal.
+void SetStdinModeBinary();
+
 /// Writes the given `buffer` to standard output. If any error occurs, returns false and outputs
 /// error message to standard error. The ContainerT type must have data() and size() methods, like
 /// `std::string` and `std::vector` do.
@@ -143,13 +188,16 @@ bool IsStdout(const std::string& name);
 /// @private
 template <typename ContainerT>
 bool WriteStdoutImpl(const ContainerT& buffer) {
-    size_t written =
-        fwrite(buffer.data(), sizeof(typename ContainerT::value_type), buffer.size(), stdout);
+    FILE* out_file = stdout;
+    // SAFETY: The .data() and .size() are both for the same container, so there should be
+    // .size() * sizeof(value_type) of memory to write into.
+    size_t written = DAWN_UNSAFE_BUFFERS(
+        fwrite(buffer.data(), sizeof(typename ContainerT::value_type), buffer.size(), out_file));
     if (buffer.size() != written) {
         std::cerr << "Could not write all output to standard output\n";
         return false;
     }
-    fflush(stdout);
+    fflush(out_file);
     return true;
 }
 
@@ -174,8 +222,10 @@ bool WriteFileImpl(const std::string& output_file,
         return false;
     }
 
-    size_t written =
-        fwrite(buffer.data(), sizeof(typename ContainerT::value_type), buffer.size(), file);
+    // SAFETY: The .data() and .size() are both for the same container, so there should be
+    // .size() * sizeof(value_type) of memory to write into.
+    size_t written = DAWN_UNSAFE_BUFFERS(
+        fwrite(buffer.data(), sizeof(typename ContainerT::value_type), buffer.size(), file));
     if (buffer.size() != written) {
         std::cerr << "Could not write to file " << output_file << "\n";
         fclose(file);
@@ -206,12 +256,7 @@ bool WriteFile(const std::string& output_file, const std::string mode, const Con
 /// Assumes the size of a `T` object is divisible by its required alignment.
 /// @returns true if we successfully read the file.
 template <typename T>
-bool ReadFile(const std::string& input_file, std::vector<T>* buffer) {
-    if (!buffer) {
-        std::cerr << "The buffer pointer was null\n";
-        return false;
-    }
-
+bool ReadFileImpl(const std::string& input_file, std::vector<T>* buffer) {
     FILE* file = nullptr;
 #if defined(_MSC_VER)
     fopen_s(&file, input_file.c_str(), "rb");
@@ -237,7 +282,9 @@ bool ReadFile(const std::string& input_file, std::vector<T>* buffer) {
     buffer->clear();
     buffer->resize(file_size / sizeof(T));
 
-    size_t bytes_read = fread(buffer->data(), 1, file_size, file);
+    // SAFETY: buffer is resized to file_size / sizeof(T) which corresponds to file_size bytes,
+    // making sure there is enough space to write into.
+    size_t bytes_read = DAWN_UNSAFE_BUFFERS(fread(buffer->data(), 1, file_size, file));
     fclose(file);
     if (bytes_read != file_size) {
         std::cerr << "Failed to read " << input_file << "\n";
@@ -245,6 +292,65 @@ bool ReadFile(const std::string& input_file, std::vector<T>* buffer) {
     }
 
     return true;
+}
+
+/// Copies the content from stdin to `buffer`,
+/// assuming each element in the stream is of type `T`.
+/// writes error messages to the standard error stream and returns false.
+/// Assumes the size of a `T` object is divisible by its required alignment.
+/// @returns true if we successfully read from stream.
+template <typename T>
+bool ReadStdinImpl(std::vector<T>* buffer) {
+    buffer->clear();
+    SetStdinModeBinary();
+    constexpr size_t kItemsPerChunk = 1024;
+    constexpr size_t kBytesPerChunk = sizeof(T) * kItemsPerChunk;
+    std::vector<T> chunk(kItemsPerChunk);
+    FILE* in_file = stdin;
+    while (!std::feof(in_file)) {
+        // SAFETY: chunk has a capacity of kItemsPerChunk (which is kBytesPerChunk bytes since
+        // sizeof(T) is divisible and checked). std::fread reads at most kBytesPerChunk.
+        size_t bytes_read =
+            DAWN_UNSAFE_BUFFERS(std::fread(chunk.data(), 1, kBytesPerChunk, in_file));
+        if (bytes_read == 0) {
+            if (std::ferror(in_file)) {
+                std::perror("Error reading from standard input");
+                return false;
+            }
+            // EOF
+            break;
+        }
+        if (bytes_read % sizeof(T) != 0) {
+            std::cerr << "Encountered non-aligned read from input stream, read '" << bytes_read
+                      << "' bytes, which is not an integral number of objects of size '"
+                      << sizeof(T) << "'\n";
+            return false;
+        }
+        // std::min for extra safety
+        size_t items_read = std::min(chunk.size(), bytes_read / sizeof(T));
+        buffer->reserve(buffer->size() + items_read);
+        std::copy(chunk.begin(), chunk.begin() + static_cast<ptrdiff_t>(items_read),
+                  std::back_inserter(*buffer));
+    }
+    return true;
+}
+
+/// Copies the content from the file named `input_file` to `buffer`.
+/// If `input_file` is empty or "-", reads from standard input.
+/// assuming each element in the file is of type `T`.  If any error occurs,
+/// writes error messages to the standard error stream and returns false.
+/// @returns true on success
+template <typename T>
+bool ReadFile(const std::string& input_file, std::vector<T>* buffer) {
+    if (!buffer) {
+        std::cerr << "The buffer pointer was null\n";
+        return false;
+    }
+
+    if (IsStdin(input_file)) {
+        return ReadStdinImpl(buffer);
+    }
+    return ReadFileImpl(input_file, buffer);
 }
 
 /// @param str the string to quote

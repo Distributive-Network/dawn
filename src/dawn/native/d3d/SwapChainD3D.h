@@ -30,10 +30,9 @@
 
 #include <vector>
 
-#include "dawn/native/SwapChain.h"
-
-#include "dawn/native/IntegerTypes.h"
-#include "dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/SwapChain.h"
+#include "src/dawn/native/d3d/d3d_platform.h"
 
 namespace dawn::native::d3d {
 
@@ -67,10 +66,10 @@ class SwapChain : public SwapChainBase {
 
     struct Config {
         // Information that's passed to the D3D12 swapchain creation call.
-        UINT bufferCount;
-        UINT swapChainFlags;
-        DXGI_FORMAT format;
-        DXGI_USAGE usage;
+        UINT bufferCount = 0;
+        UINT swapChainFlags = 0;
+        DXGI_FORMAT format{};
+        DXGI_USAGE usage = 0;
     };
     const Config& GetConfig() const;
 

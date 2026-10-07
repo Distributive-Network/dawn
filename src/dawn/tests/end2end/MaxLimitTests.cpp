@@ -26,16 +26,18 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <limits>
 #include <string>
 #include <vector>
 
-#include "dawn/common/Math.h"
-#include "dawn/common/Platform.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "partition_alloc/pointers/raw_ref.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/platform.h"
 
 namespace dawn {
 namespace {
@@ -148,17 +150,13 @@ TEST_P(MaxLimitTests, MaxBufferBindingSize) {
                 // TODO(crbug.com/dawn/1160): Usually can't actually allocate a buffer this large
                 // because allocating the buffer for zero-initialization fails.
                 maxBufferBindingSize =
-                    std::min(maxBufferBindingSize, uint64_t(2) * 1024 * 1024 * 1024);
+                    std::min(maxBufferBindingSize, uint64_t{2} * 1024 * 1024 * 1024);
                 // With WARP or on 32-bit platforms, such large buffer allocations often fail.
 #if DAWN_PLATFORM_IS(32_BIT)
                 if (IsWindows()) {
                     continue;
                 }
 #endif
-                if (IsWARP()) {
-                    maxBufferBindingSize =
-                        std::min(maxBufferBindingSize, uint64_t(512) * 1024 * 1024);
-                }
                 maxBufferBindingSize = Align(maxBufferBindingSize - 3u, 4);
                 shader = R"(
                   struct Buf {
@@ -185,10 +183,10 @@ TEST_P(MaxLimitTests, MaxBufferBindingSize) {
 
                 // Clamp to not exceed the maximum i32 value for the WGSL @size(x) annotation.
                 maxBufferBindingSize = std::min(maxBufferBindingSize,
-                                                uint64_t(std::numeric_limits<int32_t>::max()) + 8);
+                                                uint64_t{std::numeric_limits<int32_t>::max()} + 8);
                 maxBufferBindingSize = Align(maxBufferBindingSize - 3u, 4);
 
-                const uint64_t kMaxStructMemberU32ArraySize = 65535 * 4;
+                const uint64_t kMaxStructMemberU32ArraySize = 65535ULL * 4;
                 uint64_t paddingNeeded = maxBufferBindingSize - 8;
                 uint64_t numPaddingMembers = (paddingNeeded + kMaxStructMemberU32ArraySize - 1) /
                                              kMaxStructMemberU32ArraySize;
@@ -721,6 +719,9 @@ TEST_P(MaxLimitTests, WriteToMaxFragmentCombinedOutputResources) {
     // TODO(http://crbug.com/348199037): VUID-RuntimeSpirv-Location-06428
     DAWN_SUPPRESS_TEST_IF(IsLinux() && IsVulkan() && IsNvidia());
 
+    // TODO(crbug.com/40238674): Fails on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsImgTec());
+
     // Compute the number of each resource type (storage buffers and storage textures) such that
     // there is at least one color attachment, and as many of the buffer/textures as possible,
     // splitting a shared remaining count between the two resources if they are not separately
@@ -855,13 +856,14 @@ TEST_P(MaxLimitTests, WriteToMaxFragmentCombinedOutputResources) {
     }
 }
 
-// Verifies that supported buffer limits do not exceed maxBufferSize.
+// Verifies that supported buffer limits do not exceed maxBufferSize and are multiples of 4.
 TEST_P(MaxLimitTests, MaxBufferSizes) {
     // Base limits without tiering.
     dawn::utils::ComboLimits baseLimits;
     GetAdapterLimits().UnlinkedCopyTo(&baseLimits);
     EXPECT_LE(baseLimits.maxStorageBufferBindingSize, baseLimits.maxBufferSize);
     EXPECT_LE(baseLimits.maxUniformBufferBindingSize, baseLimits.maxBufferSize);
+    EXPECT_EQ(baseLimits.maxStorageBufferBindingSize % 4, 0u);
 
     // Base limits with tiering.
     GetAdapter().SetUseTieredLimits(true);
@@ -869,9 +871,48 @@ TEST_P(MaxLimitTests, MaxBufferSizes) {
     GetAdapterLimits().UnlinkedCopyTo(&tieredLimits);
     EXPECT_LE(tieredLimits.maxStorageBufferBindingSize, tieredLimits.maxBufferSize);
     EXPECT_LE(tieredLimits.maxUniformBufferBindingSize, tieredLimits.maxBufferSize);
+    EXPECT_EQ(tieredLimits.maxStorageBufferBindingSize % 4, 0u);
 
     // Unset tiered limit usage to avoid affecting other tests.
     GetAdapter().SetUseTieredLimits(false);
+}
+
+// Verifies creating a bind group with a buffer of size maxStorageBufferBindingSize
+// succeeds for both Storage and ReadOnlyStorage buffer types.
+TEST_P(MaxLimitTests, CreateBindGroupMaxStorageBufferBindingSize) {
+    // TODO(crbug.com/562922243): triggers context loss on Swiftshader
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsANGLESwiftShader());
+
+    dawn::utils::ComboLimits supportedLimits;
+    GetSupportedLimits().UnlinkedCopyTo(&supportedLimits);
+
+    uint64_t maxStorageBindingSize = supportedLimits.maxStorageBufferBindingSize;
+    EXPECT_EQ(maxStorageBindingSize % 4, 0u);
+
+    for (wgpu::BufferBindingType type :
+         {wgpu::BufferBindingType::Storage, wgpu::BufferBindingType::ReadOnlyStorage}) {
+        wgpu::BindGroupLayout bgl =
+            utils::MakeBindGroupLayout(device, {{0, wgpu::ShaderStage::Compute, type}});
+
+        wgpu::BufferDescriptor desc;
+        desc.usage = wgpu::BufferUsage::Storage;
+        desc.size = maxStorageBindingSize;
+
+        device.PushErrorScope(wgpu::ErrorFilter::OutOfMemory);
+        wgpu::Buffer buffer = device.CreateBuffer(&desc);
+
+        wgpu::ErrorType oomResult = wgpu::ErrorType::NoError;
+        device.PopErrorScope(wgpu::CallbackMode::AllowProcessEvents,
+                             [&oomResult](wgpu::PopErrorScopeStatus, wgpu::ErrorType errorType,
+                                          wgpu::StringView) { oomResult = errorType; });
+        FlushWire();
+        instance.ProcessEvents();
+
+        if (oomResult != wgpu::ErrorType::OutOfMemory && buffer != nullptr) {
+            // Binding at exactly the limit should succeed without validation error.
+            utils::MakeBindGroup(device, bgl, {{0, buffer, 0, maxStorageBindingSize}});
+        }
+    }
 }
 
 DAWN_INSTANTIATE_TEST(MaxLimitTests,
@@ -1035,22 +1076,22 @@ class MaxInterStageShaderVariablesLimitTests : public MaxLimitTests {
                                          const MaxInterStageLimitTestsSpec& spec) {
         std::stringstream stream;
         struct BoolTypeName {
-            const bool& value;
+            raw_ref<const bool> value;
             const char* type;
             const char* name;
         };
         BoolTypeName builtins[] = {
-            {spec.hasFrontFacing, "bool", "front_facing"},
-            {spec.hasSampleIndex, "u32", "sample_index"},
-            {spec.hasSampleMask, "u32", "sample_mask"},
-            {spec.hasPrimitiveIndex, "u32", "primitive_index"},
-            {spec.hasSubgroupInvocationId, "u32", "subgroup_invocation_id"},
-            {spec.hasSubgroupSize, "u32", "subgroup_size"},
+            {raw_ref(spec.hasFrontFacing), "bool", "front_facing"},
+            {raw_ref(spec.hasSampleIndex), "u32", "sample_index"},
+            {raw_ref(spec.hasSampleMask), "u32", "sample_mask"},
+            {raw_ref(spec.hasPrimitiveIndex), "u32", "primitive_index"},
+            {raw_ref(spec.hasSubgroupInvocationId), "u32", "subgroup_invocation_id"},
+            {raw_ref(spec.hasSubgroupSize), "u32", "subgroup_size"},
         };
 
         stream << "@fragment fn fs_main(input: FragmentInput";
         for (const auto& builtin : builtins) {
-            if (builtin.value) {
+            if (builtin.value.get()) {
                 stream << ",\n  @builtin(" << builtin.name << ") b_" << builtin.name << " : "
                        << builtin.type;
             }
@@ -1059,7 +1100,7 @@ class MaxInterStageShaderVariablesLimitTests : public MaxLimitTests {
         // optimized out..
         stream << ") -> @location(0) vec4f {\nreturn input.pos";
         for (const auto& builtin : builtins) {
-            if (builtin.value) {
+            if (builtin.value.get()) {
                 stream << "\n   + vec4f(f32(b_" << builtin.name << "), 0, 0, 1)";
             }
         }

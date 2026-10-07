@@ -110,7 +110,7 @@ TEST_F(IR_ValueToLetTest, NoModify_Bitcast) {
 %F = func():u32 {
   $B1: {
     %x:i32 = let 1i
-    %3:u32 = bitcast %x
+    %3:u32 = bitcast<u32> %x
     ret %3
   }
 }
@@ -941,11 +941,11 @@ TEST_F(IR_ValueToLetTest, NameMe1) {
 TEST_F(IR_ValueToLetTest, NameMe2) {
     auto* fn = b.Function("F", ty.void_());
     b.Append(fn->Block(), [&] {
-        auto* i = b.Name("i", b.Max(1_i, 2_i));
+        auto* i = b.Let("i", 1_i);
         auto* v = b.Var<function>("v", i);
-        auto* x = b.Name("x", b.Max(3_i, 4_i));
-        auto* y = b.Name("y", b.Load(v));
-        auto* z = b.Name("z", b.Add(y, x));
+        auto* x = b.Name("x", b.Load(v));
+        auto* y = b.Name("y", b.Max(x, 4_i));
+        auto* z = b.Name("z", b.Add(y, 3_i));
         b.Store(v, z);
         b.Return(fn);
     });
@@ -953,11 +953,11 @@ TEST_F(IR_ValueToLetTest, NameMe2) {
     auto* src = R"(
 %F = func():void {
   $B1: {
-    %i:i32 = max 1i, 2i
+    %i:i32 = let 1i
     %v:ptr<function, i32, read_write> = var %i
-    %x:i32 = max 3i, 4i
-    %y:i32 = load %v
-    %z:i32 = add %y, %x
+    %x:i32 = load %v
+    %y:i32 = max %x, 4i
+    %z:i32 = add %y, 3i
     store %v, %z
     ret
   }
@@ -968,11 +968,11 @@ TEST_F(IR_ValueToLetTest, NameMe2) {
     auto* expect = R"(
 %F = func():void {
   $B1: {
-    %i:i32 = max 1i, 2i
+    %i:i32 = let 1i
     %v:ptr<function, i32, read_write> = var %i
-    %x:i32 = max 3i, 4i
-    %y:i32 = load %v
-    %z:i32 = add %y, %x
+    %x:i32 = load %v
+    %y:i32 = max %x, 4i
+    %z:i32 = add %y, 3i
     store %v, %z
     ret
   }
@@ -1015,11 +1015,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1034,11 +1033,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1213,6 +1211,101 @@ TEST_F(IR_ValueToLetTest, AccessToLetWithNestedFunctionParams) {
     EXPECT_EQ(str(), expect);
 
     Run(ValueToLet, cfg);  // running a second time should be no-op
+    EXPECT_EQ(str(), expect);
+}
+
+TEST_F(IR_ValueToLetTest, NoSideEffectBinary_UsedMultipleTimes) {
+    auto* fn = b.Function("F", ty.f32());
+    b.Append(fn->Block(), [&] {
+        auto* v = b.Var<function, vec2f>("v");
+        auto* l = b.Load(v);
+        auto* mul = b.Multiply(l, l);
+        auto* x = b.Access<f32>(mul, 0_u);
+        auto* y = b.Access<f32>(mul, 1_u);
+        b.Return(fn, b.Add(x, y));
+    });
+
+    auto* src = R"(
+%F = func():f32 {
+  $B1: {
+    %v:ptr<function, vec2<f32>, read_write> = var undef
+    %3:vec2<f32> = load %v
+    %4:vec2<f32> = mul %3, %3
+    %5:f32 = access %4, 0u
+    %6:f32 = access %4, 1u
+    %7:f32 = add %5, %6
+    ret %7
+  }
+}
+)";
+    EXPECT_EQ(str(), src);
+
+    auto* expect = R"(
+%F = func():f32 {
+  $B1: {
+    %v:ptr<function, vec2<f32>, read_write> = var undef
+    %3:vec2<f32> = load %v
+    %4:vec2<f32> = let %3
+    %5:vec2<f32> = mul %4, %4
+    %6:vec2<f32> = let %5
+    %7:f32 = access %6, 0u
+    %8:f32 = access %6, 1u
+    %9:f32 = add %7, %8
+    ret %9
+  }
+}
+)";
+
+    Run(ValueToLet, ValueToLetConfig{});
+
+    EXPECT_EQ(str(), expect);
+}
+
+TEST_F(IR_ValueToLetTest, NoSideEffectCall_UsedMultipleTimes) {
+    auto* fn = b.Function("F", ty.f32());
+    b.Append(fn->Block(), [&] {
+        auto* v = b.Var<function, bool>("v");
+        auto* cond = b.Let("cond", b.Load(v));
+        auto* select = b.Call(ty.f32(), BuiltinFn::kSelect, 1_f, 2_f, cond);
+        auto* x = b.Multiply(select, select);
+        auto* y = b.Multiply(select, select);
+        b.Return(fn, b.Add(x, y));
+    });
+
+    auto* src = R"(
+%F = func():f32 {
+  $B1: {
+    %v:ptr<function, bool, read_write> = var undef
+    %3:bool = load %v
+    %cond:bool = let %3
+    %5:f32 = select 1.0f, 2.0f, %cond
+    %6:f32 = mul %5, %5
+    %7:f32 = mul %5, %5
+    %8:f32 = add %6, %7
+    ret %8
+  }
+}
+)";
+    EXPECT_EQ(str(), src);
+
+    auto* expect = R"(
+%F = func():f32 {
+  $B1: {
+    %v:ptr<function, bool, read_write> = var undef
+    %3:bool = load %v
+    %cond:bool = let %3
+    %5:f32 = select 1.0f, 2.0f, %cond
+    %6:f32 = let %5
+    %7:f32 = mul %6, %6
+    %8:f32 = mul %6, %6
+    %9:f32 = add %7, %8
+    ret %9
+  }
+}
+)";
+
+    Run(ValueToLet, ValueToLetConfig{});
+
     EXPECT_EQ(str(), expect);
 }
 

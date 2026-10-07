@@ -55,7 +55,9 @@ tint_target_add_dependencies(tint_lang_hlsl_writer lib
   tint_lang_core_constant
   tint_lang_core_intrinsic
   tint_lang_core_ir
+  tint_lang_core_ir_analysis
   tint_lang_core_ir_transform
+  tint_lang_core_ir_validator
   tint_lang_core_type
   tint_lang_hlsl_writer_common
   tint_lang_hlsl_writer_printer
@@ -67,6 +69,7 @@ tint_target_add_dependencies(tint_lang_hlsl_writer lib
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -109,7 +112,10 @@ tint_target_add_dependencies(tint_lang_hlsl_writer_test test
   tint_lang_core_constant
   tint_lang_core_intrinsic
   tint_lang_core_ir
+  tint_lang_core_ir_validator
   tint_lang_core_type
+  tint_lang_hlsl_validate
+  tint_lang_hlsl_writer
   tint_lang_hlsl_writer_common
   tint_utils
   tint_utils_command
@@ -119,6 +125,7 @@ tint_target_add_dependencies(tint_lang_hlsl_writer_test test
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -129,19 +136,12 @@ tint_target_add_external_dependencies(tint_lang_hlsl_writer_test test
   "src_utils"
 )
 
-if(TINT_BUILD_HLSL_WRITER)
-  tint_target_add_dependencies(tint_lang_hlsl_writer_test test
-    tint_lang_hlsl_validate
-    tint_lang_hlsl_writer
-  )
 endif(TINT_BUILD_HLSL_WRITER)
-
-endif(TINT_BUILD_HLSL_WRITER)
-if(TINT_BUILD_HLSL_WRITER)
+if(TINT_BUILD_FUZZERS AND TINT_BUILD_HLSL_WRITER)
 ################################################################################
 # Target:    tint_lang_hlsl_writer_fuzz
 # Kind:      fuzz
-# Condition: TINT_BUILD_HLSL_WRITER
+# Condition: TINT_BUILD_FUZZERS AND TINT_BUILD_HLSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_hlsl_writer_fuzz fuzz
   lang/hlsl/writer/writer_fuzz.cc
@@ -150,15 +150,17 @@ tint_add_target(tint_lang_hlsl_writer_fuzz fuzz
 tint_target_add_dependencies(tint_lang_hlsl_writer_fuzz fuzz
   tint_api_common
   tint_api_helpers
-  tint_cmd_fuzz_ir_fuzz
+  tint_cmd_fuzz_common
   tint_lang_core
   tint_lang_core_constant
   tint_lang_core_ir
+  tint_lang_core_ir_validator
   tint_lang_core_type
+  tint_lang_hlsl_validate
+  tint_lang_hlsl_writer
   tint_lang_hlsl_writer_common
   tint_lang_hlsl_writer_printer
   tint_utils
-  tint_utils_bytes
   tint_utils_command
   tint_utils_containers
   tint_utils_diagnostic
@@ -166,6 +168,7 @@ tint_target_add_dependencies(tint_lang_hlsl_writer_fuzz fuzz
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -175,11 +178,4 @@ tint_target_add_external_dependencies(tint_lang_hlsl_writer_fuzz fuzz
   "src_utils"
 )
 
-if(TINT_BUILD_HLSL_WRITER)
-  tint_target_add_dependencies(tint_lang_hlsl_writer_fuzz fuzz
-    tint_lang_hlsl_validate
-    tint_lang_hlsl_writer
-  )
-endif(TINT_BUILD_HLSL_WRITER)
-
-endif(TINT_BUILD_HLSL_WRITER)
+endif(TINT_BUILD_FUZZERS AND TINT_BUILD_HLSL_WRITER)

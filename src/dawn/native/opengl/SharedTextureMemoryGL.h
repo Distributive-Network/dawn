@@ -28,16 +28,17 @@
 #ifndef SRC_DAWN_NATIVE_OPENGL_SHARED_TEXTURE_MEMORY_GL_H_
 #define SRC_DAWN_NATIVE_OPENGL_SHARED_TEXTURE_MEMORY_GL_H_
 
-#include "dawn/native/SharedTextureMemory.h"
-#include "dawn/native/opengl/opengl_platform.h"
+#include "src/dawn/native/SharedTextureMemory.h"
+#include "src/dawn/native/opengl/opengl_platform.h"
 
 namespace dawn::native::opengl {
 
 class Device;
+struct OpenGLFunctions;
 
 class SharedTextureMemory : public SharedTextureMemoryBase {
   public:
-    virtual ResultOrError<GLuint> GenerateGLTexture() = 0;
+    virtual ResultOrError<GLuint> GenerateGLTexture(const OpenGLFunctions& gl) = 0;
 
   protected:
     SharedTextureMemory(Device* device,
@@ -46,8 +47,8 @@ class SharedTextureMemory : public SharedTextureMemoryBase {
 
     ResultOrError<Ref<TextureBase>> CreateTextureImpl(
         const UnpackedPtr<TextureDescriptor>& descriptor) override;
-    MaybeError BeginAccessImpl(TextureBase* texture,
-                               const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
+    MaybeValError BeginAccessImpl(TextureBase* texture,
+                                  const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
     ResultOrError<FenceAndSignalValue> EndAccessImpl(TextureBase* texture,
                                                      ExecutionSerial lastUsageSerial,
                                                      UnpackedPtr<EndAccessState>& state) override;

@@ -25,14 +25,16 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/d3d/PlatformFunctions.h"
+#include "src/dawn/native/d3d/PlatformFunctions.h"
 
 #include <comdef.h>
 #include <versionhelpers.h>
 
 #include <vector>
 
-#include "dawn/common/SystemUtils.h"
+#include "src/dawn/common/SystemUtils.h"
+#include "src/utils/compiler.h"
+#include "src/utils/numeric.h"
 
 namespace dawn::native::d3d {
 
@@ -52,7 +54,7 @@ uint64_t ReadFromSZRegistryKey(HKEY registerKey, const char* registerKeyName) {
         return 0;
     }
     constexpr int32_t kRadix = 10;
-    return strtol(returnStringValue.data(), nullptr, kRadix);
+    return DAWN_UNSAFE_TODO(sign_cast(strtol(returnStringValue.data(), nullptr, kRadix)));
 }
 
 }  // anonymous namespace
@@ -83,7 +85,7 @@ MaybeError PlatformFunctions::LoadDXGI() {
     if (!mDXGILib.OpenSystemLibrary(L"dxgi.dll", &error) ||
         !mDXGILib.GetProc(&dxgiGetDebugInterface1, "DXGIGetDebugInterface1", &error) ||
         !mDXGILib.GetProc(&createDxgiFactory2, "CreateDXGIFactory2", &error)) {
-        return DAWN_INTERNAL_ERROR(error.c_str());
+        return DAWN_UNRECOVERABLE_ERROR(error.c_str());
     }
 #endif
 
@@ -114,13 +116,14 @@ MaybeError PlatformFunctions::EnsureFXC(std::span<const std::string> searchPaths
 #endif
     if (!loadSuccess || !mFXCompilerLib.GetProc(&d3dCompile, "D3DCompile", &error) ||
         !mFXCompilerLib.GetProc(&d3dDisassemble, "D3DDisassemble", &error)) {
-        return DAWN_INTERNAL_ERROR(error.c_str());
+        return DAWN_UNRECOVERABLE_ERROR(error.c_str());
     }
 #endif
     return {};
 }
 
 void PlatformFunctions::InitWindowsVersion() {
+#if !DAWN_PLATFORM_IS(WINUWP)
     // Currently we only care about the build number of Windows 10 and Windows 11.
     if (!IsWindows10OrGreater()) {
         return;
@@ -139,6 +142,7 @@ void PlatformFunctions::InitWindowsVersion() {
     mCurrentBuildNumber = ReadFromSZRegistryKey(hKey, "CurrentBuildNumber");
 
     RegCloseKey(hKey);
+#endif  // !DAWN_PLATFORM_IS(WINUWP)
 }
 
 uint64_t PlatformFunctions::GetWindowsBuildNumber() const {

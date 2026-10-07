@@ -28,7 +28,7 @@
 #ifndef DAWNWIRE_OBJECTTYPE_AUTOGEN_H_
 #define DAWNWIRE_OBJECTTYPE_AUTOGEN_H_
 
-#include "dawn/common/ityp_array.h"
+#include "src/dawn/common/ityp_array.h"
 
 namespace dawn::wire {
 
@@ -42,6 +42,13 @@ namespace dawn::wire {
 
     template <typename T>
     using PerObjectType = ityp::array<ObjectType, T, {{len(by_category["object"])}}>;
+
+    inline ObjectType ToAPI(ObjectType rhs) {
+        return rhs;
+    }
+    inline ObjectType FromAPI(ObjectType rhs) {
+        return rhs;
+    }
 
 } // namespace dawn::wire
 

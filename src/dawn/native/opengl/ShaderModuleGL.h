@@ -32,10 +32,10 @@
 #include <string>
 #include <vector>
 
-#include "dawn/native/IntegerTypes.h"
-#include "dawn/native/Serializable.h"
-#include "dawn/native/ShaderModule.h"
-#include "dawn/native/opengl/opengl_platform.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/Serializable.h"
+#include "src/dawn/native/ShaderModule.h"
+#include "src/dawn/native/opengl/opengl_platform.h"
 
 namespace dawn::native {
 
@@ -50,17 +50,17 @@ namespace opengl {
 
 class Device;
 class EmulatedTextureBuiltinRegistrar;
+// NOLINTNEXTLINE(cppcoreguidelines-virtual-class-destructor)
 class PipelineLayout;
 struct OpenGLFunctions;
-
-std::string GetBindingName(BindGroupIndex group, BindingNumber bindingNumber);
+struct StorageBufferSizeImmediateInfo;
 
 #define COMBINED_SAMPLER_ELEMENT_MEMBERS(X)                                                 \
     X(BindGroupIndex, group)                                                                \
     X(BindingIndex, index)                                                                  \
     /* Return the array size of the element in the WGSL / GLSL as OpenGL requires that a */ \
     /* non-arrayed (arraySize = 1) binding uses glUniform1i and not glUniform1iv. */        \
-    X(BindingIndex, shaderArraySize, 1)
+    X(BindingIndex, shaderArraySize, 1u)
 DAWN_SERIALIZABLE(struct, CombinedSamplerElement, COMBINED_SAMPLER_ELEMENT_MEMBERS){};
 #undef COMBINED_SAMPLER_ELEMENT_MEMBERS
 
@@ -86,17 +86,20 @@ class ShaderModule final : public ShaderModuleBase {
         const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
         const std::vector<tint::wgsl::Extension>& internalExtensions);
 
-    ResultOrError<GLuint> CompileShader(const OpenGLFunctions& gl,
-                                        const ProgrammableStage& programmableStage,
-                                        SingleShaderStage stage,
-                                        bool usesVertexIndex,
-                                        bool usesInstanceIndex,
-                                        bool usesFragDepth,
-                                        VertexAttributeMask bgraSwizzleAttributes,
-                                        std::vector<CombinedSampler>* combinedSamplers,
-                                        const PipelineLayout* layout,
-                                        EmulatedTextureBuiltinRegistrar* emulatedTextureBuiltings,
-                                        bool* needsSSBOLengthUniformBuffer);
+    ResultOrValError<std::string> CompileShader(
+        const OpenGLFunctions& gl,
+        const ProgrammableStage& programmableStage,
+        SingleShaderStage stage,
+        const ImmediateMask& pipelineImmediateMask,
+        VertexAttributeMask bgraSwizzleAttributes,
+        std::vector<CombinedSampler>* combinedSamplersOut,
+        const PipelineLayout* layout,
+        const StorageBufferSizeImmediateInfo& storageBufferSizeInfo,
+        EmulatedTextureBuiltinRegistrar* emulatedTextureBuiltins,
+        Extent3D* workgroupSize);
+    ResultOrError<GLuint> CreateGLShaderObject(const OpenGLFunctions& gl,
+                                               SingleShaderStage stage,
+                                               const std::string& glslSrc);
 
   private:
     ShaderModule(Device* device,

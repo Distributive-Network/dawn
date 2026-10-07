@@ -25,14 +25,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/UtilsGL.h"
+#include "src/dawn/native/opengl/UtilsGL.h"
 
 #include <string>
 
-#include "dawn/common/Assert.h"
-#include "dawn/common/Log.h"
-#include "dawn/native/EnumMaskIterator.h"
-#include "dawn/native/opengl/OpenGLFunctions.h"
+#include "src/dawn/native/EnumMaskIterator.h"
+#include "src/dawn/native/ErrorInjector.h"
+#include "src/dawn/native/opengl/OpenGLFunctions.h"
+#include "src/utils/assert.h"
+#include "src/utils/log.h"
 
 namespace dawn::native::opengl {
 
@@ -140,6 +141,10 @@ MaybeError CopyImageSubData(const OpenGLFunctions& gl,
             if (srcTarget == GL_TEXTURE_2D) {
                 DAWN_GL_TRY(gl, FramebufferTexture2D(GL_READ_FRAMEBUFFER, glAttachment, srcTarget,
                                                      srcHandle, srcLevel));
+            } else if (srcTarget == GL_TEXTURE_CUBE_MAP) {
+                GLenum target = GL_TEXTURE_CUBE_MAP_POSITIVE_X + src.z + layer;
+                DAWN_GL_TRY(gl, FramebufferTexture2D(GL_READ_FRAMEBUFFER, glAttachment, target,
+                                                     srcHandle, srcLevel));
             } else {
                 DAWN_GL_TRY(gl, FramebufferTextureLayer(GL_READ_FRAMEBUFFER, glAttachment,
                                                         srcHandle, srcLevel, src.z + layer));
@@ -148,7 +153,7 @@ MaybeError CopyImageSubData(const OpenGLFunctions& gl,
                 DAWN_GL_TRY(gl, FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, glAttachment, dstTarget,
                                                      dstHandle, dstLevel));
             } else if (dstTarget == GL_TEXTURE_CUBE_MAP) {
-                GLenum target = GL_TEXTURE_CUBE_MAP_POSITIVE_X + layer;
+                GLenum target = GL_TEXTURE_CUBE_MAP_POSITIVE_X + dst.z + layer;
                 DAWN_GL_TRY(gl, FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, glAttachment, target,
                                                      dstHandle, dstLevel));
             } else {
@@ -156,6 +161,8 @@ MaybeError CopyImageSubData(const OpenGLFunctions& gl,
                                                         dstHandle, dstLevel, dst.z + layer));
             }
         }
+        DAWN_TRY(CheckFramebufferComplete(gl, GL_READ_FRAMEBUFFER));
+        DAWN_TRY(CheckFramebufferComplete(gl, GL_DRAW_FRAMEBUFFER));
         DAWN_GL_TRY(
             gl, BlitFramebuffer(src.x, src.y, src.x + size.width, src.y + size.height, dst.x, dst.y,
                                 dst.x + size.width, dst.y + size.height, blitMask, GL_NEAREST));
@@ -189,6 +196,39 @@ const char* GLErrorAsString(GLenum error) {
     }
 
 #undef ERROR_CASE_STRING
+}
+
+const char* GLFramebufferStatusAsString(GLenum status) {
+#define STATUS_CASE_STRING(statusEnum) \
+    case statusEnum:                   \
+        return #statusEnum
+
+    switch (status) {
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_COMPLETE);
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_UNDEFINED);
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT);
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT);
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS);
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER);
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER);
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE);
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS);
+        STATUS_CASE_STRING(GL_FRAMEBUFFER_UNSUPPORTED);
+        default:
+            return "<Unknown OpenGL framebuffer status>";
+    }
+
+#undef STATUS_CASE_STRING
+}
+
+MaybeError CheckFramebufferComplete(const OpenGLFunctions& gl, GLenum target) {
+    GLenum status = INJECT_ERROR_OR_RUN(gl.CheckFramebufferStatus(target),
+                                        static_cast<GLenum>(GL_FRAMEBUFFER_UNSUPPORTED));
+    if (status == GL_FRAMEBUFFER_COMPLETE) [[likely]] {
+        return {};
+    }
+    return DAWN_FORMAT_UNRECOVERABLE_ERROR("glCheckFramebufferStatus returned %s (0x%04X).",
+                                           GLFramebufferStatusAsString(status), status);
 }
 
 void ClearErrors(const OpenGLFunctions& gl,
@@ -248,9 +288,9 @@ MaybeError CheckError(const OpenGLFunctions& gl,
         case GL_OUT_OF_MEMORY:
             return DAWN_OUT_OF_MEMORY_ERROR(message);
         case GL_CONTEXT_LOST:
-            return DAWN_DEVICE_LOST_ERROR(message);
+            return DAWN_BACKEND_DEVICE_LOST_ERROR(message);
         default:
-            return DAWN_INTERNAL_ERROR(message);
+            return DAWN_UNRECOVERABLE_ERROR(message);
     }
 }
 

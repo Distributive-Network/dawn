@@ -27,27 +27,32 @@
 
 #include "src/tint/lang/hlsl/writer/raise/builtin_polyfill.h"
 
-#include <string>
 #include <tuple>
+#include <vector>
 
 #include "src/tint/lang/core/fluent_types.h"  // IWYU pragma: export
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/type/depth_multisampled_texture.h"
 #include "src/tint/lang/core/type/depth_texture.h"
+#include "src/tint/lang/core/type/f16.h"
 #include "src/tint/lang/core/type/manager.h"
 #include "src/tint/lang/core/type/multisampled_texture.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/storage_texture.h"
+#include "src/tint/lang/core/type/subgroup_matrix.h"
 #include "src/tint/lang/core/type/texture.h"
+#include "src/tint/lang/core/type/u16.h"
 #include "src/tint/lang/core/type/u32.h"
+#include "src/tint/lang/core/type/u64.h"
 #include "src/tint/lang/core/type/vector.h"
 #include "src/tint/lang/hlsl/builtin_fn.h"
 #include "src/tint/lang/hlsl/ir/builtin_call.h"
 #include "src/tint/lang/hlsl/ir/member_builtin_call.h"
 #include "src/tint/lang/hlsl/ir/ternary.h"
 #include "src/tint/lang/hlsl/type/int8_t4_packed.h"
+#include "src/tint/lang/hlsl/type/matrix_layout.h"
 #include "src/tint/lang/hlsl/type/uint8_t4_packed.h"
 #include "src/tint/utils/containers/hashmap.h"
 #include "src/tint/utils/math/hash.h"
@@ -63,6 +68,9 @@ struct State {
     /// The IR module.
     core::ir::Module& ir;
 
+    /// The configuration for the transform.
+    const BuiltinPolyfillConfig& config;
+
     /// The IR builder.
     core::ir::Builder b{ir};
 
@@ -75,80 +83,245 @@ struct State {
         tint::UnorderedKeyWrapper<std::tuple<const core::type::Type*, const core::type::Type*>>;
     Hashmap<BitcastType, core::ir::Function*, 4> bitcast_funcs_{};
 
+    using MatrixScalarKey =
+        tint::UnorderedKeyWrapper<std::tuple<const core::type::SubgroupMatrix*, core::BinaryOp>>;
+    Hashmap<MatrixScalarKey, core::ir::Function*, 4> matrix_scalar_funcs_{};
+
+    using MatrixMultiplyAccumulateKey = tint::UnorderedKeyWrapper<
+        std::tuple<const core::type::SubgroupMatrix*, const core::type::SubgroupMatrix*>>;
+    Hashmap<MatrixMultiplyAccumulateKey, core::ir::Function*, 4>
+        matrix_multiply_accumulate_funcs_{};
+
     /// Process the module.
     void Process() {
         // Find the bitcasts that need replacing.
-        Vector<core::ir::Bitcast*, 4> bitcast_worklist;
-        Vector<core::ir::CoreBuiltinCall*, 4> call_worklist;
+        Vector<core::ir::CoreBuiltinCall*, 4> bitcast_worklist;
+        std::vector<std::function<void()>> call_worklist;
+        call_worklist.reserve(128);
+
         for (auto* inst : ir.Instructions()) {
-            if (auto* bitcast = inst->As<core::ir::Bitcast>()) {
-                bitcast_worklist.Push(bitcast);
-                continue;
-            }
             if (auto* call = inst->As<core::ir::CoreBuiltinCall>()) {
+                if (call->Func() == core::BuiltinFn::kBitcast) {
+                    bitcast_worklist.Push(call);
+                    continue;
+                }
                 switch (call->Func()) {
                     case core::BuiltinFn::kAcosh:
+                        call_worklist.push_back([this, call] { Acosh(call); });
+                        break;
                     case core::BuiltinFn::kAsinh:
+                        call_worklist.push_back([this, call] { Asinh(call); });
+                        break;
                     case core::BuiltinFn::kAtanh:
+                        call_worklist.push_back([this, call] { Atanh(call); });
+                        break;
                     case core::BuiltinFn::kAtomicAdd:
+                        call_worklist.push_back([this, call] { AtomicAdd(call); });
+                        break;
                     case core::BuiltinFn::kAtomicSub:
+                        call_worklist.push_back([this, call] { AtomicSub(call); });
+                        break;
                     case core::BuiltinFn::kAtomicMin:
+                        call_worklist.push_back([this, call] { AtomicMin(call); });
+                        break;
                     case core::BuiltinFn::kAtomicMax:
+                        call_worklist.push_back([this, call] { AtomicMax(call); });
+                        break;
                     case core::BuiltinFn::kAtomicAnd:
+                        call_worklist.push_back([this, call] { AtomicAnd(call); });
+                        break;
                     case core::BuiltinFn::kAtomicOr:
+                        call_worklist.push_back([this, call] { AtomicOr(call); });
+                        break;
                     case core::BuiltinFn::kAtomicXor:
+                        call_worklist.push_back([this, call] { AtomicXor(call); });
+                        break;
                     case core::BuiltinFn::kAtomicLoad:
+                        call_worklist.push_back([this, call] { AtomicLoad(call); });
+                        break;
                     case core::BuiltinFn::kAtomicStore:
+                        call_worklist.push_back([this, call] { AtomicStore(call); });
+                        break;
                     case core::BuiltinFn::kAtomicExchange:
+                        call_worklist.push_back([this, call] { AtomicExchange(call); });
+                        break;
                     case core::BuiltinFn::kAtomicCompareExchangeWeak:
+                        call_worklist.push_back([this, call] { AtomicCompareExchangeWeak(call); });
+                        break;
+                    case core::BuiltinFn::kCeil:
+                    case core::BuiltinFn::kFloor:
+                        if (config.polyfill_f16_ceil_floor &&
+                            call->Result()->Type()->DeepestElement()->Is<core::type::F16>()) {
+                            call_worklist.push_back([this, call] { PolyfillF16CeilFloor(call); });
+                        }
+                        break;
                     case core::BuiltinFn::kCountOneBits:
+                        call_worklist.push_back([this, call] {
+                            BitcastToIntOverloadCall(call);  // See crbug.com/tint/1550.
+                        });
+                        break;
                     case core::BuiltinFn::kDot4I8Packed:
+                        call_worklist.push_back([this, call] { Dot4I8Packed(call); });
+                        break;
                     case core::BuiltinFn::kDot4U8Packed:
+                        call_worklist.push_back([this, call] { Dot4U8Packed(call); });
+                        break;
                     case core::BuiltinFn::kFrexp:
+                        call_worklist.push_back([this, call] { Frexp(call); });
+                        break;
                     case core::BuiltinFn::kModf:
+                        call_worklist.push_back([this, call] { Modf(call); });
+                        break;
                     case core::BuiltinFn::kPack2X16Float:
+                        call_worklist.push_back([this, call] { Pack2x16Float(call); });
+                        break;
                     case core::BuiltinFn::kPack2X16Snorm:
+                        call_worklist.push_back([this, call] { Pack2x16Snorm(call); });
+                        break;
                     case core::BuiltinFn::kPack2X16Unorm:
+                        call_worklist.push_back([this, call] { Pack2x16Unorm(call); });
+                        break;
                     case core::BuiltinFn::kPack4X8Snorm:
+                        call_worklist.push_back([this, call] { Pack4x8Snorm(call); });
+                        break;
                     case core::BuiltinFn::kPack4X8Unorm:
+                        call_worklist.push_back([this, call] { Pack4x8Unorm(call); });
+                        break;
                     case core::BuiltinFn::kPack4XI8:
+                        call_worklist.push_back([this, call] { Pack4xI8(call); });
+                        break;
                     case core::BuiltinFn::kPack4XU8:
+                        call_worklist.push_back([this, call] { Pack4xU8(call); });
+                        break;
                     case core::BuiltinFn::kPack4XI8Clamp:
+                        call_worklist.push_back([this, call] { Pack4xI8Clamp(call); });
+                        break;
                     case core::BuiltinFn::kQuantizeToF16:
+                        call_worklist.push_back([this, call] { QuantizeToF16(call); });
+                        break;
                     case core::BuiltinFn::kReverseBits:
+                        call_worklist.push_back([this, call] {
+                            BitcastToIntOverloadCall(call);  // See crbug.com/tint/1550.
+                        });
+                        break;
                     case core::BuiltinFn::kSelect:
+                        call_worklist.push_back([this, call] { Select(call); });
+                        break;
                     case core::BuiltinFn::kSign:
+                        call_worklist.push_back([this, call] { Sign(call); });
+                        break;
                     case core::BuiltinFn::kSubgroupAnd:
                     case core::BuiltinFn::kSubgroupOr:
                     case core::BuiltinFn::kSubgroupXor:
+                        call_worklist.push_back([this, call] { BitcastToIntOverloadCall(call); });
+                        break;
                     case core::BuiltinFn::kSubgroupShuffleXor:
                     case core::BuiltinFn::kSubgroupShuffleUp:
                     case core::BuiltinFn::kSubgroupShuffleDown:
+                        call_worklist.push_back([this, call] { SubgroupShuffle(call); });
+                        break;
                     case core::BuiltinFn::kSubgroupInclusiveAdd:
                     case core::BuiltinFn::kSubgroupInclusiveMul:
+                        call_worklist.push_back([this, call] { SubgroupInclusive(call); });
+                        break;
+                    case core::BuiltinFn::kSubgroupMatrixMultiply:
+                        call_worklist.push_back([this, call] { SubgroupMatrixMultiply(call); });
+                        break;
+                    case core::BuiltinFn::kSubgroupMatrixScalarAdd:
+                        call_worklist.push_back(
+                            [this, call] { SubgroupMatrixScalar(call, core::BinaryOp::kAdd); });
+                        break;
+                    case core::BuiltinFn::kSubgroupMatrixScalarSubtract:
+                        call_worklist.push_back([this, call] {
+                            SubgroupMatrixScalar(call, core::BinaryOp::kSubtract);
+                        });
+                        break;
+                    case core::BuiltinFn::kSubgroupMatrixScalarMultiply:
+                        call_worklist.push_back([this, call] {
+                            SubgroupMatrixScalar(call, core::BinaryOp::kMultiply);
+                        });
+                        break;
+                    case core::BuiltinFn::kSubgroupMatrixMultiplyAccumulate:
+                        call_worklist.push_back(
+                            [this, call] { SubgroupMatrixMultiplyAccumulate(call); });
+                        break;
+                    case core::BuiltinFn::kSubgroupMatrixLoad:
+                        call_worklist.push_back([this, call] { SubgroupMatrixLoad(call); });
+                        break;
+                    case core::BuiltinFn::kSubgroupMatrixStore:
+                        call_worklist.push_back([this, call] { SubgroupMatrixStore(call); });
+                        break;
                     case core::BuiltinFn::kTextureDimensions:
+                        call_worklist.push_back([this, call] { TextureDimensions(call); });
+                        break;
                     case core::BuiltinFn::kTextureGather:
+                        call_worklist.push_back([this, call] { TextureGather(call); });
+                        break;
                     case core::BuiltinFn::kTextureGatherCompare:
+                        call_worklist.push_back([this, call] { TextureGatherCompare(call); });
+                        break;
                     case core::BuiltinFn::kTextureLoad:
+                        call_worklist.push_back([this, call] { TextureLoad(call); });
+                        break;
                     case core::BuiltinFn::kTextureNumLayers:
+                        call_worklist.push_back([this, call] { TextureNumLayers(call); });
+                        break;
                     case core::BuiltinFn::kTextureNumLevels:
+                        call_worklist.push_back([this, call] { TextureNumLevels(call); });
+                        break;
                     case core::BuiltinFn::kTextureNumSamples:
+                        call_worklist.push_back([this, call] { TextureNumSamples(call); });
+                        break;
                     case core::BuiltinFn::kTextureSample:
+                        call_worklist.push_back([this, call] { TextureSample(call); });
+                        break;
                     case core::BuiltinFn::kTextureSampleBias:
+                        call_worklist.push_back([this, call] { TextureSampleBias(call); });
+                        break;
                     case core::BuiltinFn::kTextureSampleCompare:
                     case core::BuiltinFn::kTextureSampleCompareLevel:
+                        call_worklist.push_back([this, call] { TextureSampleCompare(call); });
+                        break;
                     case core::BuiltinFn::kTextureSampleGrad:
+                        call_worklist.push_back([this, call] { TextureSampleGrad(call); });
+                        break;
                     case core::BuiltinFn::kTextureSampleLevel:
+                        call_worklist.push_back([this, call] { TextureSampleLevel(call); });
+                        break;
                     case core::BuiltinFn::kTextureStore:
+                        call_worklist.push_back([this, call] { TextureStore(call); });
+                        break;
                     case core::BuiltinFn::kTrunc:
+                        if (config.polyfill_trunc) {
+                            call_worklist.push_back([this, call] { Trunc(call); });
+                        }
+                        break;
                     case core::BuiltinFn::kUnpack2X16Float:
+                        call_worklist.push_back([this, call] { Unpack2x16Float(call); });
+                        break;
                     case core::BuiltinFn::kUnpack2X16Snorm:
+                        call_worklist.push_back([this, call] { Unpack2x16Snorm(call); });
+                        break;
                     case core::BuiltinFn::kUnpack2X16Unorm:
+                        call_worklist.push_back([this, call] { Unpack2x16Unorm(call); });
+                        break;
                     case core::BuiltinFn::kUnpack4X8Snorm:
+                        call_worklist.push_back([this, call] { Unpack4x8Snorm(call); });
+                        break;
                     case core::BuiltinFn::kUnpack4X8Unorm:
+                        call_worklist.push_back([this, call] { Unpack4x8Unorm(call); });
+                        break;
                     case core::BuiltinFn::kUnpack4XI8:
+                        call_worklist.push_back([this, call] { Unpack4xI8(call); });
+                        break;
                     case core::BuiltinFn::kUnpack4XU8:
-                        call_worklist.Push(call);
+                        call_worklist.push_back([this, call] { Unpack4xU8(call); });
+                        break;
+                    case core::BuiltinFn::kAddSat:
+                        call_worklist.push_back([this, call] { AddSat(call); });
+                        break;
+                    case core::BuiltinFn::kMulSat:
+                        call_worklist.push_back([this, call] { MulSat(call); });
                         break;
                     default:
                         break;
@@ -159,198 +332,34 @@ struct State {
 
         // Replace the bitcasts that we found.
         for (auto* bitcast : bitcast_worklist) {
-            auto* src_type = bitcast->Val()->Type();
+            auto* src_type = bitcast->Args()[0]->Type();
             auto* dst_type = bitcast->Result()->Type();
             auto* dst_deepest = dst_type->DeepestElement();
+            auto* src_deepest = src_type->DeepestElement();
 
             if (src_type == dst_type) {
                 ReplaceBitcastWithValue(bitcast);
-            } else if (src_type->DeepestElement()->Is<core::type::F16>()) {
-                ReplaceBitcastWithFromF16Polyfill(bitcast);
-            } else if (dst_deepest->Is<core::type::F16>()) {
-                ReplaceBitcastWithToF16Polyfill(bitcast);
+            } else if (src_deepest->Size() == 2 && dst_deepest->Size() == 2) {
+                // Same-width 16-bit bitcast (e.g. f16 <-> u16), scalar or vector.
+                // Must be checked before the f16 vector cases below.
+                Replace16BitBitcastWith16BitConstruct(bitcast);
+            } else if (src_deepest->Size() == 2 && src_type->Is<core::type::Vector>()) {
+                // 16-bit vector to 32-bit bitcast (e.g., vec2<f16> -> u32 or vec2<u16> -> u32)
+                ReplaceBitcastWithFrom16BitPolyfill(bitcast);
+            } else if (dst_deepest->Size() == 2 && dst_type->Is<core::type::Vector>()) {
+                // 32-bit to 16-bit vector bitcast (e.g., u32 -> vec2<f16> or u32 -> vec2<u16>)
+                ReplaceBitcastWithTo16BitPolyfill(bitcast);
+            } else if (src_deepest->Size() == 4 && dst_deepest->Size() == 8) {
+                // 32-bit vec2 to 64-bit bitcast (e.g. vec2<u32> -> u64)
+                ReplaceBitcastWithTo64BitPolyfill(bitcast);
             } else {
                 ReplaceBitcastWithAs(bitcast);
             }
         }
 
         // Replace the builtin calls that we found
-        for (auto* call : call_worklist) {
-            switch (call->Func()) {
-                case core::BuiltinFn::kAcosh:
-                    Acosh(call);
-                    break;
-                case core::BuiltinFn::kAsinh:
-                    Asinh(call);
-                    break;
-                case core::BuiltinFn::kAtanh:
-                    Atanh(call);
-                    break;
-                case core::BuiltinFn::kAtomicAdd:
-                    AtomicAdd(call);
-                    break;
-                case core::BuiltinFn::kAtomicSub:
-                    AtomicSub(call);
-                    break;
-                case core::BuiltinFn::kAtomicMin:
-                    AtomicMin(call);
-                    break;
-                case core::BuiltinFn::kAtomicMax:
-                    AtomicMax(call);
-                    break;
-                case core::BuiltinFn::kAtomicAnd:
-                    AtomicAnd(call);
-                    break;
-                case core::BuiltinFn::kAtomicOr:
-                    AtomicOr(call);
-                    break;
-                case core::BuiltinFn::kAtomicXor:
-                    AtomicXor(call);
-                    break;
-                case core::BuiltinFn::kAtomicLoad:
-                    AtomicLoad(call);
-                    break;
-                case core::BuiltinFn::kAtomicStore:
-                    AtomicStore(call);
-                    break;
-                case core::BuiltinFn::kAtomicExchange:
-                    AtomicExchange(call);
-                    break;
-                case core::BuiltinFn::kAtomicCompareExchangeWeak:
-                    AtomicCompareExchangeWeak(call);
-                    break;
-                case core::BuiltinFn::kCountOneBits:
-                    BitcastToIntOverloadCall(call);  // See crbug.com/tint/1550.
-                    break;
-                case core::BuiltinFn::kDot4I8Packed:
-                    Dot4I8Packed(call);
-                    break;
-                case core::BuiltinFn::kDot4U8Packed:
-                    Dot4U8Packed(call);
-                    break;
-                case core::BuiltinFn::kFrexp:
-                    Frexp(call);
-                    break;
-                case core::BuiltinFn::kModf:
-                    Modf(call);
-                    break;
-                case core::BuiltinFn::kPack2X16Float:
-                    Pack2x16Float(call);
-                    break;
-                case core::BuiltinFn::kPack2X16Snorm:
-                    Pack2x16Snorm(call);
-                    break;
-                case core::BuiltinFn::kPack2X16Unorm:
-                    Pack2x16Unorm(call);
-                    break;
-                case core::BuiltinFn::kPack4X8Snorm:
-                    Pack4x8Snorm(call);
-                    break;
-                case core::BuiltinFn::kPack4X8Unorm:
-                    Pack4x8Unorm(call);
-                    break;
-                case core::BuiltinFn::kPack4XI8:
-                    Pack4xI8(call);
-                    break;
-                case core::BuiltinFn::kPack4XU8:
-                    Pack4xU8(call);
-                    break;
-                case core::BuiltinFn::kPack4XI8Clamp:
-                    Pack4xI8Clamp(call);
-                    break;
-                case core::BuiltinFn::kQuantizeToF16:
-                    QuantizeToF16(call);
-                    break;
-                case core::BuiltinFn::kReverseBits:
-                    BitcastToIntOverloadCall(call);  // See crbug.com/tint/1550.
-                    break;
-                case core::BuiltinFn::kSelect:
-                    Select(call);
-                    break;
-                case core::BuiltinFn::kSign:
-                    Sign(call);
-                    break;
-                case core::BuiltinFn::kSubgroupAnd:
-                case core::BuiltinFn::kSubgroupOr:
-                case core::BuiltinFn::kSubgroupXor:
-                    BitcastToIntOverloadCall(call);
-                    break;
-                case core::BuiltinFn::kSubgroupShuffleXor:
-                case core::BuiltinFn::kSubgroupShuffleUp:
-                case core::BuiltinFn::kSubgroupShuffleDown:
-                    SubgroupShuffle(call);
-                    break;
-                case core::BuiltinFn::kSubgroupInclusiveAdd:
-                case core::BuiltinFn::kSubgroupInclusiveMul:
-                    SubgroupInclusive(call);
-                    break;
-                case core::BuiltinFn::kTextureDimensions:
-                    TextureDimensions(call);
-                    break;
-                case core::BuiltinFn::kTextureGather:
-                    TextureGather(call);
-                    break;
-                case core::BuiltinFn::kTextureGatherCompare:
-                    TextureGatherCompare(call);
-                    break;
-                case core::BuiltinFn::kTextureLoad:
-                    TextureLoad(call);
-                    break;
-                case core::BuiltinFn::kTextureNumLayers:
-                    TextureNumLayers(call);
-                    break;
-                case core::BuiltinFn::kTextureNumLevels:
-                    TextureNumLevels(call);
-                    break;
-                case core::BuiltinFn::kTextureNumSamples:
-                    TextureNumSamples(call);
-                    break;
-                case core::BuiltinFn::kTextureSample:
-                    TextureSample(call);
-                    break;
-                case core::BuiltinFn::kTextureSampleBias:
-                    TextureSampleBias(call);
-                    break;
-                case core::BuiltinFn::kTextureSampleCompare:
-                case core::BuiltinFn::kTextureSampleCompareLevel:
-                    TextureSampleCompare(call);
-                    break;
-                case core::BuiltinFn::kTextureSampleGrad:
-                    TextureSampleGrad(call);
-                    break;
-                case core::BuiltinFn::kTextureSampleLevel:
-                    TextureSampleLevel(call);
-                    break;
-                case core::BuiltinFn::kTextureStore:
-                    TextureStore(call);
-                    break;
-                case core::BuiltinFn::kTrunc:
-                    Trunc(call);
-                    break;
-                case core::BuiltinFn::kUnpack2X16Float:
-                    Unpack2x16Float(call);
-                    break;
-                case core::BuiltinFn::kUnpack2X16Snorm:
-                    Unpack2x16Snorm(call);
-                    break;
-                case core::BuiltinFn::kUnpack2X16Unorm:
-                    Unpack2x16Unorm(call);
-                    break;
-                case core::BuiltinFn::kUnpack4X8Snorm:
-                    Unpack4x8Snorm(call);
-                    break;
-                case core::BuiltinFn::kUnpack4X8Unorm:
-                    Unpack4x8Unorm(call);
-                    break;
-                case core::BuiltinFn::kUnpack4XI8:
-                    Unpack4xI8(call);
-                    break;
-                case core::BuiltinFn::kUnpack4XU8:
-                    Unpack4xU8(call);
-                    break;
-                default:
-                    TINT_IR_UNREACHABLE(ir);
-            }
+        for (auto& cb : call_worklist) {
+            cb();
         }
     }
 
@@ -368,7 +377,7 @@ struct State {
             auto* sub = b.Subtract(mul, one);
             auto* sqrt = b.Call(result_ty, core::BuiltinFn::kSqrt, sub);
             auto* add = b.Add(args[0], sqrt);
-            b.CallWithResult(call->DetachResult(), core::BuiltinFn::kLog, add);
+            b.CallReplaceResult(call->DetachResult(), core::BuiltinFn::kLog, add);
         });
         call->Destroy();
     }
@@ -387,7 +396,7 @@ struct State {
             auto* add_one = b.Add(mul, one);
             auto* sqrt = b.Call(result_ty, core::BuiltinFn::kSqrt, add_one);
             auto* add = b.Add(args[0], sqrt);
-            b.CallWithResult(call->DetachResult(), core::BuiltinFn::kLog, add);
+            b.CallReplaceResult(call->DetachResult(), core::BuiltinFn::kLog, add);
         });
         call->Destroy();
     }
@@ -409,9 +418,7 @@ struct State {
             auto* one_minus_x = b.Subtract(one, args[0]);
             auto* div = b.Divide(one_plus_x, one_minus_x);
             auto* log = b.Call(result_ty, core::BuiltinFn::kLog, div);
-            auto* mul = b.Multiply(log, half);
-
-            call->Result()->ReplaceAllUsesWith(mul->Result());
+            b.MultiplyReplaceResult(call->DetachResult(), log, half);
         });
         call->Destroy();
     }
@@ -484,7 +491,7 @@ struct State {
                                           args[0], cmp, args[2], original_value);
 
             auto* o = b.Load(original_value);
-            b.ConstructWithResult(call->DetachResult(), o, b.Equal(o, cmp));
+            b.ConstructReplaceResult(call->DetachResult(), o, b.Equal(o, cmp));
         });
         call->Destroy();
     }
@@ -519,13 +526,21 @@ struct State {
     }
 
     void Select(core::ir::CoreBuiltinCall* call) {
-        Vector<core::ir::Value*, 4> args = call->Args();
-        auto* ternary = b.ir.CreateInstruction<hlsl::ir::Ternary>(call->DetachResult(), args);
-        ternary->InsertBefore(call);
+        auto args = Vector<core::ir::Value*, 4>{call->Args()};
+        if (config.use_hlsl_2021_select) {
+            // HLSL's argument order for select is (condition, trueval, falseval), which is the
+            // opposite of WGSL/Tint.
+            auto* hlsl_select = b.CallWithResult<hlsl::ir::BuiltinCall>(
+                call->DetachResult(), hlsl::BuiltinFn::kSelect, args[2], args[1], args[0]);
+            hlsl_select->InsertBefore(call);
+        } else {
+            auto* ternary = b.ir.CreateInstruction<hlsl::ir::Ternary>(call->DetachResult(), args);
+            ternary->InsertBefore(call);
+        }
         call->Destroy();
     }
 
-    // HLSL's trunc is broken for very large/small float values.
+    // FXC's trunc is broken for very large/small float values.
     // See crbug.com/tint/1883
     //
     // Replace with:
@@ -536,9 +551,9 @@ struct State {
         auto* type = call->Result()->Type();
         Vector<core::ir::Value*, 4> args;
         b.InsertBefore(call, [&] {
-            args.Push(b.Call(type, core::BuiltinFn::kFloor, val)->Result());
-            args.Push(b.Call(type, core::BuiltinFn::kCeil, val)->Result());
-            args.Push(b.LessThan(val, b.Zero(type))->Result());
+            args.Push(b.Call(type, core::BuiltinFn::kFloor, val));
+            args.Push(b.Call(type, core::BuiltinFn::kCeil, val));
+            args.Push(b.LessThan(val, b.Zero(type)));
         });
         auto* trunc = b.ir.CreateInstruction<hlsl::ir::Ternary>(call->DetachResult(), args);
         trunc->InsertBefore(call);
@@ -546,13 +561,72 @@ struct State {
         call->Destroy();
     }
 
+    void PolyfillF16CeilFloor(core::ir::CoreBuiltinCall* call) {
+        auto* value = call->Args()[0];
+        auto* type = value->Type();
+        core::ir::Value* select = nullptr;
+        core::ir::Value* zero_select = nullptr;
+        b.InsertBefore(call, [&] {
+            auto* f32_type = ty.MatchWidth(ty.f32(), type);
+            auto* f32_value = b.Convert(f32_type, value);
+            auto* truncated = b.Call(f32_type, core::BuiltinFn::kTrunc, f32_value);
+            auto* one = b.MatchWidth(1_f, f32_type);
+
+            core::ir::Value* adjusted = nullptr;
+            core::ir::Value* condition = nullptr;
+            if (call->Func() == core::BuiltinFn::kFloor) {
+                adjusted = b.Subtract(truncated, one);
+                condition = b.LessThan(f32_value, truncated);
+            } else {
+                adjusted = b.Add(truncated, one);
+                condition = b.GreaterThan(f32_value, truncated);
+            }
+
+            select = b.Call(f32_type, core::BuiltinFn::kSelect, truncated, adjusted, condition);
+            auto* converted = b.Convert(type, select);
+            auto* is_zero = b.Equal(value, b.Zero(type));
+            zero_select = b.CallReplaceResult(call->DetachResult(), core::BuiltinFn::kSelect,
+                                              converted, value, is_zero);
+        });
+        call->Destroy();
+        if (auto* sel_inst = select->AsInstruction<core::ir::CoreBuiltinCall>()) {
+            Select(sel_inst);
+        }
+        if (auto* zero_inst = zero_select->AsInstruction<core::ir::CoreBuiltinCall>()) {
+            Select(zero_inst);
+        }
+    }
+
     /// Replaces an identity bitcast result with the value.
-    void ReplaceBitcastWithValue(core::ir::Bitcast* bitcast) {
-        bitcast->Result()->ReplaceAllUsesWith(bitcast->Val());
+    void ReplaceBitcastWithValue(core::ir::CoreBuiltinCall* bitcast) {
+        bitcast->Result()->ReplaceAllUsesWith(bitcast->Args()[0]);
         bitcast->Destroy();
     }
 
-    void ReplaceBitcastWithAs(core::ir::Bitcast* bitcast) {
+    /// Replaces a bitcast with a 16-bit as function for f16 <-> u16 conversions (scalar and vec).
+    /// Uses asuint16 (f16 -> u16) or asfloat16 (u16 -> f16).
+    void Replace16BitBitcastWith16BitConstruct(core::ir::CoreBuiltinCall* bitcast) {
+        auto* dst_type = bitcast->Result()->Type();
+        auto* dst_deepest = dst_type->DeepestElement();
+
+        BuiltinFn fn = BuiltinFn::kNone;
+        if (dst_deepest->Is<core::type::U16>()) {
+            fn = BuiltinFn::kAsuint16;
+        } else if (dst_deepest->Is<core::type::F16>()) {
+            fn = BuiltinFn::kAsfloat16;
+        } else {
+            TINT_IR_ICE(ir) << "unexpected 16-bit bitcast destination type: "
+                            << dst_deepest->FriendlyName();
+        }
+
+        b.InsertBefore(bitcast, [&] {
+            b.CallWithResult<hlsl::ir::BuiltinCall>(bitcast->DetachResult(), fn,
+                                                    bitcast->Args()[0]);
+        });
+        bitcast->Destroy();
+    }
+
+    void ReplaceBitcastWithAs(core::ir::CoreBuiltinCall* bitcast) {
         auto* dst_type = bitcast->Result()->Type();
         auto* dst_deepest = dst_type->DeepestElement();
 
@@ -568,190 +642,192 @@ struct State {
         // splats by wrapping it with an explicit vector constructor.
         // e.g. asuint(123.xx) -> asuint(int2(123.xx)))
         bool castToSrcType = false;
-        auto* src_type = bitcast->Val()->Type();
+        auto* src_type = bitcast->Args()[0]->Type();
         if (src_type->IsIntegerVector()) {
-            if (auto* c = bitcast->Val()->As<core::ir::Constant>()) {
+            if (auto* c = bitcast->Args()[0]->As<core::ir::Constant>()) {
                 castToSrcType = c->Value()->Is<core::constant::Splat>();
             }
         }
 
         b.InsertBefore(bitcast, [&] {
-            auto* source = bitcast->Val();
+            auto* source = bitcast->Args()[0];
             if (castToSrcType) {
-                source = b.Construct(src_type, source)->Result();
+                source = b.Construct(src_type, source);
             }
             b.CallWithResult<hlsl::ir::BuiltinCall>(bitcast->DetachResult(), fn, source);
         });
         bitcast->Destroy();
     }
 
-    // Bitcast f16 types to others by converting the given f16 value to f32 and call
-    // f32tof16 to get the bits. This should be safe, because the conversion is precise
-    // for finite and infinite f16 value as they are exactly representable by f32.
-    core::ir::Function* CreateBitcastFromF16(const core::type::Type* src_type,
-                                             const core::type::Type* dst_type) {
+    // Bitcast 16-bit vector types (f16 or u16) to 32-bit types by bitcasting via u16.
+    core::ir::Function* CreateBitcastFrom16Bit(const core::type::Type* src_type,
+                                               const core::type::Type* dst_type) {
         return bitcast_funcs_.GetOrAdd(
             BitcastType{{src_type, dst_type}}, [&]() -> core::ir::Function* {
                 TINT_IR_ASSERT(ir, src_type->Is<core::type::Vector>());
 
-                // Generate a helper function that performs the following (in HLSL):
-                //
-                // uint tint_bitcast_from_f16(vector<float16_t, 2> src) {
-                //   uint2 r = f32tof16(float2(src));
-                //   return uint((r.x & 65535u) | ((r.y & 65535u) << 16u));
-                // }
+                ir.properties.Add(core::ir::Property::kAllow16BitIntegers);
+                auto* src_vec = src_type->As<core::type::Vector>();
+                bool src_is_u16 = src_vec->Type()->Is<core::type::U16>();
+                auto* u16_vec_ty = src_is_u16 ? src_type : ty.MatchWidth(ty.u16(), src_vec);
 
-                auto fn_name = b.ir.symbols.New(std::string("tint_bitcast_from_f16")).Name();
+                // Generates a helper that packs a 16-bit vector into a 32-bit scalar.
+                // For a vec2<u16> source, the emitted HLSL looks like:
+                //
+                //   uint tint_bitcast_from_u16(vector<uint16_t, 2> src) {
+                //     uint2 r_uint = (uint2(src) & 65535u.xx) << uint2(0u, 16u);
+                //     return r_uint.x | r_uint.y;
+                //   }
+                //
+                // For a vec2<f16> source, asuint16 is applied first:
+                //
+                //   uint tint_bitcast_from_f16(vector<float16_t, 2> src) {
+                //     vector<uint16_t, 2> r = asuint16(src);
+                //     uint2 r_uint = (uint2(r) & 65535u.xx) << uint2(0u, 16u);
+                //     return r_uint.x | r_uint.y;
+                //   }
+
+                auto fn_name =
+                    b.ir.symbols.New(src_is_u16 ? "tint_bitcast_from_u16" : "tint_bitcast_from_f16")
+                        .Name();
 
                 auto* f = b.Function(fn_name, dst_type);
                 auto* src = b.FunctionParam("src", src_type);
                 f->SetParams({src});
 
                 b.Append(f->Block(), [&] {
-                    auto* src_vec = src_type->As<core::type::Vector>();
-
-                    auto* cast = b.Convert(ty.vec(ty.f32(), src_vec->Width()), src);
-                    auto* r =
-                        b.Let("r", b.Call<hlsl::ir::BuiltinCall>(ty.vec(ty.u32(), src_vec->Width()),
-                                                                 hlsl::BuiltinFn::kF32Tof16, cast));
-
-                    auto* x = b.And(b.Swizzle(ty.u32(), r, {0_u}), 0xffff_u);
-                    auto* y = b.ShiftLeft(b.And(b.Swizzle(ty.u32(), r, {1_u}), 0xffff_u), 16_u);
-
-                    auto* s = b.Or(x, y);
-                    core::ir::InstructionResult* result = nullptr;
-
-                    switch (src_vec->Width()) {
-                        case 2: {
-                            result = s->Result();
-                            break;
-                        }
-                        case 4: {
-                            auto* z = b.And(b.Swizzle(ty.u32(), r, {2_u}), 0xffff_u);
-                            auto* w =
-                                b.ShiftLeft(b.And(b.Swizzle(ty.u32(), r, {3_u}), 0xffff_u), 16_u);
-
-                            auto* t = b.Or(z, w);
-                            auto* cons = b.Construct(ty.vec2u(), s, t);
-                            result = cons->Result();
-                            break;
-                        }
-                        default:
-                            TINT_IR_UNREACHABLE(ir);
+                    // If source is f16, first reinterpret as u16 via asuint16
+                    core::ir::Value* u16_src = src;
+                    if (!src_is_u16) {
+                        u16_src =
+                            b.Call<hlsl::ir::BuiltinCall>(u16_vec_ty, BuiltinFn::kAsuint16, src)
+                                ->Result();
                     }
 
-                    tint::Switch(
-                        dst_type->DeepestElement(),  //
-                        [&](const core::type::F32*) {
-                            b.Return(f, b.Call<hlsl::ir::BuiltinCall>(dst_type, BuiltinFn::kAsfloat,
-                                                                      result));
-                        },
-                        [&](const core::type::I32*) {
-                            b.Return(f, b.Call<hlsl::ir::BuiltinCall>(dst_type, BuiltinFn::kAsint,
-                                                                      result));
-                        },
-                        [&](const core::type::U32*) { b.Return(f, result); },  //
-                        TINT_ICE_ON_NO_MATCH);
+                    auto* uint_src_ty = ty.MatchWidth(ty.u32(), src_type);
+                    core::ir::Value* v = b.Convert(uint_src_ty, u16_src);
+
+                    auto width = src_vec->Width();
+                    v = b.And(v, b.Splat(uint_src_ty, 0xffff_u));
+                    if (width == 2) {
+                        v = b.ShiftLeft(v, b.Construct(uint_src_ty, 0_u, 16_u));
+                        auto* a1 = b.Access(ty.u32(), v, 0_u);
+                        v = b.Or(a1, b.Access(ty.u32(), v, 1_u));
+                    } else {
+                        v = b.ShiftLeft(v, b.Construct(uint_src_ty, 0_u, 16_u, 0_u, 16_u));
+                        auto* a1 = b.Access(ty.u32(), v, 0_u);
+                        auto* v1 = b.Or(a1, b.Access(ty.u32(), v, 1_u));
+                        auto* a2 = b.Access(ty.u32(), v, 2_u);
+                        auto* v2 = b.Or(a2, b.Access(ty.u32(), v, 3_u));
+                        v = b.Construct(ty.vec2(ty.u32()), v1, v2);
+                    }
+                    if (dst_type->DeepestElement()->Is<core::type::F32>()) {
+                        v = b.Call<hlsl::ir::BuiltinCall>(dst_type, BuiltinFn::kAsfloat, v)
+                                ->Result();
+                    } else if (dst_type->DeepestElement()->Is<core::type::I32>()) {
+                        v = b.Call<hlsl::ir::BuiltinCall>(dst_type, BuiltinFn::kAsint, v)->Result();
+                    }
+                    b.Return(f, v);
                 });
                 return f;
             });
     }
 
-    /// Replaces a bitcast with a call to the FromF16 polyfill for the given types
-    void ReplaceBitcastWithFromF16Polyfill(core::ir::Bitcast* bitcast) {
-        auto* src_type = bitcast->Val()->Type();
+    /// Replaces a bitcast with a call to the From16Bit polyfill for the given types
+    void ReplaceBitcastWithFrom16BitPolyfill(core::ir::CoreBuiltinCall* bitcast) {
+        auto* src_type = bitcast->Args()[0]->Type();
         auto* dst_type = bitcast->Result()->Type();
 
-        auto* f = CreateBitcastFromF16(src_type, dst_type);
+        auto* f = CreateBitcastFrom16Bit(src_type, dst_type);
         b.InsertBefore(bitcast,
                        [&] { b.CallWithResult(bitcast->DetachResult(), f, bitcast->Args()[0]); });
         bitcast->Destroy();
     }
 
-    // Bitcast other types to f16 types by reinterpreting their bits as f16 using
-    // f16tof32, and convert the result f32 to f16. This should be safe, because the
-    // conversion is precise for finite and infinite f16 result value as they are
-    // exactly representable by f32.
-    core::ir::Function* CreateBitcastToF16(const core::type::Type* src_type,
-                                           const core::type::Type* dst_type) {
+    // Bitcast 32-bit types to 16-bit vector types (f16 or u16) by reinterpreting
+    // their bits as u16.
+    core::ir::Function* CreateBitcastTo16Bit(const core::type::Type* src_type,
+                                             const core::type::Type* dst_type) {
         return bitcast_funcs_.GetOrAdd(
             BitcastType{{src_type, dst_type}}, [&]() -> core::ir::Function* {
                 TINT_IR_ASSERT(ir, dst_type->Is<core::type::Vector>());
 
-                // Generate a helper function that performs the following (in HLSL):
-                //
-                // vector<float16_t, 2> tint_bitcast_to_f16(float src) {
-                //   uint v = asuint(src);
-                //   float t_low = f16tof32(v & 65535u);
-                //   float t_high = f16tof32((v >> 16u) & 65535u);
-                //   return vector<float16_t, 2>(t_low.x, t_high.x);
-                // }
+                ir.properties.Add(core::ir::Property::kAllow16BitIntegers);
+                auto* dst_vec = dst_type->As<core::type::Vector>();
+                bool dst_is_u16 = dst_vec->Type()->Is<core::type::U16>();
+                auto* u16_vec_ty = dst_is_u16 ? dst_type : ty.MatchWidth(ty.u16(), dst_vec);
 
-                auto fn_name = b.ir.symbols.New(std::string("tint_bitcast_to_f16")).Name();
+                // Generates a helper that converts via 16-bit integers.
+                // For a vec2<u16> destination, the emitted HLSL looks like:
+                //
+                //   vector<uint16_t, 2> tint_bitcast_to_u16(float src) {
+                //     uint v = asuint(src);
+                //     uint2 v2 = v.xx;
+                //     vector<uint16_t, 2> r =
+                //       vector<uint16_t, 2>((v2 >> uint2(0u, 16u)) & (65535u).xx);
+                //     return r;
+                //   }
+                //
+                // For a vec2<f16> destination, asfloat16 is applied to the final u16 result:
+                //
+                //   vector<float16_t, 2> tint_bitcast_to_f16(float src) {
+                //     uint v = asuint(src);
+                //     uint2 v2 = v.xx;
+                //     vector<uint16_t, 2> r =
+                //       vector<uint16_t, 2>((v2 >> uint2(0u, 16u)) & (65535u).xx);
+                //     return asfloat16(r);
+                //   }
+
+                auto fn_name =
+                    b.ir.symbols.New(dst_is_u16 ? "tint_bitcast_to_u16" : "tint_bitcast_to_f16")
+                        .Name();
 
                 auto* f = b.Function(fn_name, dst_type);
                 auto* src = b.FunctionParam("src", src_type);
                 f->SetParams({src});
                 b.Append(f->Block(), [&] {
                     const core::type::Type* uint_ty = ty.MatchWidth(ty.u32(), src_type);
-                    const core::type::Type* float_ty = ty.MatchWidth(ty.f32(), src_type);
 
-                    core::ir::Instruction* v = nullptr;
+                    core::ir::Value* v = nullptr;
                     tint::Switch(
-                        src_type->DeepestElement(),                            //
-                        [&](const core::type::U32*) { v = b.Let("v", src); },  //
+                        src_type->DeepestElement(),                                      //
+                        [&](const core::type::U32*) { v = b.Let("v", src)->Result(); },  //
                         [&](const core::type::I32*) {
                             v = b.Let("v", b.Call<hlsl::ir::BuiltinCall>(uint_ty,
-                                                                         BuiltinFn::kAsuint, src));
+                                                                         BuiltinFn::kAsuint, src))
+                                    ->Result();
                         },
                         [&](const core::type::F32*) {
                             v = b.Let("v", b.Call<hlsl::ir::BuiltinCall>(uint_ty,
-                                                                         BuiltinFn::kAsuint, src));
+                                                                         BuiltinFn::kAsuint, src))
+                                    ->Result();
                         },
                         TINT_ICE_ON_NO_MATCH);
 
                     bool src_vec = src_type->Is<core::type::Vector>();
+                    const core::type::Type* uint_dst_ty = ty.MatchWidth(ty.u32(), dst_type);
 
-                    core::ir::Value* mask = nullptr;
-                    core::ir::Value* shift = nullptr;
+                    // v is now the uint bitcast of src
+                    core::ir::Value* shifted = nullptr;
+                    core::ir::Value* masked = nullptr;
+                    // Make a double wide src and then shift and mask the result to produce u16
+                    // values.
                     if (src_vec) {
-                        mask = b.Let("mask", b.Splat(uint_ty, 0xffff_u))->Result();
-                        shift = b.Let("shift", b.Splat(uint_ty, 16_u))->Result();
+                        // Since the src was vec2, we swizzle so the value is
+                        // equivalent to: src.xxyy
+                        auto* swizzle = b.Swizzle(uint_dst_ty, v, {0_u, 0_u, 1_u, 1_u});
+                        shifted =
+                            b.ShiftRight(swizzle, b.Construct(uint_dst_ty, 0_u, 16_u, 0_u, 16_u));
                     } else {
-                        mask = b.Value(b.Constant(0xffff_u));
-                        shift = b.Value(b.Constant(16_u));
+                        v = b.Construct(uint_dst_ty, v, v);
+                        shifted = b.ShiftRight(v, b.Construct(uint_dst_ty, 0_u, 16_u));
                     }
-
-                    auto* l = b.And(v, mask);
-                    auto* t_low = b.Let(
-                        "t_low", b.Call<hlsl::ir::BuiltinCall>(float_ty, BuiltinFn::kF16Tof32, l));
-
-                    auto* h = b.And(b.ShiftRight(v, shift), mask);
-                    auto* t_high = b.Let(
-                        "t_high", b.Call<hlsl::ir::BuiltinCall>(float_ty, BuiltinFn::kF16Tof32, h));
-
-                    core::ir::Instruction* x = nullptr;
-                    core::ir::Instruction* y = nullptr;
-                    if (src_vec) {
-                        x = b.Swizzle(ty.f32(), t_low, {0_u});
-                        y = b.Swizzle(ty.f32(), t_high, {0_u});
-                    } else {
-                        x = t_low;
-                        y = t_high;
+                    masked = b.And(shifted, b.Splat(uint_dst_ty, 0xffff_u));
+                    core::ir::Instruction* v16 = b.Let("v16", b.Convert(u16_vec_ty, masked));
+                    if (!dst_is_u16) {
+                        v16 = b.Call<hlsl::ir::BuiltinCall>(dst_type, BuiltinFn::kAsfloat16, v16);
                     }
-                    x = b.Convert(ty.f16(), x);
-                    y = b.Convert(ty.f16(), y);
-
-                    auto dst_width = dst_type->As<core::type::Vector>()->Width();
-                    TINT_IR_ASSERT(ir, dst_width == 2 || dst_width == 4);
-
-                    if (dst_width == 2) {
-                        b.Return(f, b.Construct(dst_type, x, y));
-                    } else {
-                        auto* z = b.Convert(ty.f16(), b.Swizzle(ty.f32(), t_low, {1_u}));
-                        auto* w = b.Convert(ty.f16(), b.Swizzle(ty.f32(), t_high, {1_u}));
-                        b.Return(f, b.Construct(dst_type, x, y, z, w));
-                    }
+                    b.Return(f, v16);
                 });
                 return f;
             });
@@ -760,11 +836,11 @@ struct State {
     // The HLSL `sign` method always returns an `int` result (scalar or vector). In WGSL the result
     // is expected to be the same type as the argument. This injects a cast to the expected WGSL
     // result type after the call to `hlsl.sign`.
-    core::ir::Instruction* BuildSign(core::ir::Value* value) {
+    core::ir::Value* BuildSign(core::ir::Value* value) {
         const auto* result_ty = ty.MatchWidth(ty.i32(), value->Type());
-        core::ir::Instruction* sign =
-            b.Call<hlsl::ir::BuiltinCall>(result_ty, hlsl::BuiltinFn::kSign, value);
-        if (sign->Result()->Type() != value->Type()) {
+        core::ir::Value* sign =
+            b.Call<hlsl::ir::BuiltinCall>(result_ty, hlsl::BuiltinFn::kSign, value)->Result();
+        if (sign->Type() != value->Type()) {
             sign = b.Convert(value->Type(), sign);
         }
         return sign;
@@ -773,19 +849,37 @@ struct State {
     void Sign(core::ir::BuiltinCall* call) {
         b.InsertBefore(call, [&] {
             auto* sign = BuildSign(call->Args()[0]);
-            sign->SetResult(call->DetachResult());
+            call->Result()->ReplaceAllUsesWith(sign);
         });
         call->Destroy();
     }
 
-    /// Replaces a bitcast with a call to the ToF16 polyfill for the given types
-    void ReplaceBitcastWithToF16Polyfill(core::ir::Bitcast* bitcast) {
-        auto* src_type = bitcast->Val()->Type();
+    /// Replaces a bitcast with a call to the To16Bit polyfill for the given types
+    void ReplaceBitcastWithTo16BitPolyfill(core::ir::CoreBuiltinCall* bitcast) {
+        auto* src_type = bitcast->Args()[0]->Type();
         auto* dst_type = bitcast->Result()->Type();
 
-        auto* f = CreateBitcastToF16(src_type, dst_type);
+        auto* f = CreateBitcastTo16Bit(src_type, dst_type);
         b.InsertBefore(bitcast,
                        [&] { b.CallWithResult(bitcast->DetachResult(), f, bitcast->Args()[0]); });
+        bitcast->Destroy();
+    }
+
+    void ReplaceBitcastWithTo64BitPolyfill(core::ir::CoreBuiltinCall* bitcast) {
+        auto* src = bitcast->Args()[0];
+        auto* dst_type = bitcast->Result()->Type();
+        TINT_IR_ASSERT(ir, dst_type->Is<core::type::U64>());
+        TINT_IR_ASSERT(ir, src->Type()->Is<core::type::Vector>());
+
+        b.InsertBefore(bitcast, [&] {
+            // Bitcast the source to vec2<u32> to ensure we can swizzle it correctly.
+            auto* low = b.Swizzle(ty.u32(), src, {0u});
+            auto* high = b.Swizzle(ty.u32(), src, {1u});
+            auto* low64 = b.Convert(ty.u64(), low);
+            auto* high64 = b.Convert(ty.u64(), high);
+            auto* shifted_high = b.ShiftLeft(high64, b.Convert(ty.u64(), b.Constant(u32(32))));
+            b.OrReplaceResult(bitcast->DetachResult(), shifted_high, low64);
+        });
         bitcast->Destroy();
     }
 
@@ -796,18 +890,21 @@ struct State {
         TINT_IR_ASSERT(ir, tex_type->Dim() == core::type::TextureDimension::k2dArray ||
                                tex_type->Dim() == core::type::TextureDimension::kCubeArray);
 
-        const core::type::Type* query_ty = ty.vec(ty.u32(), 3);
+        const bool is_ms = tex_type->Is<core::type::MultisampledTexture>();
+        const uint32_t query_size = is_ms ? 4u : 3u;
+        const core::type::Type* query_ty = ty.vec(ty.u32(), query_size);
         b.InsertBefore(call, [&] {
-            core::ir::Instruction* out = b.Var(ty.ptr(function, query_ty));
+            core::ir::Value* out = b.Var(ty.ptr(function, query_ty))->Result();
 
-            b.MemberCall<hlsl::ir::MemberBuiltinCall>(
-                ty.void_(), hlsl::BuiltinFn::kGetDimensions, tex,
-                Vector<core::ir::Value*, 3>{b.Access(ty.ptr<function, u32>(), out, 0_u)->Result(),
-                                            b.Access(ty.ptr<function, u32>(), out, 1_u)->Result(),
-                                            b.Access(ty.ptr<function, u32>(), out, 2_u)->Result()});
+            Vector<core::ir::Value*, 4> args;
+            for (uint32_t i = 0; i < query_size; ++i) {
+                args.Push(b.Access(ty.ptr<function, u32>(), out, u32(i)));
+            }
+            b.MemberCall<hlsl::ir::MemberBuiltinCall>(ty.void_(), hlsl::BuiltinFn::kGetDimensions,
+                                                      tex, args);
 
             out = b.Swizzle(ty.u32(), b.Load(out), {2_u});
-            call->Result()->ReplaceAllUsesWith(out->Result());
+            call->Result()->ReplaceAllUsesWith(out);
         });
         call->Destroy();
     }
@@ -844,16 +941,16 @@ struct State {
             // Pass the `level` parameter so the `num_levels` overload is used.
             args.Push(b.Value(0_u));
 
-            core::ir::Instruction* out = b.Var(ty.ptr(function, query_ty));
+            core::ir::Value* out = b.Var(ty.ptr(function, query_ty))->Result();
             for (uint32_t i = 0; i < query_size; ++i) {
-                args.Push(b.Access(ty.ptr<function, u32>(), out, u32(i))->Result());
+                args.Push(b.Access(ty.ptr<function, u32>(), out, u32(i)));
             }
 
             b.MemberCall<hlsl::ir::MemberBuiltinCall>(ty.void_(), hlsl::BuiltinFn::kGetDimensions,
                                                       tex, args);
 
             out = b.Swizzle(ty.u32(), b.Load(out), swizzle);
-            call->Result()->ReplaceAllUsesWith(out->Result());
+            call->Result()->ReplaceAllUsesWith(out);
         });
         call->Destroy();
     }
@@ -861,7 +958,7 @@ struct State {
     void TextureDimensions(core::ir::CoreBuiltinCall* call) {
         auto* tex = call->Args()[0];
         auto* tex_type = tex->Type()->As<core::type::Texture>();
-        bool has_level = call->Args().Length() > 1;
+        bool has_level = call->Args().size() > 1;
         bool is_ms =
             tex_type
                 ->IsAnyOf<core::type::MultisampledTexture, core::type::DepthMultisampledTexture>();
@@ -920,22 +1017,22 @@ struct State {
                 args.Push(b.InsertConvertIfNeeded(ty.u32(), call->Args()[1]));
             }
 
-            core::ir::Instruction* query = b.Var(ty.ptr(function, query_ty));
+            core::ir::Value* query = b.Var(ty.ptr(function, query_ty))->Result();
             if (query_size == 1) {
-                args.Push(query->Result());
+                args.Push(query);
             } else {
                 for (uint32_t i = 0; i < query_size; ++i) {
-                    args.Push(b.Access(ty.ptr<function, u32>(), query, u32(i))->Result());
+                    args.Push(b.Access(ty.ptr<function, u32>(), query, u32(i)));
                 }
             }
 
             b.MemberCall<hlsl::ir::MemberBuiltinCall>(ty.void_(), hlsl::BuiltinFn::kGetDimensions,
                                                       tex, args);
-            query = b.Load(query);
+            query = b.Load(query)->Result();
             if (!swizzle.IsEmpty()) {
                 query = b.Swizzle(ty.MatchWidth(ty.u32(), swizzle.Length()), query, swizzle);
             }
-            call->Result()->ReplaceAllUsesWith(query->Result());
+            call->Result()->ReplaceAllUsesWith(query);
         });
         call->Destroy();
     }
@@ -944,22 +1041,26 @@ struct State {
         auto* tex = call->Args()[0];
         auto* tex_type = tex->Type()->As<core::type::Texture>();
 
-        TINT_IR_ASSERT(ir, tex_type->Dim() == core::type::TextureDimension::k2d);
+        const bool is_array = tex_type->Dim() == core::type::TextureDimension::k2dArray;
+        TINT_IR_ASSERT(ir, tex_type->Dim() == core::type::TextureDimension::k2d || is_array);
         TINT_IR_ASSERT(ir, (tex_type->IsAnyOf<core::type::DepthMultisampledTexture,
                                               core::type::MultisampledTexture>()));
 
-        const core::type::Type* query_ty = ty.vec(ty.u32(), 3);
+        const uint32_t query_size = is_array ? 4u : 3u;
+        const core::type::Type* query_ty = ty.vec(ty.u32(), query_size);
         b.InsertBefore(call, [&] {
-            core::ir::Instruction* out = b.Var(ty.ptr(function, query_ty));
+            core::ir::Value* out = b.Var(ty.ptr(function, query_ty))->Result();
 
-            b.MemberCall<hlsl::ir::MemberBuiltinCall>(
-                ty.void_(), hlsl::BuiltinFn::kGetDimensions, tex,
-                Vector<core::ir::Value*, 3>{b.Access(ty.ptr<function, u32>(), out, 0_u)->Result(),
-                                            b.Access(ty.ptr<function, u32>(), out, 1_u)->Result(),
-                                            b.Access(ty.ptr<function, u32>(), out, 2_u)->Result()});
+            Vector<core::ir::Value*, 4> args;
+            for (uint32_t i = 0; i < query_size; ++i) {
+                args.Push(b.Access(ty.ptr<function, u32>(), out, u32(i)));
+            }
+            b.MemberCall<hlsl::ir::MemberBuiltinCall>(ty.void_(), hlsl::BuiltinFn::kGetDimensions,
+                                                      tex, args);
 
-            out = b.Swizzle(ty.u32(), b.Load(out), {2_u});
-            call->Result()->ReplaceAllUsesWith(out->Result());
+            auto* query = b.Load(out);
+            out = is_array ? b.Swizzle(ty.u32(), query, {3_u}) : b.Swizzle(ty.u32(), query, {2_u});
+            call->Result()->ReplaceAllUsesWith(out);
         });
         call->Destroy();
     }
@@ -999,7 +1100,7 @@ struct State {
                     } else {
                         lvl = b.InsertConvertIfNeeded(ty.i32(), args[2]);
                     }
-                    call_args.Push(b.Construct(ty.vec2i(), coord, lvl)->Result());
+                    call_args.Push(b.Construct(ty.vec2i(), coord, lvl));
                     break;
                 }
                 case core::type::TextureDimension::k2d: {
@@ -1015,20 +1116,25 @@ struct State {
                         } else {
                             lvl = b.InsertConvertIfNeeded(ty.i32(), args[2]);
                         }
-                        call_args.Push(b.Construct(ty.vec3i(), coord, lvl)->Result());
+                        call_args.Push(b.Construct(ty.vec3i(), coord, lvl));
                     }
                     break;
                 }
                 case core::type::TextureDimension::k2dArray: {
                     auto* coord = b.InsertConvertIfNeeded(ty.vec2i(), args[1]);
                     auto* ary_idx = b.InsertConvertIfNeeded(ty.i32(), args[2]);
-                    core::ir::Value* lvl = nullptr;
-                    if (is_storage) {
-                        lvl = b.Constant(0_i);
+                    if (is_ms) {
+                        call_args.Push(b.Construct(ty.vec3i(), coord, ary_idx));
+                        call_args.Push(b.InsertConvertIfNeeded(ty.i32(), args[3]));
                     } else {
-                        lvl = b.InsertConvertIfNeeded(ty.i32(), args[3]);
+                        core::ir::Value* lvl = nullptr;
+                        if (is_storage) {
+                            lvl = b.Constant(0_i);
+                        } else {
+                            lvl = b.InsertConvertIfNeeded(ty.i32(), args[3]);
+                        }
+                        call_args.Push(b.Construct(ty.vec4i(), coord, ary_idx, lvl));
                     }
-                    call_args.Push(b.Construct(ty.vec4i(), coord, ary_idx, lvl)->Result());
                     break;
                 }
                 case core::type::TextureDimension::k3d: {
@@ -1039,7 +1145,7 @@ struct State {
                     } else {
                         lvl = b.InsertConvertIfNeeded(ty.i32(), args[2]);
                     }
-                    call_args.Push(b.Construct(ty.vec4i(), coord, lvl)->Result());
+                    call_args.Push(b.Construct(ty.vec4i(), coord, lvl));
                     break;
                 }
                 default:
@@ -1049,15 +1155,15 @@ struct State {
             auto* member_call = b.MemberCall<hlsl::ir::MemberBuiltinCall>(
                 ty.vec4(ret_ty), hlsl::BuiltinFn::kLoad, tex, call_args);
 
-            core::ir::Instruction* builtin = member_call;
+            core::ir::Value* builtin = member_call->Result();
             if (!swizzle.IsEmpty()) {
                 builtin = b.Swizzle(ty.f32(), builtin, swizzle);
             } else {
-                if (builtin->Result()->Type() != call->Result()->Type()) {
+                if (builtin->Type() != call->Result()->Type()) {
                     builtin = b.Convert(call->Result()->Type(), builtin);
                 }
             }
-            call->Result()->ReplaceAllUsesWith(builtin->Result());
+            call->Result()->ReplaceAllUsesWith(builtin);
         });
 
         call->Destroy();
@@ -1085,7 +1191,7 @@ struct State {
                 auto* new_coords =
                     b.Construct(ty.vec3(coords_ty->Type()), coords,
                                 b.InsertConvertIfNeeded(coords_ty->Type(), array_idx));
-                new_args.Push(new_coords->Result());
+                new_args.Push(new_coords);
 
                 new_args.Push(args[3]);
             } else {
@@ -1150,21 +1256,19 @@ struct State {
                     offset_idx = is_depth ? 3 : 4;
                     break;
                 case core::type::TextureDimension::k2dArray:
-                    params.Push(
-                        b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[idx++]))->Result());
+                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[idx++])));
                     offset_idx = is_depth ? 4 : 5;
                     break;
                 case core::type::TextureDimension::kCube:
                     params.Push(coords);
                     break;
                 case core::type::TextureDimension::kCubeArray:
-                    params.Push(
-                        b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[idx++]))->Result());
+                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[idx++])));
                     break;
                 default:
                     TINT_IR_UNREACHABLE(ir);
             }
-            if (offset_idx > 0 && args.Length() > offset_idx) {
+            if (offset_idx > 0 && args.size() > offset_idx) {
                 params.Push(args[offset_idx]);
             }
 
@@ -1192,14 +1296,14 @@ struct State {
                     params.Push(coords);
                     params.Push(args[3]);
 
-                    if (args.Length() > 4) {
+                    if (args.size() > 4) {
                         params.Push(args[4]);
                     }
                     break;
                 case core::type::TextureDimension::k2dArray:
-                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3])));
                     params.Push(args[4]);
-                    if (args.Length() > 5) {
+                    if (args.size() > 5) {
                         params.Push(args[5]);
                     }
                     break;
@@ -1208,7 +1312,7 @@ struct State {
                     params.Push(args[3]);
                     break;
                 case core::type::TextureDimension::kCubeArray:
-                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3])));
                     params.Push(args[4]);
                     break;
                 default:
@@ -1239,38 +1343,39 @@ struct State {
                 case core::type::TextureDimension::k2d:
                     params.Push(coords);
 
-                    if (args.Length() > 3) {
+                    if (args.size() > 3) {
                         params.Push(args[3]);
                     }
                     break;
                 case core::type::TextureDimension::k2dArray:
-                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3]))->Result());
-                    if (args.Length() > 4) {
+                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3])));
+                    if (args.size() > 4) {
                         params.Push(args[4]);
                     }
                     break;
                 case core::type::TextureDimension::k3d:
                 case core::type::TextureDimension::kCube:
                     params.Push(coords);
-                    if (args.Length() > 3) {
+                    if (args.size() > 3) {
                         params.Push(args[3]);
                     }
                     break;
                 case core::type::TextureDimension::kCubeArray:
-                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3])));
                     break;
                 default:
                     TINT_IR_UNREACHABLE(ir);
             }
 
-            core::ir::Instruction* result = b.MemberCall<hlsl::ir::MemberBuiltinCall>(
-                ty.vec4f(), hlsl::BuiltinFn::kSample, tex, params);
+            core::ir::Value* result = b.MemberCall<hlsl::ir::MemberBuiltinCall>(
+                                           ty.vec4f(), hlsl::BuiltinFn::kSample, tex, params)
+                                          ->Result();
             if (tex_type->Is<core::type::DepthTexture>()) {
                 // Swizzle x from vec4 result for depth textures
                 TINT_IR_ASSERT(ir, call->Result()->Type()->Is<core::type::F32>());
                 result = b.Swizzle(ty.f32(), result, {0});
             }
-            result->SetResult(call->DetachResult());
+            call->Result()->ReplaceAllUsesWith(result);
         });
         call->Destroy();
     }
@@ -1293,15 +1398,15 @@ struct State {
                     params.Push(coords);
                     params.Push(args[3]);  // bias
 
-                    if (args.Length() > 4) {
+                    if (args.size() > 4) {
                         params.Push(args[4]);
                     }
                     break;
                 case core::type::TextureDimension::k2dArray:
-                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3])));
                     params.Push(args[4]);
 
-                    if (args.Length() > 5) {
+                    if (args.size() > 5) {
                         params.Push(args[5]);
                     }
                     break;
@@ -1310,12 +1415,12 @@ struct State {
                     params.Push(coords);
                     params.Push(args[3]);
 
-                    if (args.Length() > 4) {
+                    if (args.size() > 4) {
                         params.Push(args[4]);
                     }
                     break;
                 case core::type::TextureDimension::kCubeArray:
-                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3])));
                     params.Push(args[4]);
                     break;
                 default:
@@ -1350,15 +1455,15 @@ struct State {
                     params.Push(coords);
                     params.Push(args[3]);  // depth ref
 
-                    if (args.Length() > 4) {
+                    if (args.size() > 4) {
                         params.Push(args[4]);
                     }
                     break;
                 case core::type::TextureDimension::k2dArray:
-                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3])));
                     params.Push(args[4]);
 
-                    if (args.Length() > 5) {
+                    if (args.size() > 5) {
                         params.Push(args[5]);
                     }
                     break;
@@ -1366,12 +1471,12 @@ struct State {
                     params.Push(coords);
                     params.Push(args[3]);
 
-                    if (args.Length() > 4) {
+                    if (args.size() > 4) {
                         params.Push(args[4]);
                     }
                     break;
                 case core::type::TextureDimension::kCubeArray:
-                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3])));
                     params.Push(args[4]);
                     break;
                 default:
@@ -1403,16 +1508,16 @@ struct State {
                     params.Push(args[3]);  // ddx
                     params.Push(args[4]);  // ddy
 
-                    if (args.Length() > 5) {
+                    if (args.size() > 5) {
                         params.Push(args[5]);
                     }
                     break;
                 case core::type::TextureDimension::k2dArray:
-                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3])));
                     params.Push(args[4]);
                     params.Push(args[5]);
 
-                    if (args.Length() > 6) {
+                    if (args.size() > 6) {
                         params.Push(args[6]);
                     }
                     break;
@@ -1422,12 +1527,12 @@ struct State {
                     params.Push(args[3]);
                     params.Push(args[4]);
 
-                    if (args.Length() > 5) {
+                    if (args.size() > 5) {
                         params.Push(args[5]);
                     }
                     break;
                 case core::type::TextureDimension::kCubeArray:
-                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3])));
                     params.Push(args[4]);
                     params.Push(args[5]);
                     break;
@@ -1460,14 +1565,14 @@ struct State {
                     params.Push(coords);
                     params.Push(b.InsertConvertIfNeeded(ty.f32(), args[3]));  // Level
 
-                    if (args.Length() > 4) {
+                    if (args.size() > 4) {
                         params.Push(args[4]);
                     }
                     break;
                 case core::type::TextureDimension::k2dArray:
-                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec3f(), coords, b.Convert<f32>(args[3])));
                     params.Push(b.InsertConvertIfNeeded(ty.f32(), args[4]));  // Level
-                    if (args.Length() > 5) {
+                    if (args.size() > 5) {
                         params.Push(args[5]);
                     }
                     break;
@@ -1476,26 +1581,27 @@ struct State {
                     params.Push(coords);
                     params.Push(b.InsertConvertIfNeeded(ty.f32(), args[3]));  // Level
 
-                    if (args.Length() > 4) {
+                    if (args.size() > 4) {
                         params.Push(args[4]);
                     }
                     break;
                 case core::type::TextureDimension::kCubeArray:
-                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3]))->Result());
+                    params.Push(b.Construct(ty.vec4f(), coords, b.Convert<f32>(args[3])));
                     params.Push(b.InsertConvertIfNeeded(ty.f32(), args[4]));  // Level
                     break;
                 default:
                     TINT_IR_UNREACHABLE(ir);
             }
 
-            core::ir::Instruction* result = b.MemberCall<hlsl::ir::MemberBuiltinCall>(
-                ty.vec4f(), hlsl::BuiltinFn::kSampleLevel, tex, params);
+            core::ir::Value* result = b.MemberCall<hlsl::ir::MemberBuiltinCall>(
+                                           ty.vec4f(), hlsl::BuiltinFn::kSampleLevel, tex, params)
+                                          ->Result();
             if (tex_type->Is<core::type::DepthTexture>()) {
                 // Swizzle x from vec4 result for depth textures
                 TINT_IR_ASSERT(ir, call->Result()->Type()->Is<core::type::F32>());
                 result = b.Swizzle(ty.f32(), result, {0});
             }
-            result->SetResult(call->DetachResult());
+            call->Result()->ReplaceAllUsesWith(result);
         });
         call->Destroy();
     }
@@ -1509,8 +1615,7 @@ struct State {
 
             auto* lower = b.Swizzle(ty.u32(), bc, {0});
             auto* upper = b.ShiftLeft(b.Swizzle(ty.u32(), bc, {1}), 16_u);
-            auto* res = b.Or(lower, upper);
-            call->Result()->ReplaceAllUsesWith(res->Result());
+            b.OrReplaceResult(call->DetachResult(), lower, upper);
         });
         call->Destroy();
     }
@@ -1562,7 +1667,7 @@ struct State {
 
             auto* lower = b.Splat(ty.vec2f(), -1_f);
             auto* upper = b.Splat(ty.vec2f(), 1_f);
-            b.Clamp(scale, lower, upper)->SetResult(call->DetachResult());
+            b.ClampReplaceResult(call->DetachResult(), scale, lower, upper);
         });
         call->Destroy();
     }
@@ -1578,8 +1683,7 @@ struct State {
             auto* conv = b.Convert(ty.vec2u(), round);
             auto* lower = b.Swizzle(ty.u32(), conv, {0});
             auto* upper = b.ShiftLeft(b.Swizzle(ty.u32(), conv, {1}), 16_u);
-            auto* result = b.Or(lower, upper);
-            call->Result()->ReplaceAllUsesWith(result->Result());
+            b.OrReplaceResult(call->DetachResult(), lower, upper);
         });
         call->Destroy();
     }
@@ -1591,9 +1695,7 @@ struct State {
             auto* y = b.ShiftRight(args[0], 16_u);
             auto* conv = b.Construct(ty.vec2u(), x, y);
             auto* flt_conv = b.Convert(ty.vec2f(), conv);
-            auto* scale = b.Divide(flt_conv, 0xffff_f);
-
-            call->Result()->ReplaceAllUsesWith(scale->Result());
+            b.DivideReplaceResult(call->DetachResult(), flt_conv, 0xffff_f);
         });
         call->Destroy();
     }
@@ -1632,7 +1734,7 @@ struct State {
 
             auto* lower = b.Splat(ty.vec4f(), -1_f);
             auto* upper = b.Splat(ty.vec4f(), 1_f);
-            b.Clamp(scale, lower, upper)->SetResult(call->DetachResult());
+            b.ClampReplaceResult(call->DetachResult(), scale, lower, upper);
         });
         call->Destroy();
     }
@@ -1650,9 +1752,7 @@ struct State {
             auto* y = b.ShiftLeft(b.Swizzle(ty.u32(), conv, {1}), 8_u);
             auto* z = b.ShiftLeft(b.Swizzle(ty.u32(), conv, {2}), 16_u);
             auto* w = b.ShiftLeft(b.Swizzle(ty.u32(), conv, {3}), 24_u);
-            auto* res = b.Or(x, b.Or(y, b.Or(z, w)));
-
-            call->Result()->ReplaceAllUsesWith(res->Result());
+            b.OrReplaceResult(call->DetachResult(), x, b.Or(y, b.Or(z, w)));
         });
         call->Destroy();
     }
@@ -1667,9 +1767,7 @@ struct State {
             auto* w = b.ShiftRight(val, 24_u);
             auto* cons = b.Construct(ty.vec4u(), x, y, z, w);
             auto* conv = b.Convert(ty.vec4f(), cons);
-            auto* scale = b.Divide(conv, 255_f);
-
-            call->Result()->ReplaceAllUsesWith(scale->Result());
+            b.DivideReplaceResult(call->DetachResult(), conv, 255_f);
         });
         call->Destroy();
     }
@@ -1690,8 +1788,9 @@ struct State {
         auto args = call->Args();
         b.InsertBefore(call, [&] {
             auto* type = ty.Get<hlsl::type::Int8T4Packed>();
-            auto* conv = b.CallExplicit<hlsl::ir::BuiltinCall>(type, hlsl::BuiltinFn::kConvert,
-                                                               Vector{type}, args[0]);
+            auto* conv = b.CallExplicit<hlsl::ir::BuiltinCall>(
+                type, hlsl::BuiltinFn::kConvert, Vector<core::ir::TemplateParameter, 1>{type},
+                args[0]);
 
             b.CallWithResult<hlsl::ir::BuiltinCall>(call->DetachResult(),
                                                     hlsl::BuiltinFn::kUnpackS8S32, conv);
@@ -1715,8 +1814,9 @@ struct State {
         auto args = call->Args();
         b.InsertBefore(call, [&] {
             auto* type = ty.Get<hlsl::type::Uint8T4Packed>();
-            auto* conv = b.CallExplicit<hlsl::ir::BuiltinCall>(type, hlsl::BuiltinFn::kConvert,
-                                                               Vector{type}, args[0]);
+            auto* conv = b.CallExplicit<hlsl::ir::BuiltinCall>(
+                type, hlsl::BuiltinFn::kConvert, Vector<core::ir::TemplateParameter, 1>{type},
+                args[0]);
 
             b.CallWithResult<hlsl::ir::BuiltinCall>(call->DetachResult(),
                                                     hlsl::BuiltinFn::kUnpackU8U32, conv);
@@ -1767,15 +1867,16 @@ struct State {
             auto* exp_out = b.Var(ty.ptr<function>(arg_ty));
             // HLSL frexp writes exponent part to second out param, and returns the fraction
             // (mantissa) part.
-            core::ir::Instruction* fract = b.Call<hlsl::ir::BuiltinCall>(
-                arg_ty, hlsl::BuiltinFn::kFrexp, arg, b.Load(exp_out));
+            core::ir::Value* fract =
+                b.Call<hlsl::ir::BuiltinCall>(arg_ty, hlsl::BuiltinFn::kFrexp, arg, b.Load(exp_out))
+                    ->Result();
             // The returned fraction is always positive, but for WGSL, we want it to keep the sign
             // of the input value.
             auto* arg_sign = BuildSign(arg);
             fract = b.Multiply(arg_sign, fract);
             // Replace the call with new result struct
-            b.ConstructWithResult(call->DetachResult(), fract,
-                                  b.Convert(arg_i32_ty, b.Load(exp_out)));
+            b.ConstructReplaceResult(call->DetachResult(), fract,
+                                     b.Convert(arg_i32_ty, b.Load(exp_out)));
         });
         call->Destroy();
     }
@@ -1790,7 +1891,7 @@ struct State {
             auto* call_result =
                 b.Call<hlsl::ir::BuiltinCall>(arg_ty, hlsl::BuiltinFn::kModf, arg, b.Load(whole));
             // Replace the call with new result struct
-            b.ConstructWithResult(call->DetachResult(), call_result, b.Load(whole));
+            b.ConstructReplaceResult(call->DetachResult(), call_result, b.Load(whole));
         });
         call->Destroy();
     }
@@ -1810,7 +1911,7 @@ struct State {
     // This helper function wraps the argument in `asuint` and the result in `asint` to use the
     // unsigned int overload. It currently supports only single argument function signatures.
     void BitcastToIntOverloadCall(core::ir::CoreBuiltinCall* call) {
-        TINT_IR_ASSERT(ir, call->Args().Length() == 1);
+        TINT_IR_ASSERT(ir, call->Args().size() == 1);
         auto* arg = call->Args()[0];
         auto* arg_type = arg->Type()->UnwrapRef();
         if (arg_type->IsSignedIntegerScalarOrVector()) {
@@ -1842,28 +1943,28 @@ struct State {
     // | subgroupShuffleDown | WaveReadLaneAt with index equal subgroup_invocation_id + delta |
     // +---------------------+----------------------------------------------------------------+
     void SubgroupShuffle(core::ir::CoreBuiltinCall* call) {
-        TINT_IR_ASSERT(ir, call->Args().Length() == 2);
+        TINT_IR_ASSERT(ir, call->Args().size() == 2);
 
         b.InsertBefore(call, [&] {
             auto* id = b.Call<hlsl::ir::BuiltinCall>(ty.u32(), hlsl::BuiltinFn::kWaveGetLaneIndex);
             auto* arg2 = call->Args()[1];
 
-            core::ir::Instruction* inst = nullptr;
+            core::ir::Value* value = nullptr;
             switch (call->Func()) {
                 case core::BuiltinFn::kSubgroupShuffleXor:
-                    inst = b.Xor(id, arg2);
+                    value = b.Xor(id, arg2);
                     break;
                 case core::BuiltinFn::kSubgroupShuffleUp:
-                    inst = b.Subtract(id, arg2);
+                    value = b.Subtract(id, arg2);
                     break;
                 case core::BuiltinFn::kSubgroupShuffleDown:
-                    inst = b.Add(id, arg2);
+                    value = b.Add(id, arg2);
                     break;
                 default:
                     TINT_IR_UNREACHABLE(ir);
             }
             b.CallWithResult<hlsl::ir::BuiltinCall>(
-                call->DetachResult(), hlsl::BuiltinFn::kWaveReadLaneAt, call->Args()[0], inst);
+                call->DetachResult(), hlsl::BuiltinFn::kWaveReadLaneAt, call->Args()[0], value);
         });
         call->Destroy();
     }
@@ -1876,7 +1977,7 @@ struct State {
     // | subgroupInclusiveMul  | WavePrefixMul(x) * x |
     // +-----------------------+----------------------+
     void SubgroupInclusive(core::ir::CoreBuiltinCall* call) {
-        TINT_IR_ASSERT(ir, call->Args().Length() == 1);
+        TINT_IR_ASSERT(ir, call->Args().size() == 1);
         b.InsertBefore(call, [&] {
             auto builtin_sel = core::BuiltinFn::kNone;
 
@@ -1893,37 +1994,321 @@ struct State {
 
             auto* arg1 = call->Args()[0];
             auto call_type = arg1->Type();
-            auto* exclusive_call = b.Call<core::ir::CoreBuiltinCall>(call_type, builtin_sel, arg1);
+            auto* exclusive_call = b.Call(call_type, builtin_sel, arg1);
 
-            core::ir::Instruction* inst = nullptr;
             switch (call->Func()) {
                 case core::BuiltinFn::kSubgroupInclusiveAdd:
-                    inst = b.Add(exclusive_call, arg1);
+                    b.AddReplaceResult(call->DetachResult(), exclusive_call, arg1);
                     break;
                 case core::BuiltinFn::kSubgroupInclusiveMul:
-                    inst = b.Multiply(exclusive_call, arg1);
+                    b.MultiplyReplaceResult(call->DetachResult(), exclusive_call, arg1);
                     break;
                 default:
                     TINT_IR_UNREACHABLE(ir);
             }
-            call->Result()->ReplaceAllUsesWith(inst->Result());
         });
         call->Destroy();
+    }
+
+    void SubgroupMatrixMultiply(core::ir::CoreBuiltinCall* call) {
+        b.InsertBefore(call, [&] {
+            auto* left = call->Args()[0];
+            auto* right = call->Args()[1];
+            auto* result_ty = call->Result()->Type();
+            auto* sm_ty = result_ty->As<core::type::SubgroupMatrix>();
+            TINT_IR_ASSERT(ir, sm_ty);
+
+            b.CallExplicitWithResult<hlsl::ir::BuiltinCall>(
+                call->DetachResult(), hlsl::BuiltinFn::kMultiply,
+                Vector<core::ir::TemplateParameter, 1>{sm_ty->Type()}, left, right);
+        });
+        call->Destroy();
+    }
+
+    core::ir::Function* GetMatrixScalarHelper(const core::type::SubgroupMatrix* sm_ty,
+                                              core::BinaryOp op) {
+        return matrix_scalar_funcs_.GetOrAdd(
+            MatrixScalarKey{{sm_ty, op}}, [&]() -> core::ir::Function* {
+                auto* elem_ty = sm_ty->Type();
+                auto* scalar_ty = elem_ty;
+                if (elem_ty->Is<core::type::I8>()) {
+                    scalar_ty = ty.i32();
+                } else if (elem_ty->Is<core::type::U8>()) {
+                    scalar_ty = ty.u32();
+                }
+
+                auto fn_name = b.ir.symbols.New("tint_subgroup_matrix_scalar_op").Name();
+                auto* f = b.Function(fn_name, sm_ty);
+                auto* m_param = b.FunctionParam("m", sm_ty);
+                auto* s_param = b.FunctionParam("s", scalar_ty);
+                f->SetParams({m_param, s_param});
+
+                b.Append(f->Block(), [&] {
+                    core::ir::Value* input = m_param;
+
+                    // If the element type does not match the scalar type (e.g. 8-bit integer), then
+                    // we need to upcast the matrix to the scalar type to ensure that the type we
+                    // operate on is natively supported in HLSL.
+                    // NOTE: This requires that the same geometries are supported with the wider
+                    // component type, which is not guaranteed by the LinAlg API. This means that we
+                    // have to filter out support for 8-bit matrices on the API side unless the
+                    // device supports the equivalent geometry with the wider type.
+                    if (scalar_ty != elem_ty) {
+                        auto* casted_matrix_ty = ty.subgroup_matrix(
+                            sm_ty->Kind(), scalar_ty, sm_ty->Columns(), sm_ty->Rows());
+                        input = b.MemberCallExplicit<hlsl::ir::MemberBuiltinCall>(
+                                     casted_matrix_ty, hlsl::BuiltinFn::kCast, m_param,
+                                     Vector<core::intrinsic::TemplateParameter, 1>{scalar_ty})
+                                    ->Result();
+                    }
+
+                    auto* res = b.Var<function>("result", input);
+                    auto* length = b.MemberCall<hlsl::ir::MemberBuiltinCall>(
+                        ty.u32(), hlsl::BuiltinFn::kLength, res);
+                    b.LoopRange(0_u, length, 1_u, [&](core::ir::Value* idx) {
+                        auto* val = b.MemberCall<hlsl::ir::MemberBuiltinCall>(
+                            scalar_ty, hlsl::BuiltinFn::kGet, b.Load(res), idx);
+                        auto* binary = b.Binary(op, scalar_ty, val, s_param);
+                        b.MemberCall<hlsl::ir::MemberBuiltinCall>(ty.void_(), hlsl::BuiltinFn::kSet,
+                                                                  res, idx, binary);
+                    });
+
+                    if (scalar_ty != elem_ty) {
+                        // Downcast the matrix back to the original element type if needed.
+                        b.Return(f, b.MemberCallExplicit<hlsl::ir::MemberBuiltinCall>(
+                                        sm_ty, hlsl::BuiltinFn::kCast, b.Load(res),
+                                        Vector<core::intrinsic::TemplateParameter, 1>{elem_ty}));
+                    } else {
+                        b.Return(f, b.Load(res));
+                    }
+                });
+                return f;
+            });
+    }
+
+    void SubgroupMatrixScalar(core::ir::CoreBuiltinCall* call, core::BinaryOp op) {
+        auto* mat = call->Args()[0];
+        auto* scalar = call->Args()[1];
+        auto* sm_ty = mat->Type()->As<core::type::SubgroupMatrix>();
+
+        auto* helper = GetMatrixScalarHelper(sm_ty, op);
+        b.InsertBefore(call, [&] {  //
+            b.CallWithResult(call->DetachResult(), helper, mat, scalar);
+        });
+        call->Destroy();
+    }
+
+    core::ir::Function* GetMatrixMultiplyAccumulateHelper(
+        const core::type::SubgroupMatrix* res_ty,
+        const core::type::SubgroupMatrix* left_ty,
+        const core::type::SubgroupMatrix* right_ty) {
+        return matrix_multiply_accumulate_funcs_.GetOrAdd(
+            MatrixMultiplyAccumulateKey{{res_ty, left_ty}}, [&]() -> core::ir::Function* {
+                auto fn_name = b.ir.symbols.New("tint_MatrixMultiplyAccumulate").Name();
+                auto* f = b.Function(fn_name, res_ty);
+                auto* a_param = b.FunctionParam("a", left_ty);
+                auto* b_param = b.FunctionParam("b", right_ty);
+                auto* c_param = b.FunctionParam("c", res_ty);
+                f->SetParams({a_param, b_param, c_param});
+
+                b.Append(f->Block(), [&] {
+                    auto* acc = b.Var("acc", c_param);
+                    b.MemberCall<hlsl::ir::MemberBuiltinCall>(
+                        ty.void_(), hlsl::BuiltinFn::kMultiplyAccumulate, acc, a_param, b_param);
+                    b.Return(f, b.Load(acc));
+                });
+                return f;
+            });
+    }
+
+    void SubgroupMatrixMultiplyAccumulate(core::ir::CoreBuiltinCall* call) {
+        auto* left = call->Args()[0];
+        auto* right = call->Args()[1];
+        auto* acc = call->Args()[2];
+
+        auto* left_ty = left->Type()->As<core::type::SubgroupMatrix>();
+        auto* right_ty = right->Type()->As<core::type::SubgroupMatrix>();
+        auto* res_ty = call->Result()->Type()->As<core::type::SubgroupMatrix>();
+
+        auto* helper = GetMatrixMultiplyAccumulateHelper(res_ty, left_ty, right_ty);
+
+        b.InsertBefore(call,
+                       [&] { b.CallWithResult(call->DetachResult(), helper, left, right, acc); });
+        call->Destroy();
+    }
+
+    core::ir::Constant* ColMajorToMatrixLayout(core::ir::Value* col_major) {
+        auto* const_col_major = col_major->As<core::ir::Constant>();
+        TINT_IR_ASSERT(ir, const_col_major);
+        return b.Constant(ir.constant_values.Get<core::constant::Scalar<u32>>(
+            ty.Get<type::MatrixLayout>(),
+            u32(const_col_major->Value()->ValueAs<bool>() ? type::MatrixLayoutEnum::kColMajor
+                                                          : type::MatrixLayoutEnum::kRowMajor)));
+    }
+
+    void SubgroupMatrixLoad(core::ir::CoreBuiltinCall* call) {
+        auto* ptr = call->Args()[0];
+        auto* ptr_ty = ptr->Type()->As<core::type::Pointer>();
+        uint32_t arr_stride = ptr_ty->StoreType()->As<core::type::Array>()->ImplicitStride();
+        TINT_IR_ASSERT(ir, ptr_ty);
+        if (ptr_ty->AddressSpace() != core::AddressSpace::kWorkgroup) {
+            return;
+        }
+
+        b.InsertBefore(call, [&] {
+            TINT_IR_ASSERT(ir, call->ExplicitTemplateParams().Length() == 2);
+            auto* offset = call->Args()[1];
+            auto* stride = call->Args()[2];
+
+            auto* sm_ty = call->Result()->Type()->As<core::type::SubgroupMatrix>();
+            TINT_IR_ASSERT(ir, sm_ty);
+
+            // Workgroup load offset and stride are in terms of the matrix element type.
+            // Workgroup function only take u32 args.
+            if (auto* const_offset = offset->As<core::ir::Constant>()) {
+                offset = b.Constant(u32(const_offset->Value()->ValueAs<uint32_t>() * arr_stride /
+                                        sm_ty->Type()->Size()));
+            } else {
+                offset =
+                    b.Call<hlsl::ir::BuiltinCall>(ty.u32(), BuiltinFn::kAsuint, offset)->Result();
+                offset = b.Multiply(offset, u32(arr_stride / sm_ty->Type()->Size()));
+            }
+            if (auto* const_stride = stride->As<core::ir::Constant>()) {
+                stride = b.Constant(u32(const_stride->Value()->ValueAs<uint32_t>() * arr_stride /
+                                        sm_ty->Type()->Size()));
+            } else {
+                stride =
+                    b.Call<hlsl::ir::BuiltinCall>(ty.u32(), BuiltinFn::kAsuint, stride)->Result();
+                stride = b.Multiply(stride, u32(arr_stride / sm_ty->Type()->Size()));
+            }
+
+            // TODO(crbug.com/512455144): 8-bit components need additional work to support.
+            if (sm_ty->Type()->IsAnyOf<core::type::I8, core::type::U8>()) {
+                TINT_IR_UNIMPLEMENTED(ir)
+                    << "8-bit subgroup matrix load from workgroup not supported";
+            }
+
+            TINT_IR_ASSERT(
+                ir, std::holds_alternative<core::Majorness>(call->ExplicitTemplateParams()[1]));
+            auto* col_major =
+                b.Constant(std::get<core::Majorness>(call->ExplicitTemplateParams()[1]) ==
+                           core::Majorness::kColMajor);
+            auto* layout = ColMajorToMatrixLayout(col_major);
+
+            b.CallExplicitWithResult<hlsl::ir::BuiltinCall>(
+                call->DetachResult(), hlsl::BuiltinFn::kLoad,
+                Vector<core::ir::TemplateParameter, 1>{sm_ty}, ptr, offset, stride, layout);
+        });
+        call->Destroy();
+    }
+
+    void SubgroupMatrixStore(core::ir::CoreBuiltinCall* call) {
+        auto* ptr = call->Args()[0];
+        auto* ptr_ty = ptr->Type()->As<core::type::Pointer>();
+        uint32_t arr_stride = ptr_ty->StoreType()->As<core::type::Array>()->ImplicitStride();
+        TINT_IR_ASSERT(ir, ptr_ty);
+
+        if (ptr_ty->AddressSpace() != core::AddressSpace::kWorkgroup) {
+            return;
+        }
+
+        b.InsertBefore(call, [&] {
+            TINT_IR_ASSERT(ir, call->ExplicitTemplateParams().Length() == 1);
+            auto* offset = call->Args()[1];
+            auto* matrix = call->Args()[2];
+            auto* stride = call->Args()[3];
+
+            auto* sm_ty = matrix->Type()->As<core::type::SubgroupMatrix>();
+            TINT_IR_ASSERT(ir, sm_ty);
+
+            // Workgroup store offset and stride are in terms of the matrix element type.
+            // Workgroup function only take u32 args.
+            if (auto* const_offset = offset->As<core::ir::Constant>()) {
+                offset = b.Constant(u32(const_offset->Value()->ValueAs<uint32_t>() * arr_stride /
+                                        sm_ty->Type()->Size()));
+            } else {
+                offset =
+                    b.Call<hlsl::ir::BuiltinCall>(ty.u32(), BuiltinFn::kAsuint, offset)->Result();
+                offset = b.Multiply(offset, u32(arr_stride / sm_ty->Type()->Size()));
+            }
+            if (auto* const_stride = stride->As<core::ir::Constant>()) {
+                stride = b.Constant(u32(const_stride->Value()->ValueAs<uint32_t>() * arr_stride /
+                                        sm_ty->Type()->Size()));
+            } else {
+                stride =
+                    b.Call<hlsl::ir::BuiltinCall>(ty.u32(), BuiltinFn::kAsuint, stride)->Result();
+                stride = b.Multiply(stride, u32(arr_stride / sm_ty->Type()->Size()));
+            }
+
+            // TODO(crbug.com/512455144): 8-bit components need additional work to support.
+            if (sm_ty->Type()->IsAnyOf<core::type::I8, core::type::U8>()) {
+                TINT_IR_UNIMPLEMENTED(ir)
+                    << "8-bit subgroup matrix store to workgroup not supported";
+            }
+
+            TINT_IR_ASSERT(
+                ir, std::holds_alternative<core::Majorness>(call->ExplicitTemplateParams()[0]));
+            auto* col_major =
+                b.Constant(std::get<core::Majorness>(call->ExplicitTemplateParams()[0]) ==
+                           core::Majorness::kColMajor);
+            auto* layout = ColMajorToMatrixLayout(col_major);
+
+            b.MemberCall<hlsl::ir::MemberBuiltinCall>(ty.void_(), hlsl::BuiltinFn::kStore, matrix,
+                                                      ptr, offset, stride, layout);
+        });
+        call->Destroy();
+    }
+
+    void AddSat(core::ir::CoreBuiltinCall* call) {
+        auto* type = call->Result()->Type();
+        core::ir::Value* select = nullptr;
+        b.InsertBefore(call, [&] {
+            auto* add = b.Add(call->Args()[0], call->Args()[1]);
+            auto* lt = b.LessThan(add, call->Args()[0]);
+            core::ir::Value* sat = (type->Is<core::type::Vector>() ? b.Splat(type, u32(0xffffffff))
+                                                                   : b.Constant(u32(0xffffffff)));
+            select =
+                b.CallReplaceResult(call->DetachResult(), core::BuiltinFn::kSelect, add, sat, lt);
+        });
+        call->Destroy();
+        if (auto* sel_inst = select->AsInstruction<core::ir::CoreBuiltinCall>()) {
+            Select(sel_inst);
+        }
+    }
+
+    void MulSat(core::ir::CoreBuiltinCall* call) {
+        auto* type = call->Result()->Type();
+        core::ir::Value* select = nullptr;
+        b.InsertBefore(call, [&] {
+            auto* add = b.Multiply(call->Args()[0], call->Args()[1]);
+            auto* arg0_ne_0 = b.NotEqual(call->Args()[0], b.Zero(type));
+            auto* arg1_ne_0 = b.NotEqual(call->Args()[1], b.Zero(type));
+            core::ir::Value* sat = (type->Is<core::type::Vector>() ? b.Splat(type, u32(0xffffffff))
+                                                                   : b.Constant(u32(0xffffffff)));
+            auto* div = b.Divide(sat, call->Args()[0]);
+            auto* gt = b.GreaterThan(call->Args()[1], div);
+            auto* logical_and = b.And(arg0_ne_0, arg1_ne_0);
+            logical_and = b.And(logical_and, gt);
+            select = b.CallReplaceResult(call->DetachResult(), core::BuiltinFn::kSelect, add, sat,
+                                         logical_and);
+        });
+        call->Destroy();
+        if (auto* sel_inst = select->AsInstruction<core::ir::CoreBuiltinCall>()) {
+            Select(sel_inst);
+        }
     }
 };
 
 }  // namespace
 
-Result<SuccessType> BuiltinPolyfill(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(
-        ValidateAndDumpIfNeeded(ir, "hlsl.BuiltinPolyfill",
-                                core::ir::Capabilities{
-                                    core::ir::Capability::kAllowClipDistancesOnF32ScalarAndVector,
-                                    core::ir::Capability::kAllowDuplicateBindings,
-                                    core::ir::Capability::kAllowNonCoreTypes,
-                                }));
+Result<SuccessType> BuiltinPolyfill(core::ir::Module& ir, const BuiltinPolyfillConfig& config) {
+    AssertValid(ir, "before hlsl.BuiltinPolyfill");
 
-    State{ir}.Process();
+    State{ir, config}.Process();
+
+    ir.properties.Add(core::ir::Property::kAllowNonCoreTypes);
+    ir.properties.Add(core::ir::Property::kAllowVectorElementPointer);
+
     return Success;
 }
 

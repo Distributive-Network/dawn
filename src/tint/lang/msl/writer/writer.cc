@@ -30,50 +30,42 @@
 #include "src/tint/lang/core/ir/core_builtin_call.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/referenced_module_vars.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/ir/var.h"
 #include "src/tint/lang/core/type/f16.h"
 #include "src/tint/lang/core/type/f32.h"
 #include "src/tint/lang/core/type/input_attachment.h"
 #include "src/tint/lang/core/type/pointer.h"
+#include "src/tint/lang/core/type/struct.h"
 #include "src/tint/lang/core/type/texel_buffer.h"
+#include "src/tint/lang/core/type/u16.h"
 #include "src/tint/lang/msl/writer/common/option_helpers.h"
 #include "src/tint/lang/msl/writer/printer/printer.h"
 #include "src/tint/lang/msl/writer/raise/raise.h"
+#include "src/tint/utils/internal_limits.h"
 
 namespace tint::msl::writer {
+
+namespace {
 
 Result<SuccessType> CanGenerate(const core::ir::Module& ir, const Options& options) {
     // Check for unsupported types.
     for (auto* ty : ir.Types()) {
-        if (auto* m = ty->As<core::type::SubgroupMatrix>()) {
-            if (!m->Type()->IsAnyOf<core::type::F16, core::type::F32>()) {
-                return Failure("non-float subgroup matrices are not supported by the MSL backend");
-            }
-            if (m->Columns() != 8 || m->Rows() != 8) {
-                return Failure("the MSL backend only supports 8x8 subgroup matrices");
-            }
-        } else if (ty->Is<core::type::TexelBuffer>()) {
+        if (ty->Is<core::type::TexelBuffer>()) {
             // TODO(crbug/382544164): Prototype texel buffer feature
             return Failure("texel buffers are not supported by the MSL backend");
         }
         if (ty->Is<core::type::InputAttachment>()) {
             return Failure("input_attachment not supported by the MSL backend");
         }
-        if (ty->Is<core::type::Buffer>()) {
-            return Failure("buffers are not supported by the MSL backend");
+        if (ty->Is<core::type::U16>()) {
+            return Failure("16-bit unsigned integers are not supported by the MSL backend");
         }
-    }
-
-    for (auto* i : ir.Instructions()) {
-        auto* call = i->As<core::ir::CoreBuiltinCall>();
-        if (!call) {
-            continue;
-        }
-
-        if (call->Func() == core::BuiltinFn::kGetResource ||
-            call->Func() == core::BuiltinFn::kHasResource) {
-            return Failure("resource tables not supported by the MSL backend");
+        if (auto* str = ty->As<core::type::Struct>()) {
+            auto res = str->PaddingWithinLimit();
+            if (res != Success) {
+                return res.Failure();
+            }
         }
     }
 
@@ -89,11 +81,6 @@ Result<SuccessType> CanGenerate(const core::ir::Module& ir, const Options& optio
     for (auto* f : ir.functions) {
         if (!f->IsEntryPoint()) {
             continue;
-        }
-
-        // Check `@subgroup_size` attribute.
-        if (f->SubgroupSize().has_value()) {
-            return Failure("subgroup_size attribute is not supported by the MSL backend");
         }
 
         // Check input attributes.
@@ -140,17 +127,7 @@ Result<SuccessType> CanGenerate(const core::ir::Module& ir, const Options& optio
 
     // Check the vertex pulling config, if provided.
     if (options.vertex_pulling_config) {
-        // Find the vertex entry point.
-        const core::ir::Function* ep = nullptr;
-        for (auto& func : ir.functions) {
-            if (func->IsVertex()) {
-                if (ep) {
-                    return Failure("vertex pulling config provided with multiple vertex shaders");
-                }
-                ep = func;
-            }
-        }
-        if (!ep) {
+        if (!ep_func->IsVertex()) {
             return Failure("vertex pulling config provided without a vertex shader");
         }
 
@@ -169,7 +146,7 @@ Result<SuccessType> CanGenerate(const core::ir::Module& ir, const Options& optio
         }
 
         // Check the parameters to make sure all vertex attributes are present in the config.
-        for (auto* param : ep->Params()) {
+        for (auto* param : ep_func->Params()) {
             if (auto* str = param->Type()->As<core::type::Struct>()) {
                 for (auto* member : str->Members()) {
                     if (auto loc = member->Attributes().location) {
@@ -188,18 +165,48 @@ Result<SuccessType> CanGenerate(const core::ir::Module& ir, const Options& optio
         }
     }
 
+    // Check that there are no dynamic offsets supplied for non-buffer types.
+    if (ir.root_block) {
+        for (auto* inst : *ir.root_block) {
+            auto* var = inst->As<core::ir::Var>();
+            if (!var) {
+                continue;
+            }
+            auto bp = var->BindingPoint();
+            if (!bp.has_value()) {
+                continue;
+            }
+            auto iter = options.group_to_argument_buffer_info.find(bp->group);
+            if (iter == options.group_to_argument_buffer_info.end()) {
+                continue;
+            }
+            auto* ptr = var->Result()->Type()->As<core::type::Pointer>();
+            TINT_ASSERT(ptr);
+
+            if (!(ptr->AddressSpace() == core::AddressSpace::kStorage ||
+                  ptr->AddressSpace() == core::AddressSpace::kUniform)) {
+                auto binding_iter = iter->second.binding_info_to_offset_index.find(bp->binding);
+                if (binding_iter != iter->second.binding_info_to_offset_index.end()) {
+                    return Failure(
+                        "dynamic offset supplied for a non-buffer type inside an argument buffer");
+                }
+            }
+        }
+    }
+
     TINT_CHECK_RESULT(ValidateBindingOptions(options));
 
     return Success;
 }
 
-Result<Output> Generate(core::ir::Module& ir, const Options& options) {
-    // Raise from core-dialect to MSL-dialect.
-    TINT_CHECK_RESULT_UNWRAP(raise_result, Raise(ir, options));
-    TINT_CHECK_RESULT_UNWRAP(result, Print(ir, options));
+}  // namespace
 
-    result.needs_storage_buffer_sizes = raise_result.needs_storage_buffer_sizes;
-    return result;
+Result<Output> Generate(core::ir::Module& ir, const Options& options) {
+    TINT_CHECK_RESULT(CanGenerate(ir, options));
+
+    // Raise from core-dialect to MSL-dialect.
+    TINT_CHECK_RESULT(Raise(ir, options));
+    return Print(ir, options);
 }
 
 }  // namespace tint::msl::writer

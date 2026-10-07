@@ -28,7 +28,7 @@
 #include "src/tint/lang/hlsl/writer/raise/localize_struct_array_assignment.h"
 
 #include "src/tint/lang/core/ir/builder.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 namespace tint::hlsl::writer::raise {
 namespace {
@@ -51,11 +51,9 @@ struct State {
                             core::ir::Value*& object,
                             Vector<core::ir::Value*, 4>& indices) {
         bool is_access = false;
-        if (auto* inst_result = access->Object()->As<core::ir::InstructionResult>()) {
-            if (auto* obj_access = inst_result->Instruction()->As<core::ir::Access>()) {
-                FlattenAccessChain(obj_access, object, indices);
-                is_access = true;
-            }
+        if (auto* obj_access = access->Object()->AsInstruction<core::ir::Access>()) {
+            FlattenAccessChain(obj_access, object, indices);
+            is_access = true;
         }
         if (!is_access) {
             object = access->Object();
@@ -82,11 +80,7 @@ struct State {
             return;
         }
         // Must be storing via an access
-        auto* to = store->To()->As<core::ir::InstructionResult>();
-        if (!to) {
-            return;
-        }
-        auto* to_access = to->Instruction()->As<core::ir::Access>();
+        auto* to_access = store->To()->AsInstruction<core::ir::Access>();
         if (!to_access) {
             return;
         }
@@ -111,13 +105,13 @@ struct State {
                 b.InsertBefore(store, [&] {
                     // Create an access to the array in the struct to copy from
                     auto* array_access = b.Access(ty.ptr(to_ptr->AddressSpace(), type), object,
-                                                  ToVector<4>(indices.Slice().Truncate(i + 1)));
+                                                  ToVector<4>(indices.AsSpan().subspan(0, i + 1)));
                     // Copy the struct array to a local variable
                     auto* local_array = b.Var("tint_array_copy", b.Load(array_access));
                     // Store the previous store's From to the local array at the same index
                     auto* local_array_value_access =
                         b.Access(ty.ptr<function>(to_ptr->StoreType()), local_array,
-                                 ToVector<4>(indices.Slice().Offset(i + 1)));
+                                 ToVector<4>(indices.AsSpan().subspan(i + 1)));
                     b.Store(local_array_value_access, store->From());
                     // Finally, copy back the data from the local array to the struct array
                     b.Store(array_access, b.Load(local_array));
@@ -157,9 +151,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> LocalizeStructArrayAssignment(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(ValidateAndDumpIfNeeded(
-        ir, "hlsl.LocalizeStructArrayAssignment",
-        core::ir::Capabilities{core::ir::Capability::kAllowDuplicateBindings}));
+    AssertValid(ir, "before hlsl.LocalizeStructArrayAssignment");
 
     State{ir}.Process();
 

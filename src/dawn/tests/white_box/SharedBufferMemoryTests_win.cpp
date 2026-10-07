@@ -26,13 +26,21 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <d3d12.h>
+#include <gtest/gtest.h>
+
+#include <string>
 #include <vector>
+
 #include "dawn/native/D3D12Backend.h"
-#include "dawn/native/d3d12/DeviceD3D12.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/tests/white_box/SharedBufferMemoryTests.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/common/SystemHandle.h"
+#include "src/dawn/native/d3d12/DeviceD3D12.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/tests/white_box/SharedBufferMemoryTests.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/compiler.h"
+#include "src/utils/span.h"
 
 namespace dawn {
 namespace {
@@ -49,7 +57,9 @@ void WriteD3D12UploadBuffer(ID3D12Resource* resource, uint32_t data) {
     range.Begin = 0;
     range.End = kBufferSize;
     resource->Map(0, &range, &mappedBufferBegin);
-    memcpy(mappedBufferBegin, &data, kBufferSize);
+    // SAFETY: `mappedBufferBegin` is valid for `kBufferSize` bytes per the preceding Map() call.
+    DAWN_UNSAFE_BUFFERS(Span<std::byte>(static_cast<std::byte*>(mappedBufferBegin), kBufferSize))
+        .CopyFrom(ByteSpanFromRef(data));
     resource->Unmap(0, &range);
 }
 
@@ -77,10 +87,10 @@ void CopyD3D12Resource(ID3D12Device* device, ID3D12Resource* source, ID3D12Resou
     UINT64 signaledValue = 1;
     commandQueue->Signal(fence.Get(), signaledValue);
 
-    HANDLE fenceEvent = 0;
+    SystemHandle fenceEvent = SystemHandle::Acquire(CreateEvent(nullptr, FALSE, FALSE, nullptr));
     if (fence->GetCompletedValue() < signaledValue) {
-        fence->SetEventOnCompletion(signaledValue, fenceEvent);
-        WaitForSingleObject(fenceEvent, INFINITE);
+        fence->SetEventOnCompletion(signaledValue, fenceEvent.Get());
+        WaitForSingleObject(fenceEvent.Get(), INFINITE);
     }
 }
 
@@ -90,6 +100,8 @@ class ExistingD3D12ResourceBackend : public SharedBufferMemoryTestBackend {
         static ExistingD3D12ResourceBackend b;
         return &b;
     }
+
+    std::string Name() const override { return "ExistingD3D12Resource"; }
 
     std::vector<wgpu::FeatureName> RequiredFeatures(const wgpu::Adapter& adapter) const override {
         return {wgpu::FeatureName::SharedBufferMemoryD3D12Resource,
@@ -146,17 +158,14 @@ class ExistingD3D12ResourceBackend : public SharedBufferMemoryTestBackend {
 
     ComPtr<ID3D12Device> CreateD3D12Device(const wgpu::Device& device,
                                            bool createWarpDevice = false) {
-        ComPtr<IDXGIAdapter> dxgiAdapter = nullptr;
+        if (!createWarpDevice) {
+            return native::d3d12::GetD3D12Device(device.Get());
+        }
+
         ComPtr<IDXGIFactory4> dxgiFactory;
         CreateDXGIFactory2(0, IID_PPV_ARGS(&dxgiFactory));
-        if (createWarpDevice) {
-            dxgiFactory->EnumWarpAdapter(IID_PPV_ARGS(&dxgiAdapter));
-        } else {
-            dxgiAdapter = native::d3d::GetDXGIAdapter(device.GetAdapter().Get());
-            DXGI_ADAPTER_DESC adapterDesc;
-            dxgiAdapter->GetDesc(&adapterDesc);
-            dxgiFactory->EnumAdapterByLuid(adapterDesc.AdapterLuid, IID_PPV_ARGS(&dxgiAdapter));
-        }
+        ComPtr<IDXGIAdapter> dxgiAdapter;
+        dxgiFactory->EnumWarpAdapter(IID_PPV_ARGS(&dxgiAdapter));
 
         ComPtr<ID3D12Device> d3d12Device;
 
@@ -229,6 +238,7 @@ TEST_P(SharedBufferMemoryExistingD3D12ResourceTests, NullResourceFailure) {
 // Validate that importing an ID3D12Resource across devices results in failure. This is tested by
 // creating a resource with a WARP device and attempting to use it on a non-WARP device.
 TEST_P(SharedBufferMemoryExistingD3D12ResourceTests, CrossDeviceResourceImportFailure) {
+    // Test must be run on a non-WARP 'device'
     DAWN_TEST_UNSUPPORTED_IF(IsWARP());
     ComPtr<ID3D12Device> warpDevice =
         static_cast<ExistingD3D12ResourceBackend*>(GetParam().mBackend)
@@ -284,75 +294,231 @@ TEST_P(SharedBufferMemoryExistingD3D12ResourceTests, CustomReadbackHeapImport) {
     ASSERT_TRUE(sharedBufferMemory.CreateBuffer().Get());
 }
 
-class D3D12SharedMemoryFileHandleBackend : public SharedBufferMemoryTestBackend {
+// Validate that importing an ID3D12Resource allocated on a CUSTOM cross-adapter heap
+// is equivalent to DEFAULT works correctly.
+TEST_P(SharedBufferMemoryExistingD3D12ResourceTests, CustomCrossAdapterHeapImport) {
+    ComPtr<ID3D12Device> d3d12Device =
+        static_cast<ExistingD3D12ResourceBackend*>(GetParam().mBackend)
+            ->CreateD3D12Device(device, false);
+
+    D3D12_HEAP_PROPERTIES heapProperties = {
+        D3D12_HEAP_TYPE_CUSTOM, D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE, D3D12_MEMORY_POOL_L0, 0, 0};
+
+    D3D12_HEAP_DESC heapDesc = {kBufferSize, heapProperties,
+                                D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT,
+                                D3D12_HEAP_FLAG_SHARED | D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER};
+    ComPtr<ID3D12Heap> heap;
+    HRESULT hr = d3d12Device->CreateHeap(&heapDesc, IID_PPV_ARGS(&heap));
+    ASSERT_EQ(hr, S_OK);
+
+    D3D12_RESOURCE_DESC resourceDesc = {};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    resourceDesc.Alignment = 0;
+    resourceDesc.Width = kBufferSize;
+    resourceDesc.Height = 1;
+    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.MipLevels = 1;
+    resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.SampleDesc.Quality = 0;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    resourceDesc.Flags =
+        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER;
+
+    ComPtr<ID3D12Resource> d3d12Resource;
+    hr =
+        d3d12Device->CreatePlacedResource(heap.Get(), 0, &resourceDesc, D3D12_RESOURCE_STATE_COMMON,
+                                          nullptr, IID_PPV_ARGS(&d3d12Resource));
+    ASSERT_EQ(hr, S_OK);
+
+    wgpu::SharedBufferMemoryDescriptor desc;
+    native::d3d12::SharedBufferMemoryD3D12ResourceDescriptor sharedD3d12ResourceDesc;
+    sharedD3d12ResourceDesc.resource = d3d12Resource.Get();
+    desc.nextInChain = &sharedD3d12ResourceDesc;
+
+    wgpu::SharedBufferMemory sharedBufferMemory = device.ImportSharedBufferMemory(&desc);
+    ASSERT_TRUE(sharedBufferMemory.CreateBuffer().Get());
+}
+
+// Tests that creating a buffer from SharedBufferMemory with mappedAtCreation=true is an error
+// when the shared buffer memory does not have MapWrite usage.
+TEST_P(SharedBufferMemoryExistingD3D12ResourceTests,
+       CreateBufferMappedAtCreationWithoutMapWriteIsError) {
+    constexpr wgpu::BufferUsage kStorageUsages =
+        wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Storage;
+    wgpu::SharedBufferMemory memory =
+        GetParam().mBackend->CreateSharedBufferMemory(device, kStorageUsages, kBufferSize);
+    wgpu::SharedBufferMemoryProperties properties;
+    memory.GetProperties(&properties);
+
+    wgpu::BufferDescriptor bufferDesc = {};
+    bufferDesc.size = properties.size;
+    bufferDesc.usage = kStorageUsages;
+    bufferDesc.mappedAtCreation = true;
+
+    ASSERT_DEVICE_ERROR_MSG(
+        memory.CreateBuffer(&bufferDesc),
+        testing::HasSubstr(
+            "mappedAtCreation=true requires the SharedBufferMemory to have MapWrite usage"));
+}
+
+// Tests that creating SharedBufferMemory emits a specific error message if Uniform usage specified.
+TEST_P(SharedBufferMemoryExistingD3D12ResourceTests, UniformUsageValidation) {
+    constexpr wgpu::BufferUsage kMapWriteUsages =
+        wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc;
+    wgpu::SharedBufferMemory memory =
+        GetParam().mBackend->CreateSharedBufferMemory(device, kMapWriteUsages, kBufferSize);
+    wgpu::SharedBufferMemoryProperties properties;
+    memory.GetProperties(&properties);
+
+    wgpu::BufferDescriptor bufferDesc = {};
+    bufferDesc.size = properties.size;
+    bufferDesc.usage = properties.usage | wgpu::BufferUsage::Uniform;
+
+    ASSERT_DEVICE_ERROR_MSG(memory.CreateBuffer(&bufferDesc), testing::HasSubstr("Uniform"));
+}
+
+// Verify that DuplicateHandle with the correct access rights including READ_CONTROL succeeds in
+// OpenExistingHeapFromFileMapping() (control case for MissingReadControlAccessCausesFailure).
+TEST_P(SharedBufferMemoryExistingD3D12ResourceTests, DuplicateWithReadControlAccessSucceeds) {
+    ComPtr<ID3D12Device> d3d12Device =
+        static_cast<ExistingD3D12ResourceBackend*>(GetParam().mBackend)
+            ->CreateD3D12Device(device, false);
+    ComPtr<ID3D12Device3> d3d12Device3;
+    HRESULT hr = d3d12Device->QueryInterface(IID_PPV_ARGS(&d3d12Device3));
+    DAWN_TEST_UNSUPPORTED_IF(hr != S_OK);
+
+    LARGE_INTEGER largeSize = {};
+    largeSize.QuadPart = kD3D12SharedBufferMemoryFileMappingHandleSizeAlignment;
+    SystemHandle handle =
+        SystemHandle::Acquire(CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+                                                largeSize.HighPart, largeSize.LowPart, nullptr));
+    EXPECT_TRUE(handle.IsValid());
+
+    SystemHandle duplicatedHandle;
+    HANDLE process = GetCurrentProcess();
+    constexpr DWORD kValidAccess = FILE_MAP_READ | FILE_MAP_WRITE | SECTION_QUERY | READ_CONTROL;
+    EXPECT_TRUE(DuplicateHandle(process, handle.Get(), process, duplicatedHandle.GetMut(),
+                                kValidAccess, FALSE, 0));
+
+    // With READ_CONTROL present, OpenExistingHeapFromFileMapping should succeed.
+    ComPtr<ID3D12Heap> d3d12Heap;
+    hr = d3d12Device3->OpenExistingHeapFromFileMapping(duplicatedHandle.Get(),
+                                                       IID_PPV_ARGS(&d3d12Heap));
+    EXPECT_EQ(S_OK, hr);
+}
+
+// Verify missing READ_CONTROL access in DuplicateHandle will cause failure in
+// OpenExistingHeapFromFileMapping()
+TEST_P(SharedBufferMemoryExistingD3D12ResourceTests, MissingReadControlAccessCausesFailure) {
+    ComPtr<ID3D12Device> d3d12Device =
+        static_cast<ExistingD3D12ResourceBackend*>(GetParam().mBackend)
+            ->CreateD3D12Device(device, false);
+    ComPtr<ID3D12Device3> d3d12Device3;
+    HRESULT hr = d3d12Device->QueryInterface(IID_PPV_ARGS(&d3d12Device3));
+    DAWN_TEST_UNSUPPORTED_IF(hr != S_OK);
+
+    LARGE_INTEGER largeSize = {};
+    largeSize.QuadPart = kD3D12SharedBufferMemoryFileMappingHandleSizeAlignment;
+    SystemHandle handle =
+        SystemHandle::Acquire(CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+                                                largeSize.HighPart, largeSize.LowPart, nullptr));
+    EXPECT_TRUE(handle.IsValid());
+
+    // Import the duplicated handle to align with the behavior in Chromium.
+    SystemHandle duplicatedHandle;
+    HANDLE process = GetCurrentProcess();
+    constexpr DWORD kInvalidAccess = FILE_MAP_READ | FILE_MAP_WRITE | SECTION_QUERY;
+    EXPECT_TRUE(DuplicateHandle(process, handle.Get(), process, duplicatedHandle.GetMut(),
+                                kInvalidAccess, FALSE, 0));
+
+    // Missing read control will cause an error when calling `OpenExistingHeapFromFileMapping`.
+    ComPtr<ID3D12Heap> d3d12Heap;
+    HRESULT error_hr = d3d12Device3->OpenExistingHeapFromFileMapping(duplicatedHandle.Get(),
+                                                                     IID_PPV_ARGS(&d3d12Heap));
+    EXPECT_NE(S_OK, error_hr);
+}
+
+// Base backend for SharedBufferMemory backed by a Windows file mapping handle. Subclasses only
+// need to override RequiredFeatures() to declare the features they require.
+class D3D12SharedMemoryFileHandleBackendBase : public SharedBufferMemoryTestBackend {
   public:
-    static Backend GetInstance() {
-        static D3D12SharedMemoryFileHandleBackend b;
-        return &b;
-    }
-
-    void TearDown() override {
-        if (mSharedMemoryHandle != nullptr) {
-            CloseHandle(mSharedMemoryHandle);
-            mSharedMemoryHandle = nullptr;
-        }
-    }
-
-    std::vector<wgpu::FeatureName> RequiredFeatures(const wgpu::Adapter& adapter) const override {
-        return {wgpu::FeatureName::SharedBufferMemoryD3D12SharedMemoryFileMappingHandle,
-                wgpu::FeatureName::SharedFenceDXGISharedHandle,
-                wgpu::FeatureName::BufferMapExtendedUsages, wgpu::FeatureName::HostMappedPointer};
-    }
+    void TearDown() override { mSharedMemoryHandle.Close(); }
 
     wgpu::SharedBufferMemory CreateSharedBufferMemory(const wgpu::Device& device,
                                                       wgpu::BufferUsage usages,
                                                       uint32_t bufferSize,
                                                       uint32_t initializationData = 0) override {
-        uint64_t alignedHeapSize = Align(
-            bufferSize, native::d3d12::SharedBufferMemoryD3D12SharedMemoryFileHandleDescriptor::
-                            kRequiredAlignment);
+        uint64_t alignedHeapSize =
+            Align(bufferSize, kD3D12SharedBufferMemoryFileMappingHandleSizeAlignment);
 
         LARGE_INTEGER largeSize = {};
         largeSize.QuadPart = alignedHeapSize;
         // Create a named shared memory object by using INVALID_HANDLE_VALUE as input file handle.
         // See https://learn.microsoft.com/en-us/windows/win32/memory/creating-named-shared-memory.
-        mSharedMemoryHandle = CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
-                                                largeSize.HighPart, largeSize.LowPart, nullptr);
-        EXPECT_NE(mSharedMemoryHandle, nullptr);
+        mSharedMemoryHandle = SystemHandle::Acquire(
+            CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, largeSize.HighPart,
+                              largeSize.LowPart, nullptr));
+        EXPECT_TRUE(mSharedMemoryHandle.IsValid());
 
         if (initializationData) {
             // Get mapped pointer to the file mapping object for test
-            void* ptr = MapViewOfFile(mSharedMemoryHandle, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+            void* ptr = MapViewOfFile(mSharedMemoryHandle.Get(), FILE_MAP_ALL_ACCESS, 0, 0, 0);
             EXPECT_NE(ptr, nullptr);
 
-            memcpy(ptr, &initializationData, sizeof(initializationData));
+            // SAFETY: `ptr` is valid for `sizeof(initializationData)` bytes since the mapping was
+            // created with size `alignedHeapSize`, which is at least kBufferSize-aligned.
+            DAWN_UNSAFE_BUFFERS(
+                Span<std::byte>(static_cast<std::byte*>(ptr), sizeof(initializationData)))
+                .CopyFrom(ByteSpanFromRef(initializationData));
 
             UnmapViewOfFile(ptr);
         }
 
         wgpu::SharedBufferMemoryDescriptor desc;
-        native::d3d12::SharedBufferMemoryD3D12SharedMemoryFileHandleDescriptor sharedFileHandleDesc;
-        sharedFileHandleDesc.handle = mSharedMemoryHandle;
+        wgpu::SharedBufferMemoryFromWindowsHandleDescriptor sharedFileHandleDesc;
+        sharedFileHandleDesc.handle = mSharedMemoryHandle.Get();
         sharedFileHandleDesc.size = alignedHeapSize;
         desc.nextInChain = &sharedFileHandleDesc;
 
         return device.ImportSharedBufferMemory(&desc);
     }
 
-  private:
-    D3D12SharedMemoryFileHandleBackend() {}
+  protected:
+    D3D12SharedMemoryFileHandleBackendBase() {}
 
-    HANDLE mSharedMemoryHandle = nullptr;
+  private:
+    SystemHandle mSharedMemoryHandle;
 };
 
-class SharedBufferMemoryD3D12SharedFileHandleTests : public SharedBufferMemoryTests {};
+class D3D12SharedMemoryFileHandleWithExtendedUsagesBackend
+    : public D3D12SharedMemoryFileHandleBackendBase {
+  public:
+    static Backend GetInstance() {
+        static D3D12SharedMemoryFileHandleWithExtendedUsagesBackend b;
+        return &b;
+    }
+
+    std::string Name() const override { return "D3D12SharedMemoryFileHandleWithExtendedUsages"; }
+
+    std::vector<wgpu::FeatureName> RequiredFeatures(const wgpu::Adapter& adapter) const override {
+        return {wgpu::FeatureName::SharedBufferMemoryFromWindowsHandle,
+                wgpu::FeatureName::SharedFenceDXGISharedHandle,
+                wgpu::FeatureName::BufferMapExtendedUsages, wgpu::FeatureName::HostMappedPointer};
+    }
+
+  private:
+    D3D12SharedMemoryFileHandleWithExtendedUsagesBackend() {}
+};
+
+class SharedBufferMemoryD3D12SharedFileHandleWithExtendedUsagesTests
+    : public SharedBufferMemoryTests {};
 
 // Ensure that importing a nullptr handle results in error.
-TEST_P(SharedBufferMemoryD3D12SharedFileHandleTests, nullResourceFailure) {
-    native::d3d12::SharedBufferMemoryD3D12SharedMemoryFileHandleDescriptor sharedFileHandleDesc;
+TEST_P(SharedBufferMemoryD3D12SharedFileHandleWithExtendedUsagesTests, nullResourceFailure) {
+    wgpu::SharedBufferMemoryFromWindowsHandleDescriptor sharedFileHandleDesc;
     sharedFileHandleDesc.handle = nullptr;
-    sharedFileHandleDesc.size =
-        native::d3d12::SharedBufferMemoryD3D12SharedMemoryFileHandleDescriptor::kRequiredAlignment;
+    sharedFileHandleDesc.size = kD3D12SharedBufferMemoryFileMappingHandleSizeAlignment;
     wgpu::SharedBufferMemoryDescriptor desc;
     desc.nextInChain = &sharedFileHandleDesc;
     ASSERT_DEVICE_ERROR(device.ImportSharedBufferMemory(&desc));
@@ -360,20 +526,19 @@ TEST_P(SharedBufferMemoryD3D12SharedFileHandleTests, nullResourceFailure) {
 
 // Ensure that heap size not being a multiple of 65536 (D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)
 // results in error.
-TEST_P(SharedBufferMemoryD3D12SharedFileHandleTests, MemorySizeNotAlignFailure) {
-    constexpr uint32_t kUnAlignedSize =
-        native::d3d12::SharedBufferMemoryD3D12SharedMemoryFileHandleDescriptor::kRequiredAlignment /
-        2;
+TEST_P(SharedBufferMemoryD3D12SharedFileHandleWithExtendedUsagesTests, MemorySizeNotAlignFailure) {
+    constexpr uint32_t kUnAlignedSize = kD3D12SharedBufferMemoryFileMappingHandleSizeAlignment / 2;
 
     LARGE_INTEGER largeSize = {};
     largeSize.QuadPart = kUnAlignedSize;
     // Create a named shared memory object by using INVALID_HANDLE_VALUE as input file handle.
     // See https://learn.microsoft.com/en-us/windows/win32/memory/creating-named-shared-memory.
-    HANDLE sharedMemoryHandle = CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
-                                                  largeSize.HighPart, largeSize.LowPart, nullptr);
-    EXPECT_NE(sharedMemoryHandle, nullptr);
+    SystemHandle sharedMemoryHandle =
+        SystemHandle::Acquire(CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+                                                largeSize.HighPart, largeSize.LowPart, nullptr));
+    EXPECT_TRUE(sharedMemoryHandle.IsValid());
 
-    native::d3d12::SharedBufferMemoryD3D12SharedMemoryFileHandleDescriptor sharedFileHandleDesc;
+    wgpu::SharedBufferMemoryFromWindowsHandleDescriptor sharedFileHandleDesc;
     sharedFileHandleDesc.handle = nullptr;
     sharedFileHandleDesc.size = kUnAlignedSize;
     wgpu::SharedBufferMemoryDescriptor desc;
@@ -381,12 +546,28 @@ TEST_P(SharedBufferMemoryD3D12SharedFileHandleTests, MemorySizeNotAlignFailure) 
     ASSERT_DEVICE_ERROR(device.ImportSharedBufferMemory(&desc));
 }
 
-DAWN_INSTANTIATE_PREFIXED_TEST_P(D3D12,
-                                 SharedBufferMemoryTests,
-                                 {D3D12Backend()},
-                                 {ExistingD3D12ResourceBackend::GetInstance(),
-                                  D3D12SharedMemoryFileHandleBackend::GetInstance()});
+// Tests that no error occurs when we create a SharedBufferMemory with Uniform usage.
+TEST_P(SharedBufferMemoryD3D12SharedFileHandleWithExtendedUsagesTests, UniformUsageValidation) {
+    constexpr wgpu::BufferUsage kMapWriteUsages =
+        wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc;
+    wgpu::SharedBufferMemory memory = GetParam().mBackend->CreateSharedBufferMemory(
+        device, kMapWriteUsages, kD3D12SharedBufferMemoryFileMappingHandleSizeAlignment);
+    wgpu::SharedBufferMemoryProperties properties;
+    memory.GetProperties(&properties);
 
+    wgpu::BufferDescriptor bufferDesc = {};
+    bufferDesc.size = properties.size;
+    bufferDesc.usage = properties.usage | wgpu::BufferUsage::Uniform;
+
+    memory.CreateBuffer(&bufferDesc);
+}
+
+DAWN_INSTANTIATE_PREFIXED_TEST_P(
+    D3D12,
+    SharedBufferMemoryTests,
+    {D3D12Backend()},
+    {ExistingD3D12ResourceBackend::GetInstance(),
+     D3D12SharedMemoryFileHandleWithExtendedUsagesBackend::GetInstance()});
 // As D3D12 backend is filtered out on Windows x86, we need below to allow uninstantiated gtests.
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SharedBufferMemoryExistingD3D12ResourceTests);
 DAWN_INSTANTIATE_PREFIXED_TEST_P(D3D12,
@@ -395,11 +576,254 @@ DAWN_INSTANTIATE_PREFIXED_TEST_P(D3D12,
                                  {ExistingD3D12ResourceBackend::GetInstance()});
 
 // As D3D12 backend is filtered out on Windows x86, we need below to allow uninstantiated gtests.
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(
+    SharedBufferMemoryD3D12SharedFileHandleWithExtendedUsagesTests);
+DAWN_INSTANTIATE_PREFIXED_TEST_P(
+    D3D12,
+    SharedBufferMemoryD3D12SharedFileHandleWithExtendedUsagesTests,
+    {D3D12Backend()},
+    {D3D12SharedMemoryFileHandleWithExtendedUsagesBackend::GetInstance()});
+
+// Backend for platforms that support SharedBufferMemoryFromWindowsHandle and
+// SharedFenceDXGISharedHandle but don't support BufferMapExtendedUsages.
+class D3D12SharedMemoryFileHandleBackend : public D3D12SharedMemoryFileHandleBackendBase {
+  public:
+    static Backend GetInstance() {
+        static D3D12SharedMemoryFileHandleBackend b;
+        return &b;
+    }
+
+    std::string Name() const override { return "D3D12SharedMemoryFileHandle"; }
+
+    std::vector<wgpu::FeatureName> RequiredFeatures(const wgpu::Adapter& adapter) const override {
+        return {wgpu::FeatureName::SharedBufferMemoryFromWindowsHandle,
+                wgpu::FeatureName::SharedFenceDXGISharedHandle};
+    }
+
+  private:
+    D3D12SharedMemoryFileHandleBackend() {}
+};
+
+class SharedBufferMemoryD3D12SharedFileHandleTests : public SharedBufferMemoryTests {};
+
+// A regression test against `CanUseCopyResource()` with the the buffers created from shared buffer
+// memory. `CanUseCopyResource()` must compare actual D3D12 resource widths instead of
+// `GetAllocatedSize()` because for an external buffer, GetAllocatedSize() equals the WebGPU buffer
+// size, which may be smaller than the D3D12 resource backing it (65536-byte aligned heap here).
+TEST_P(SharedBufferMemoryD3D12SharedFileHandleTests,
+       CopyFromSubsizedExternalBufferDoesNotUseCopyResource) {
+    // The SharedBufferMemory is backed by a 65536-byte D3D12 resource (heap alignment requirement).
+    // A 4-byte WebGPU buffer created from it has GetAllocatedSize() = 4, D3D12 width = 65536.
+    wgpu::SharedBufferMemory memory = GetParam().mBackend->CreateSharedBufferMemory(
+        device, wgpu::BufferUsage::None, kD3D12SharedBufferMemoryFileMappingHandleSizeAlignment);
+    wgpu::SharedBufferMemoryProperties properties;
+    memory.GetProperties(&properties);
+    DAWN_TEST_UNSUPPORTED_IF(!(properties.usage & wgpu::BufferUsage::MapWrite));
+
+    constexpr uint32_t kTestData = 0xDEADBEEF;
+    constexpr uint64_t kTestDataSize = sizeof(kTestData);
+
+    wgpu::BufferDescriptor srcDesc = {};
+    srcDesc.size = kTestDataSize;
+    srcDesc.usage = wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc;
+    srcDesc.mappedAtCreation = true;
+    wgpu::Buffer srcBuffer = memory.CreateBuffer(&srcDesc);
+    ASSERT_TRUE(srcBuffer.Get());
+
+    wgpu::SharedBufferMemoryBeginAccessDescriptor beginDesc = {};
+    beginDesc.initialized = false;
+    ASSERT_EQ(wgpu::Status::Success, memory.BeginAccess(srcBuffer, &beginDesc));
+
+    uint32_t* mapped = static_cast<uint32_t*>(srcBuffer.GetMappedRange(0, kTestDataSize));
+    ASSERT_NE(nullptr, mapped);
+    *mapped = kTestData;
+    srcBuffer.Unmap();
+
+    // Regular Dawn CopyDst buffer: D3D12 resource width = kTestDataSize.
+    // Old bug: GetAllocatedSize() both = 4 → CanUseCopyResource = true
+    //          → CopyResource(4-byte D3D12, 65536-byte D3D12) → D3D12 validation error.
+    // Fixed:   D3D12 widths 4 ≠ 65536 → CanUseCopyResource = false → CopyBufferRegion.
+    wgpu::BufferDescriptor dstDesc = {};
+    dstDesc.size = kTestDataSize;
+    dstDesc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc;
+    wgpu::Buffer dstBuffer = device.CreateBuffer(&dstDesc);
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    encoder.CopyBufferToBuffer(srcBuffer, 0, dstBuffer, 0, kTestDataSize);
+    wgpu::CommandBuffer commandBuffer = encoder.Finish();
+    queue.Submit(1, &commandBuffer);
+
+    wgpu::SharedBufferMemoryEndAccessState endState = {};
+    ASSERT_EQ(wgpu::Status::Success, memory.EndAccess(srcBuffer, &endState));
+
+    EXPECT_BUFFER_U32_EQ(kTestData, dstBuffer, 0);
+}
+
+// As D3D12 backend is filtered out on Windows x86, we need below to allow uninstantiated gtests.
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SharedBufferMemoryD3D12SharedFileHandleTests);
 DAWN_INSTANTIATE_PREFIXED_TEST_P(D3D12,
                                  SharedBufferMemoryD3D12SharedFileHandleTests,
                                  {D3D12Backend()},
                                  {D3D12SharedMemoryFileHandleBackend::GetInstance()});
+
+// Backend for SharedBufferMemory imported from a host-allocated pointer.
+class D3D12HostPointerBackend : public SharedBufferMemoryTestBackend {
+  public:
+    static Backend GetInstance() {
+        static D3D12HostPointerBackend b;
+        return &b;
+    }
+
+    std::string Name() const override { return "D3D12HostPointer"; }
+
+    std::vector<wgpu::FeatureName> RequiredFeatures(const wgpu::Adapter& adapter) const override {
+        return {wgpu::FeatureName::SharedBufferMemoryHostPointer,
+                wgpu::FeatureName::SharedFenceDXGISharedHandle};
+    }
+
+    wgpu::SharedBufferMemory CreateSharedBufferMemory(const wgpu::Device& device,
+                                                      wgpu::BufferUsage usages,
+                                                      uint32_t bufferSize,
+                                                      uint32_t initializationData = 0) override {
+        uint64_t alignedSize =
+            Align<uint64_t>(bufferSize, kD3D12SharedBufferMemoryHostPointerAlignment);
+        // Over-allocate by one alignment so an aligned region can always be found within it,
+        // rather than relying on CreateFileMapping's implicit alignment guarantees.
+        uint64_t allocationSize = alignedSize + kD3D12SharedBufferMemoryHostPointerAlignment;
+        std::byte* allocationPtr = static_cast<std::byte*>(
+            VirtualAlloc(nullptr, allocationSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        EXPECT_NE(nullptr, allocationPtr);
+        // `VirtualAlloc` aligns memory addresses to system's allocation granularity (64 KB) for
+        // reservations on Windows.
+        DAWN_ASSERT(IsPtrAligned(allocationPtr, kD3D12SharedBufferMemoryHostPointerAlignment));
+        // SAFETY: `allocationPtr` is always valid for `allocationSize` bytes.
+        Span<std::byte> allocation = DAWN_UNSAFE_BUFFERS(
+            Span<std::byte>(allocationPtr, static_cast<size_t>(allocationSize)));
+
+        size_t pointerSize = static_cast<size_t>(alignedSize);
+        // SAFETY: `allocationPtr` is always valid for at least `pointerSize` bytes.
+        auto pointer = DAWN_UNSAFE_BUFFERS(Span<std::byte>(allocationPtr, pointerSize));
+
+        pointer.first(sizeof(initializationData)).CopyFrom(ByteSpanFromRef(initializationData));
+
+        wgpu::SharedBufferMemoryDescriptor desc;
+        wgpu::SharedBufferMemoryHostPointerDescriptor hostPointerDesc;
+        hostPointerDesc.pointer = pointer.data();
+        hostPointerDesc.size = alignedSize;
+        hostPointerDesc.SetDisposeCallback(wgpu::CallbackMode::AllowSpontaneous,
+                                           [pointer](wgpu::CallbackStatus status) {
+                                               EXPECT_EQ(wgpu::CallbackStatus::Success, status);
+                                               VirtualFree(pointer.data(), 0, MEM_RELEASE);
+                                           });
+        desc.nextInChain = &hostPointerDesc;
+
+        wgpu::SharedBufferMemory memory = device.ImportSharedBufferMemory(&desc);
+        if (native::CheckIsErrorForTesting(memory.Get())) {
+            VirtualFree(allocationPtr, 0, MEM_RELEASE);
+        }
+        return memory;
+    }
+
+  private:
+    D3D12HostPointerBackend() {}
+};
+
+class SharedBufferMemoryD3D12HostPointerTests : public SharedBufferMemoryTests {
+  protected:
+    using MockDisposeCallback = testing::MockCppCallback<wgpu::DisposeCallback<void>*>;
+    testing::StrictMock<MockDisposeCallback> mMockDispose;
+};
+
+// Ensure that importing a nullptr host pointer results in error, and that disposeCallback is
+// still invoked exactly once, with an error status.
+TEST_P(SharedBufferMemoryD3D12HostPointerTests, NullPointerFailure) {
+    EXPECT_CALL(mMockDispose, Call(wgpu::CallbackStatus::Error)).Times(1);
+
+    wgpu::SharedBufferMemoryHostPointerDescriptor hostPointerDesc;
+    hostPointerDesc.pointer = nullptr;
+    hostPointerDesc.size = kD3D12SharedBufferMemoryHostPointerAlignment;
+    hostPointerDesc.SetDisposeCallback(wgpu::CallbackMode::AllowSpontaneous,
+                                       mMockDispose.Callback());
+    wgpu::SharedBufferMemoryDescriptor desc;
+    desc.nextInChain = &hostPointerDesc;
+    ASSERT_DEVICE_ERROR(device.ImportSharedBufferMemory(&desc));
+}
+
+// Ensure that importing a zero-sized shared buffer memory results in error, and that
+// disposeCallback is still invoked exactly once, with an error status.
+TEST_P(SharedBufferMemoryD3D12HostPointerTests, ZeroSizeFailure) {
+    void* ptr = VirtualAlloc(nullptr, kD3D12SharedBufferMemoryHostPointerAlignment,
+                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    ASSERT_NE(ptr, nullptr);
+
+    EXPECT_CALL(mMockDispose, Call(wgpu::CallbackStatus::Error))
+        .WillOnce([ptr](wgpu::CallbackStatus) { EXPECT_TRUE(VirtualFree(ptr, 0, MEM_RELEASE)); });
+
+    wgpu::SharedBufferMemoryHostPointerDescriptor hostPointerDesc;
+    hostPointerDesc.pointer = ptr;
+    hostPointerDesc.size = 0;
+    hostPointerDesc.SetDisposeCallback(wgpu::CallbackMode::AllowSpontaneous,
+                                       mMockDispose.Callback());
+    wgpu::SharedBufferMemoryDescriptor desc;
+    desc.nextInChain = &hostPointerDesc;
+    ASSERT_DEVICE_ERROR(device.ImportSharedBufferMemory(&desc));
+}
+
+// Ensure that importing a pointer that is not aligned to the required alignment results in error,
+// and that disposeCallback is still invoked exactly once, with an error status.
+TEST_P(SharedBufferMemoryD3D12HostPointerTests, UnalignedPointerFailure) {
+    constexpr uint64_t kAllocationSize = 2 * kD3D12SharedBufferMemoryHostPointerAlignment;
+    void* ptr = VirtualAlloc(nullptr, kAllocationSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    ASSERT_NE(ptr, nullptr);
+
+    EXPECT_CALL(mMockDispose, Call(wgpu::CallbackStatus::Error))
+        .WillOnce([ptr](wgpu::CallbackStatus) { EXPECT_TRUE(VirtualFree(ptr, 0, MEM_RELEASE)); });
+
+    wgpu::SharedBufferMemoryHostPointerDescriptor hostPointerDesc;
+    // SAFETY: `ptr + kD3D12SharedBufferMemoryHostPointerAlignment / 2` and the following
+    // alignment-sized range are within the allocated memory range.
+    hostPointerDesc.pointer = DAWN_UNSAFE_BUFFERS(static_cast<uint8_t*>(ptr) +
+                                                  kD3D12SharedBufferMemoryHostPointerAlignment / 2);
+    hostPointerDesc.size = kD3D12SharedBufferMemoryHostPointerAlignment;
+    hostPointerDesc.SetDisposeCallback(wgpu::CallbackMode::AllowSpontaneous,
+                                       mMockDispose.Callback());
+    wgpu::SharedBufferMemoryDescriptor desc;
+    desc.nextInChain = &hostPointerDesc;
+    ASSERT_DEVICE_ERROR(device.ImportSharedBufferMemory(&desc));
+}
+
+// Ensure that the host pointer is released through its disposal callback when Dawn is finished
+// using the shared buffer memory.
+TEST_P(SharedBufferMemoryD3D12HostPointerTests, DisposeCallbackIsCalled) {
+    void* ptr = VirtualAlloc(nullptr, kD3D12SharedBufferMemoryHostPointerAlignment,
+                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    ASSERT_NE(ptr, nullptr);
+
+    EXPECT_CALL(mMockDispose, Call(wgpu::CallbackStatus::Success))
+        .WillOnce([ptr](wgpu::CallbackStatus) { EXPECT_TRUE(VirtualFree(ptr, 0, MEM_RELEASE)); });
+
+    {
+        wgpu::SharedBufferMemoryHostPointerDescriptor hostPointerDesc;
+        hostPointerDesc.pointer = ptr;
+        hostPointerDesc.size = kD3D12SharedBufferMemoryHostPointerAlignment;
+        hostPointerDesc.SetDisposeCallback(wgpu::CallbackMode::AllowSpontaneous,
+                                           mMockDispose.Callback());
+        wgpu::SharedBufferMemoryDescriptor desc;
+        desc.nextInChain = &hostPointerDesc;
+
+        wgpu::SharedBufferMemory memory = device.ImportSharedBufferMemory(&desc);
+        ASSERT_TRUE(memory.Get());
+    }
+
+    WaitForAllOperations();
+}
+
+// As D3D12 backend is filtered out on Windows x86, we need below to allow uninstantiated gtests.
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SharedBufferMemoryD3D12HostPointerTests);
+DAWN_INSTANTIATE_PREFIXED_TEST_P(D3D12,
+                                 SharedBufferMemoryD3D12HostPointerTests,
+                                 {D3D12Backend()},
+                                 {D3D12HostPointerBackend::GetInstance()});
 
 }  // anonymous namespace
 }  // namespace dawn

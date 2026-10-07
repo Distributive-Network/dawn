@@ -28,9 +28,9 @@
 #ifndef SRC_DAWN_NATIVE_OPENGL_GLFORMAT_H_
 #define SRC_DAWN_NATIVE_OPENGL_GLFORMAT_H_
 
-#include "dawn/native/Format.h"
-#include "dawn/native/opengl/OpenGLFunctions.h"
-#include "dawn/native/opengl/opengl_platform.h"
+#include "src/dawn/native/Format.h"
+#include "src/dawn/native/opengl/OpenGLFunctions.h"
+#include "src/dawn/native/opengl/opengl_platform.h"
 
 namespace dawn::native::opengl {
 
@@ -44,7 +44,7 @@ struct GLFormat {
     // OpenGL has different functions depending on the format component type, for example
     // glClearBufferfv is only valid on formats with the Float ComponentType
     enum ComponentType { Float, Int, Uint, DepthStencil };
-    ComponentType componentType;
+    ComponentType componentType{};
 };
 
 using GLFormatTable = ityp::array<FormatIndex, GLFormat, kKnownFormatCount>;

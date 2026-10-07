@@ -1,10 +1,26 @@
+/*
+ * Copyright 2025 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package androidx.webgpu
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.SdkSuppress
 import androidx.test.filters.SmallTest
 import androidx.webgpu.WebGpuTestConstants.EMULATOR_TESTS_MIN_API_LEVEL
 import androidx.webgpu.helper.initLibrary
-import androidx.webgpu.GPU.createInstance
+import androidx.webgpu.GPU.createGPUInstance
 import java.util.concurrent.Executor
 import junit.framework.TestCase.assertEquals
 import kotlinx.coroutines.runBlocking
@@ -28,7 +44,7 @@ class AdapterTest {
   @Before
   fun setup() = runBlocking {
     initLibrary()
-    instance = createInstance()
+    instance = createGPUInstance()
     adapter = instance.requestAdapter()
   }
 
@@ -52,6 +68,7 @@ class AdapterTest {
 
   @Test
   @ApiRequirement(minApi = EMULATOR_TESTS_MIN_API_LEVEL, onlySkipOnEmulator = true)
+    @SdkSuppress(maxSdkVersion = 36) // b/537525245
   fun adapterBackendTest() {
     val adapterInfo = adapter.getInfo()
     assertEquals(
@@ -131,9 +148,7 @@ class AdapterTest {
     assertThrows(
       "Adapter should be consumed after one device request", WebGpuException::class.java
     ) {
-      runBlocking {
-        val secondDeviceStatus = adapter.requestDevice()
-      }
+      runBlocking { adapter.requestDevice() }
     }
   }
 
@@ -181,16 +196,16 @@ class AdapterTest {
    */
   @Test
   fun requestDeviceWithWorseThanDefaultLimitClamps() {
-      val worseLimit = kDefaultLimits.getValue("maxBindGroups") - 1
-      assert(worseLimit > 0) // Ensure the value is still valid, just worse.
-      val device = runBlocking { requestTestDevice(limits = GPULimits(maxBindGroups = worseLimit)) }
-      val deviceLimits = device.getLimits()
-      assertEquals(
-        "Device limit should be clamped to the default",
-        kDefaultLimits.getValue("maxBindGroups"),
-        deviceLimits.maxBindGroups
-      )
-      runCatching { device.destroy() }
+    val worseLimit = kDefaultLimits.getValue("maxBindGroups") - 1
+    assert(worseLimit > 0) // Ensure the value is still valid, just worse.
+    val device = runBlocking { requestTestDevice(limits = GPULimits(maxBindGroups = worseLimit)) }
+    val deviceLimits = device.getLimits()
+    assertEquals(
+      "Device limit should be clamped to the default",
+      kDefaultLimits.getValue("maxBindGroups"),
+      deviceLimits.maxBindGroups
+    )
+    runCatching { device.destroy() }
   }
 
   /**

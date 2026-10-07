@@ -54,7 +54,8 @@ TEST_F(SpirvWriterTest, Loop_BreakIf) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -91,7 +92,8 @@ TEST_F(SpirvWriterTest, Loop_BreakIf_WithRobustness) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << Error() << output_;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
 
     EXPECT_INST("%14 = OpConstantComposite %v2uint %uint_4294967295 %uint_4294967295");
     EXPECT_INST(R"(
@@ -153,7 +155,8 @@ TEST_F(SpirvWriterTest, Loop_UnconditionalBreakInBody) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -199,7 +202,8 @@ TEST_F(SpirvWriterTest, Loop_ConditionalBreakInBody) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -250,7 +254,8 @@ TEST_F(SpirvWriterTest, Loop_ConditionalContinueInBody) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -292,7 +297,8 @@ TEST_F(SpirvWriterTest, Loop_UnconditionalReturnInBody) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -314,7 +320,8 @@ TEST_F(SpirvWriterTest, Loop_UseResultFromBodyInContinuing) {
     b.Append(func->Block(), [&] {
         auto* loop = b.Loop();
         b.Append(loop->Body(), [&] {
-            auto* result = b.Equal(1_i, 2_i);
+            auto* l = b.Let("l", 1_i);
+            auto* result = b.Equal(l, 2_i);
             b.Continue(loop);
 
             b.Append(loop->Continuing(), [&] {  //
@@ -332,7 +339,8 @@ TEST_F(SpirvWriterTest, Loop_UseResultFromBodyInContinuing) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -340,10 +348,10 @@ TEST_F(SpirvWriterTest, Loop_UseResultFromBodyInContinuing) {
                OpLoopMerge %8 %6 None
                OpBranch %5
           %5 = OpLabel
-          %9 = OpIEqual %bool %int_1 %int_2
+         %11 = OpIEqual %bool %l %int_2
                OpBranch %6
           %6 = OpLabel
-               OpBranchConditional %9 %8 %7
+               OpBranchConditional %11 %8 %7
           %8 = OpLabel
                OpReturn
                OpFunctionEnd
@@ -381,7 +389,8 @@ TEST_F(SpirvWriterTest, Loop_NestedLoopInBody) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -437,7 +446,8 @@ TEST_F(SpirvWriterTest, Loop_NestedLoopInContinuing) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -504,7 +514,8 @@ TEST_F(SpirvWriterTest, Loop_NestedLoopInContinuing_UnreachableInNestedBody) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -578,7 +589,8 @@ TEST_F(SpirvWriterTest, Loop_NestedLoopInContinuing_UnreachableInNestedBody_With
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
                ; Function foo
         %foo = OpFunction %int None %3
@@ -657,7 +669,8 @@ TEST_F(SpirvWriterTest, Loop_Phi_SingleValue) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %5 = OpLabel
                OpBranch %8
@@ -667,9 +680,8 @@ TEST_F(SpirvWriterTest, Loop_Phi_SingleValue) {
                OpBranch %6
           %6 = OpLabel
          %16 = OpBitcast %uint %11
-         %17 = OpBitcast %uint %int_1
-         %18 = OpIAdd %uint %16 %17
-         %14 = OpBitcast %int %18
+         %17 = OpIAdd %uint %16 %uint_1
+         %14 = OpBitcast %int %17
                OpBranch %7
           %7 = OpLabel
          %13 = OpPhi %int %14 %6
@@ -719,7 +731,8 @@ TEST_F(SpirvWriterTest, Loop_Phi_MultipleValue) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %5 = OpLabel
                OpBranch %8
@@ -730,9 +743,8 @@ TEST_F(SpirvWriterTest, Loop_Phi_MultipleValue) {
                OpBranch %6
           %6 = OpLabel
          %21 = OpBitcast %uint %11
-         %22 = OpBitcast %uint %int_1
-         %23 = OpIAdd %uint %21 %22
-         %18 = OpBitcast %int %23
+         %22 = OpIAdd %uint %21 %uint_1
+         %18 = OpBitcast %int %22
                OpBranch %7
           %7 = OpLabel
          %13 = OpPhi %int %18 %6
@@ -786,7 +798,8 @@ TEST_F(SpirvWriterTest, Loop_Phi_NestedIf) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %5
@@ -859,7 +872,8 @@ TEST_F(SpirvWriterTest, Loop_Phi_NestedLoop) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %5
@@ -922,7 +936,8 @@ TEST_F(SpirvWriterTest, Loop_Phi_NestedIfWithResultAndImplicitFalse_InContinuing
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST("%15 = OpUndef %bool");
     EXPECT_INST(R"(
           %4 = OpLabel
@@ -988,7 +1003,8 @@ TEST_F(SpirvWriterTest, Loop_ExitValue) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7
@@ -1062,7 +1078,8 @@ TEST_F(SpirvWriterTest, Loop_ExitValue_BreakIf) {
 
     Options options;
     options.disable_robustness = true;
-    ASSERT_TRUE(Generate(options)) << Error() << output_;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
           %4 = OpLabel
                OpBranch %7

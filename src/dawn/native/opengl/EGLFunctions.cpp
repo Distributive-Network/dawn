@@ -25,14 +25,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/EGLFunctions.h"
+#include "src/dawn/native/opengl/EGLFunctions.h"
 
 #include <string>
 #include <tuple>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_split.h"
-#include "dawn/native/opengl/UtilsEGL.h"
+#include "src/dawn/native/opengl/UtilsEGL.h"
 
 namespace dawn::native::opengl {
 
@@ -97,17 +97,19 @@ static constexpr std::array<ExtensionInfo, kExtensionCount> kExtensionInfos{{
      NeverPromoted, ExtType::Display},
     {EGLExt::ANGLEContextVirtualization, "EGL_ANGLE_context_virtualization", NeverPromoted,
      ExtType::Display},
+    {EGLExt::ANGLECreateContextWebGLCompatibility, "EGL_ANGLE_create_context_webgl_compatibility",
+     NeverPromoted, ExtType::Display},
     //
 }};
 
 }  // anonymous namespace
 
-#define GET_PROC_WITH_NAME(member, name)                                          \
-    do {                                                                          \
-        member = reinterpret_cast<decltype(member)>(GetProcAddress(name));        \
-        if (member == nullptr) {                                                  \
-            return DAWN_INTERNAL_ERROR(std::string("Couldn't get proc ") + name); \
-        }                                                                         \
+#define GET_PROC_WITH_NAME(member, name)                                               \
+    do {                                                                               \
+        member = reinterpret_cast<decltype(member)>(GetProcAddress(name));             \
+        if (member == nullptr) {                                                       \
+            return DAWN_UNRECOVERABLE_ERROR(std::string("Couldn't get proc ") + name); \
+        }                                                                              \
     } while (0)
 
 #define GET_PROC(name) GET_PROC_WITH_NAME(name, "egl" #name)

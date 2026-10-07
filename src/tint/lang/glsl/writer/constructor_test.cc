@@ -47,10 +47,11 @@ TEST_F(GlslWriterTest, Constructor_Type_Float_Large) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 float a() {
-  return float(1073741824.0f);
+  return 1073741824.0f;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -71,10 +72,11 @@ TEST_F(GlslWriterTest, Constructor_Type_Float) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 float a() {
-  return float(-0.00001200000042445026f);
+  return -0.00001200000042445026f;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -96,11 +98,12 @@ TEST_F(GlslWriterTest, Constructor_Type_F16_Large) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 float16_t a() {
-  return float16_t(32752.0hf);
+  return 32752.0hf;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -121,11 +124,12 @@ TEST_F(GlslWriterTest, Constructor_Type_F16) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 float16_t a() {
-  return float16_t(-0.0011997222900390625hf);
+  return -0.0011997222900390625hf;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -146,10 +150,11 @@ TEST_F(GlslWriterTest, Constructor_Type_Bool_False) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 bool a() {
-  return bool(false);
+  return false;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -170,10 +175,11 @@ TEST_F(GlslWriterTest, Constructor_Type_Bool_True) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 bool a() {
-  return bool(true);
+  return true;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -194,10 +200,11 @@ TEST_F(GlslWriterTest, Constructor_Type_Int) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 int a() {
-  return int(-12345);
+  return -12345;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -218,10 +225,11 @@ TEST_F(GlslWriterTest, Constructor_Type_Uint) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 uint a() {
-  return uint(12345u);
+  return 12345u;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -242,7 +250,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_F32) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 vec3 a() {
   return vec3(1.0f, 2.0f, 3.0f);
@@ -266,7 +275,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_F16) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 f16vec3 a() {
@@ -291,7 +301,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_Empty_F32) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 vec3 a() {
   return vec3(0.0f);
@@ -315,7 +326,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_Empty_F16) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 f16vec3 a() {
@@ -340,7 +352,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_SingleScalar_F32_Literal) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 vec3 a() {
   return vec3(2.0f);
@@ -364,7 +377,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_SingleScalar_F16_Literal) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 f16vec3 a() {
@@ -390,7 +404,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_SingleScalar_F32_Var) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 vec3 a() {
   float v = 2.0f;
@@ -416,7 +431,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_SingleScalar_F16_Var) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 f16vec3 a() {
@@ -442,7 +458,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_SingleScalar_Bool) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 bvec3 a() {
   return bvec3(true);
@@ -466,7 +483,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_SingleScalar_Int) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 ivec3 a() {
   return ivec3(2);
@@ -490,7 +508,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Vec_SingleScalar_UInt) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 uvec3 a() {
   return uvec3(2u);
@@ -516,7 +535,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Mat_F32) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 mat2x3 a() {
   vec3 v1 = vec3(1.0f, 2.0f, 3.0f);
@@ -544,7 +564,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Mat_F16) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 f16mat2x3 a() {
@@ -581,12 +602,11 @@ TEST_F(GlslWriterTest, Constructor_Type_Mat_Complex_F32) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 mat4 a() {
-  vec4 v = vec4(2.0f, 3.0f, 4.0f, 8.0f);
-  vec4 v_1 = vec4(0.0f);
-  return mat4(v, v_1, vec4(7.0f), vec4(vec4(42.0f, 21.0f, 6.0f, -5.0f)));
+  return mat4(vec4(2.0f, 3.0f, 4.0f, 8.0f), vec4(0.0f), vec4(7.0f), vec4(42.0f, 21.0f, 6.0f, -5.0f));
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -617,13 +637,12 @@ TEST_F(GlslWriterTest, Constructor_Type_Mat_Complex_F16) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 f16mat4 a() {
-  f16vec4 v = f16vec4(2.0hf, 3.0hf, 4.0hf, 8.0hf);
-  f16vec4 v_1 = f16vec4(0.0hf);
-  return f16mat4(v, v_1, f16vec4(7.0hf), f16vec4(f16vec4(42.0hf, 21.0hf, 6.0hf, -5.0hf)));
+  return f16mat4(f16vec4(2.0hf, 3.0hf, 4.0hf, 8.0hf), f16vec4(0.0hf), f16vec4(7.0hf), f16vec4(42.0hf, 21.0hf, 6.0hf, -5.0hf));
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -644,7 +663,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Mat_Empty_F32) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 mat2x3 a() {
   return mat2x3(vec3(0.0f), vec3(0.0f));
@@ -668,7 +688,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Mat_Empty_F16) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 f16mat2x3 a() {
@@ -698,10 +719,11 @@ TEST_F(GlslWriterTest, Constructor_Type_Mat_Identity_F32) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 mat4 a() {
-  return mat4(mat4(vec4(0.0f), vec4(0.0f), vec4(0.0f), vec4(0.0f)));
+  return mat4(vec4(0.0f), vec4(0.0f), vec4(0.0f), vec4(0.0f));
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -727,11 +749,12 @@ TEST_F(GlslWriterTest, Constructor_Type_Mat_Identity_F16) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(#extension GL_AMD_gpu_shader_half_float: require
 
 f16mat4 a() {
-  return f16mat4(f16mat4(f16vec4(0.0hf), f16vec4(0.0hf), f16vec4(0.0hf), f16vec4(0.0hf)));
+  return f16mat4(f16vec4(0.0hf), f16vec4(0.0hf), f16vec4(0.0hf), f16vec4(0.0hf));
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
@@ -755,7 +778,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Array) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 vec3[3] a() {
   vec3 v1 = vec3(1.0f, 2.0f, 3.0f);
@@ -782,7 +806,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Array_Empty) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 vec3[3] a() {
   return vec3[3](vec3(0.0f), vec3(0.0f), vec3(0.0f));
@@ -812,7 +837,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Struct) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 
 struct S {
@@ -849,7 +875,8 @@ TEST_F(GlslWriterTest, Constructor_Type_Struct_Empty) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.glsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(
 
 struct S {

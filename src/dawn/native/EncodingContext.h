@@ -33,14 +33,15 @@
 #include <utility>
 #include <vector>
 
-#include "dawn/native/CommandAllocator.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/ErrorData.h"
-#include "dawn/native/IndirectDrawMetadata.h"
 #include "dawn/native/ObjectType_autogen.h"
-#include "dawn/native/PassResourceUsageTracker.h"
-#include "dawn/native/dawn_platform.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/native/CommandAllocator.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/ErrorData.h"
+#include "src/dawn/native/ErrorSink.h"
+#include "src/dawn/native/IndirectDrawMetadata.h"
+#include "src/dawn/native/PassResourceUsageTracker.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace dawn::native {
 
@@ -105,16 +106,19 @@ class EncodingContext {
     const ComputePassUsages& GetComputePassUsages() const;
     RenderPassUsages AcquireRenderPassUsages();
     ComputePassUsages AcquireComputePassUsages();
-    std::vector<IndirectDrawMetadata> AcquireIndirectDrawMetadata();
+    ityp::vector<PassIndex, IndirectDrawMetadata> AcquireIndirectDrawMetadata();
 
     void PushDebugGroupLabel(std::string_view groupLabel);
     void PopDebugGroupLabel();
 
   private:
     // Functions to handle encoder errors
-    void HandleError(std::unique_ptr<ErrorData> error);
+    void HandleError(std::unique_ptr<UnrecoverableError> error);
+    void HandleError(std::unique_ptr<ValidationError> error);
 
-    inline bool ConsumedError(MaybeError maybeError) {
+    template <typename E>
+        requires(IsMaybeConcreteError<E>)
+    inline bool ConsumedError(E maybeError) {
         if (maybeError.IsError()) [[unlikely]] {
             HandleError(maybeError.AcquireError());
             return true;
@@ -122,10 +126,11 @@ class EncodingContext {
         return false;
     }
 
-    template <typename... Args>
-    inline bool ConsumedError(MaybeError maybeError, const char* formatStr, const Args&... args) {
+    template <typename E, typename... Args>
+        requires(IsMaybeConcreteError<E>)
+    inline bool ConsumedError(E maybeError, const char* formatStr, const Args&... args) {
         if (maybeError.IsError()) [[unlikely]] {
-            std::unique_ptr<ErrorData> error = maybeError.AcquireError();
+            auto error = maybeError.AcquireError();
             if (error->GetType() == InternalErrorType::Validation) {
                 std::string out;
                 absl::UntypedFormatSpec format(formatStr);
@@ -133,7 +138,7 @@ class EncodingContext {
                     error->AppendContext(std::move(out));
                 } else {
                     error->AppendContext(
-                        absl::StrFormat("[Failed to format error message: \"%s\"].", formatStr));
+                        absl::StrFormat("[Failed to format error: \"%s\"].", formatStr));
                 }
             }
             HandleError(std::move(error));
@@ -142,7 +147,7 @@ class EncodingContext {
         return false;
     }
 
-    inline MaybeError ValidateCanEncodeOn(const ApiObjectBase* encoder) {
+    inline MaybeValError ValidateCanEncodeOn(const ApiObjectBase* encoder) {
         if (encoder != mCurrentEncoder) [[unlikely]] {
             switch (mStatus) {
                 case Status::ErrorAtCreation:
@@ -211,7 +216,7 @@ class EncodingContext {
     bool mWereComputePassUsagesAcquired = false;
 
     // One for each render pass.
-    std::vector<IndirectDrawMetadata> mIndirectDrawMetadata;
+    ityp::vector<PassIndex, IndirectDrawMetadata> mIndirectDrawMetadata;
     bool mWereIndirectDrawMetadataAcquired = false;
 
     CommandAllocator mPendingCommands;
@@ -221,8 +226,8 @@ class EncodingContext {
     // Contains pointers to strings allocated inside the command allocators.
     std::vector<std::string_view> mDebugGroupLabels;
 
-    Status mStatus;
-    std::unique_ptr<ErrorData> mError;
+    Status mStatus = Status::Open;
+    std::unique_ptr<UnrecoverableError> mError;
 };
 
 }  // namespace dawn::native

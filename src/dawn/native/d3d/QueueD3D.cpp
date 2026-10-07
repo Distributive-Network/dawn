@@ -25,13 +25,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/d3d/QueueD3D.h"
+#include "src/dawn/native/d3d/QueueD3D.h"
 
 #include <algorithm>
 #include <array>
 #include <utility>
 
-#include "dawn/native/WaitAnySystemEvent.h"
+#include "src/dawn/native/WaitAnySystemEvent.h"
+#include "src/utils/numeric.h"
 
 namespace dawn::native::d3d {
 
@@ -51,9 +52,9 @@ ResultOrError<SystemEventReceiver> Queue::GetSystemEventReceiver() {
         HANDLE fenceEvent =
             ::CreateEvent(nullptr, /*bManualReset=*/true, /*bInitialState=*/false, nullptr);
         if (fenceEvent == nullptr) {
-            return DAWN_INTERNAL_ERROR("CreateEvent failed");
+            return DAWN_UNRECOVERABLE_ERROR("CreateEvent failed");
         }
-        receiver = SystemEventReceiver(utils::SystemHandle::Acquire(fenceEvent));
+        receiver = SystemEventReceiver(SystemHandle::Acquire(fenceEvent));
     }
 
     return receiver;
@@ -62,15 +63,15 @@ ResultOrError<SystemEventReceiver> Queue::GetSystemEventReceiver() {
 MaybeError Queue::ReturnSystemEventReceivers(std::span<SystemEventReceiver> receivers) {
     for (const auto& receiver : receivers) {
         if (!ResetEvent(receiver.GetPrimitive().Get())) {
-            return DAWN_INTERNAL_ERROR("ResetEvent failed");
+            return DAWN_UNRECOVERABLE_ERROR("ResetEvent failed");
         }
     }
     mAvailableEventReceivers.Use([&](auto availableEventReceivers) {
         size_t count =
             std::min(receivers.size(), kMaxEventReceivers - availableEventReceivers->size());
-        availableEventReceivers->insert(availableEventReceivers->end(),
-                                        std::make_move_iterator(receivers.begin()),
-                                        std::make_move_iterator(receivers.begin() + count));
+        availableEventReceivers->insert(
+            availableEventReceivers->end(), std::make_move_iterator(receivers.begin()),
+            std::make_move_iterator(receivers.begin() + sign_cast(count)));
     });
     return {};
 }
@@ -89,10 +90,9 @@ ResultOrError<ExecutionSerial> Queue::WaitForQueueSerialImpl(ExecutionSerial wai
     }
 
     bool ready = false;
-    std::array<std::pair<const dawn::native::SystemEventReceiver&, bool*>, 1> events{
-        {{*receiver, &ready}}};
+    std::pair<const dawn::native::SystemEventReceiver&, bool*> events{*receiver, &ready};
     DAWN_ASSERT(waitSerial <= GetLastSubmittedCommandSerial());
-    bool didComplete = WaitAnySystemEvent(events.begin(), events.end(), timeout);
+    bool didComplete = WaitAnySystemEvent(SpanFromRef(events), timeout);
     // Return the SystemEventReceiver to the pool of receivers so it can be re-waited in the
     // future.
     // The caller should call UpdateCompletedSerial() which will clear passed system events.

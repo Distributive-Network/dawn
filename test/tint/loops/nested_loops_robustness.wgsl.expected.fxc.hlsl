@@ -8,7 +8,7 @@ int f() {
       if (all((tint_loop_idx == (0u).xx))) {
         break;
       }
-      i = asint((asuint(i) + asuint(int(1))));
+      i = asint((asuint(i) + 1u));
       if ((i > int(4))) {
         return int(1);
       }
@@ -18,7 +18,7 @@ int f() {
           if (all((tint_loop_idx_1 == (0u).xx))) {
             break;
           }
-          j = asint((asuint(j) + asuint(int(1))));
+          j = asint((asuint(j) + 1u));
           if ((j > int(4))) {
             return int(2);
           }
@@ -28,7 +28,6 @@ int f() {
             uint tint_carry_1 = uint((tint_low_inc_1 == 4294967295u));
             tint_loop_idx_1.y = (tint_loop_idx_1.y - tint_carry_1);
           }
-          continue;
         }
       }
       /* unreachable */

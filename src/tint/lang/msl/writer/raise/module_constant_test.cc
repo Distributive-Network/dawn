@@ -40,9 +40,9 @@ using namespace tint::core::number_suffixes;  // NOLINT
 namespace tint::msl::writer::raise {
 namespace {
 
-class MslWriter_ModuleConstantTest : public core::ir::transform::TransformTest {
-  public:
-    void SetUp() override { capabilities.Add(core::ir::Capability::kAllowModuleScopeLets); }
+struct MslWriter_ModuleConstantTest : public core::ir::transform::TransformTest {
+  protected:
+    void SetUp() override { mod.properties.Add(core::ir::Property::kAllow16BitFloats); }
 };
 
 TEST_F(MslWriter_ModuleConstantTest, ConstArray) {
@@ -135,7 +135,8 @@ TEST_F(MslWriter_ModuleConstantTest, ConstStruct) {
 
     auto* func = b.Function("foo", ty.u32());
     b.Append(func->Block(), [&] {
-        auto* access = b.Access(ty.u32(), c, 0_u);
+        auto* access = b.Append(mod.CreateInstruction<core::ir::Access>(
+            b.InstructionResult(ty.u32()), c, Vector{b.Constant(0_u)}));
         auto* r = b.Let("q", access);
         b.Return(func, r);
     });

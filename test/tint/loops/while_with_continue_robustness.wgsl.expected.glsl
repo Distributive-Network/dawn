@@ -12,15 +12,13 @@ int f() {
       } else {
         break;
       }
-      uint v = uint(i);
-      i = int((v + uint(1)));
+      i = int((uint(i) + 1u));
       {
         uint tint_low_inc = (tint_loop_idx.x - 1u);
         tint_loop_idx.x = tint_low_inc;
         uint tint_carry = uint((tint_low_inc == 4294967295u));
         tint_loop_idx.y = (tint_loop_idx.y - tint_carry);
       }
-      continue;
     }
   }
   return i;

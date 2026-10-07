@@ -31,11 +31,15 @@
 #include <list>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include "src/tint/utils/ice/ice.h"
+#include "src/utils/numeric.h"
 
 #define SPV_ENABLE_UTILITY_CODE
 #include "spirv/unified1/spirv.hpp11"
@@ -46,9 +50,11 @@ TINT_BEGIN_DISABLE_WARNING(OLD_STYLE_CAST);
 TINT_BEGIN_DISABLE_WARNING(SIGN_CONVERSION);
 TINT_BEGIN_DISABLE_WARNING(WEAK_VTABLES);
 TINT_BEGIN_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
+TINT_BEGIN_DISABLE_WARNING(LIFETIME_SAFETY_INVALIDATION);
 #include "source/opt/build_module.h"
 #include "source/opt/resolve_binding_conflicts_pass.h"
 #include "source/opt/split_combined_image_sampler_pass.h"
+TINT_END_DISABLE_WARNING(LIFETIME_SAFETY_INVALIDATION);
 TINT_END_DISABLE_WARNING(UNSAFE_BUFFER_USAGE);
 TINT_END_DISABLE_WARNING(WEAK_VTABLES);
 TINT_END_DISABLE_WARNING(SIGN_CONVERSION);
@@ -63,6 +69,7 @@ TINT_END_DISABLE_WARNING(NEWLINE_EOF);
 #include "src/tint/lang/spirv/ir/builtin_call.h"
 #include "src/tint/lang/spirv/type/explicit_layout_array.h"
 #include "src/tint/lang/spirv/type/image.h"
+#include "src/tint/lang/spirv/type/literal.h"
 #include "src/tint/lang/spirv/type/sampled_image.h"
 #include "src/tint/lang/spirv/validate/validate.h"
 
@@ -88,6 +95,24 @@ struct ReplacementValue {
 /// The SPIR-V environment that we validate against.
 constexpr auto kTargetEnv = SPV_ENV_VULKAN_1_1;
 
+/// @returns true if the given type is a handle type (image, sampler, or sampled image)
+bool IsHandleType(const spvtools::opt::analysis::Type* type) {
+    return type->AsImage() || type->AsSampler() || type->AsSampledImage();
+}
+
+/// @returns true if the given type is a struct decorated with Block or BufferBlock
+bool IsBlockOrBufferBlock(const spvtools::opt::analysis::Type* type) {
+    if (auto* struct_ty = type->AsStruct()) {
+        for (const auto& deco : struct_ty->decorations()) {
+            auto dec = spv::Decoration(deco[0]);
+            if (dec == spv::Decoration::Block || dec == spv::Decoration::BufferBlock) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 /// PIMPL class for SPIR-V parser.
 /// Validates the SPIR-V module and then parses it to produce a Tint IR module.
 class Parser {
@@ -97,14 +122,18 @@ class Parser {
 
     /// @param spirv the SPIR-V binary data
     /// @returns the generated SPIR-V IR module on success, or failure
-    Result<core::ir::Module> Run(Slice<const uint32_t> spirv) {
+    Result<core::ir::Module> Run(std::span<const uint32_t> spirv) {
         // Validate the incoming SPIR-V binary.
-        TINT_CHECK_RESULT(validate::Validate(spirv, kTargetEnv));
+        validate::Options options{
+            .target_env = kTargetEnv,
+            .uniform_buffer_standard_layout = true,
+        };
+        TINT_CHECK_RESULT(validate::Validate(spirv, options));
 
         // Build the SPIR-V tools internal representation of the SPIR-V module.
         spvtools::Context context(kTargetEnv);
-        spirv_context_ =
-            spvtools::BuildModule(kTargetEnv, context.CContext()->consumer, spirv.data, spirv.len);
+        spirv_context_ = spvtools::BuildModule(kTargetEnv, context.CContext()->consumer,
+                                               spirv.data(), spirv.size());
         if (!spirv_context_) {
             return Failure("failed to build the internal representation of the module");
         }
@@ -132,6 +161,7 @@ class Parser {
                 name != "SPV_KHR_non_semantic_info" &&     //
                 name != "SPV_KHR_16bit_storage" &&         //
                 name != "SPV_KHR_terminate_invocation" &&  //
+                name != "SPV_KHR_multiview" &&             //
                 // TODO(423644565): We assume the barriers are correct. We should check for any
                 // operation that makes barrier assumptions that aren't consistent with WGSL and
                 // generate the needed barriers.
@@ -139,6 +169,49 @@ class Parser {
                 return Failure("SPIR-V extension '" + name + "' is not supported");
             }
         }
+
+        // Check for unsupported capabilities.
+        for (auto it = spirv_context_->capability_begin(); it != spirv_context_->capability_end();
+             ++it) {
+            auto capability = static_cast<spv::Capability>(it->GetSingleWordInOperand(0));
+            switch (capability) {
+                case spv::Capability::ClipDistance:
+                case spv::Capability::DerivativeControl:
+                case spv::Capability::Float16:
+                case spv::Capability::Geometry:
+                case spv::Capability::GroupNonUniform:
+                case spv::Capability::GroupNonUniformArithmetic:
+                case spv::Capability::GroupNonUniformBallot:
+                case spv::Capability::GroupNonUniformQuad:
+                case spv::Capability::GroupNonUniformShuffle:
+                case spv::Capability::GroupNonUniformShuffleRelative:
+                case spv::Capability::GroupNonUniformVote:
+                case spv::Capability::Image1D:
+                case spv::Capability::ImageQuery:
+                case spv::Capability::InputAttachment:
+                case spv::Capability::Matrix:
+                case spv::Capability::MultiView:
+                case spv::Capability::Sampled1D:
+                case spv::Capability::SampledCubeArray:
+                case spv::Capability::SampleRateShading:
+                case spv::Capability::Shader:
+                case spv::Capability::StorageBuffer16BitAccess:
+                case spv::Capability::StorageImageExtendedFormats:
+                case spv::Capability::StorageInputOutput16:
+                case spv::Capability::StoragePushConstant16:
+                case spv::Capability::UniformAndStorageBuffer16BitAccess:
+                case spv::Capability::VulkanMemoryModel:
+                case spv::Capability::VulkanMemoryModelDeviceScope:
+                    // Supported
+                    break;
+                default:
+                    return Failure("SPIR-V capability '" +
+                                   std::string(spv::CapabilityToString(capability)) +
+                                   "' is not supported");
+            }
+        }
+
+        TINT_CHECK_RESULT(ValidateTypes());
 
         // Register imported instruction sets
         for (const auto& import : spirv_context_->ext_inst_imports()) {
@@ -153,17 +226,31 @@ class Parser {
             }
         }
 
+        // Set properties that are supported by the SPIR-V parser.
+        ir_.properties.Add(core::ir::Property::kAllowLocationForNumericComposites);
+        ir_.properties.Add(core::ir::Property::kAllowMultipleEntryPoints);
+        ir_.properties.Add(core::ir::Property::kAllowNonCoreTypes);
+        ir_.properties.Add(core::ir::Property::kAllowOverrides);
+        ir_.properties.Add(core::ir::Property::kAllowPhonyInstructions);
+        ir_.properties.Add(core::ir::Property::kAllowPointSizeBuiltin);
+        ir_.properties.Add(core::ir::Property::kAllowPointerToHandle);
+        ir_.properties.Add(core::ir::Property::kAllowStructMatrixDecorations);
+        ir_.properties.Add(core::ir::Property::kAllowUnannotatedModuleIOVariables);
+        ir_.properties.Add(core::ir::Property::kAllowVectorElementPointer);
+        ir_.properties.Add(core::ir::Property::kAllowBackendSpecificShaderIO);
+        ir_.properties.Add(core::ir::Property::kAllow16BitFloats);
+
         RegisterNames();
 
         id_stack_.emplace_back();
         {
             TINT_SCOPED_ASSIGNMENT(current_block_, ir_.root_block);
-            EmitSpecConstants();
-            EmitModuleScopeVariables();
+            TINT_CHECK_RESULT(EmitSpecConstants());
+            TINT_CHECK_RESULT(EmitModuleScopeVariables());
         }
 
-        EmitFunctions();
-        EmitEntryPointAttributes();
+        TINT_CHECK_RESULT(EmitFunctions());
+        TINT_CHECK_RESULT(EmitEntryPointAttributes());
 
         RemapSamplers();
         RemapBufferBlockAddressSpace();
@@ -307,7 +394,7 @@ class Parser {
 
     // Generate a module-scope const declaration for each instruction
     // that is OpSpecConstantTrue, OpSpecConstantFalse, or OpSpecConstant.
-    void EmitSpecConstants() {
+    Result<SuccessType> EmitSpecConstants() {
         for (auto& inst : spirv_context_->types_values()) {
             switch (inst.opcode()) {
                 case spv::Op::OpSpecConstantTrue:
@@ -344,8 +431,11 @@ class Parser {
                         [&](const core::type::F16*) {
                             auto bits = constant->AsScalarConstant()->GetU32BitValue();
                             return b_.Constant(f16::FromBits(static_cast<uint16_t>(bits)));
-                        },
-                        TINT_ICE_ON_NO_MATCH);
+                        });
+
+                    if (!value) {
+                        return Failure("unsupported type for OpSpecConstant: " + ty->str());
+                    }
 
                     auto spec_id = GetSpecId(inst);
                     CreateOverride(inst, value, spec_id);
@@ -423,15 +513,17 @@ class Parser {
                             EmitSpirvExplicitBuiltinCall(inst, spirv::BuiltinFn::kNot, 3);
                             break;
                         case spv::Op::OpSConvert:
-                            TINT_ICE() << "can't translate SConvert: WGSL does not have concrete "
-                                          "integer types of different widths";
+                            return Failure(
+                                "can't translate SConvert: WGSL does not have concrete "
+                                "integer types of different widths");
                         case spv::Op::OpUConvert:
-                            TINT_ICE() << "can't translate UConvert: WGSL does not have concrete "
-                                          "integer types of different widths";
+                            return Failure(
+                                "can't translate UConvert: WGSL does not have concrete "
+                                "integer types of different widths");
                         case spv::Op::OpFConvert:
-                            Emit(b_.Convert(Type(inst.type_id()),
-                                            Value(inst.GetSingleWordInOperand(1))),
-                                 inst.result_id());
+                            EmitOrAdd(b_.Convert(Type(inst.type_id()),
+                                                 Value(inst.GetSingleWordInOperand(1))),
+                                      inst.result_id());
                             break;
                         case spv::Op::OpSNegate:
                             EmitSpirvExplicitBuiltinCall(inst, spirv::BuiltinFn::kSNegate, 3);
@@ -471,26 +563,37 @@ class Parser {
                                 inst, spirv::BuiltinFn::kShiftRightArithmetic, 3);
                             break;
                         case spv::Op::OpCompositeExtract:
+                            if (!Type(inst.type_id())->IsScalar()) {
+                                return Failure(
+                                    "can't translate OpSpecConstantOp with CompositeExtract that "
+                                    "returns a composite: OpSpecConstantOp maps to a WGSL override "
+                                    "declaration, but WGSL overrides must have scalar type");
+                            }
                             EmitCompositeExtract(inst, 3);
                             break;
                         case spv::Op::OpCompositeInsert:
-                            TINT_ICE() << "can't translate OpSpecConstantOp with CompositeInsert: "
-                                          "OpSpecConstantOp maps to a WGSL override declaration, "
-                                          "but WGSL overrides must have scalar type";
+                            return Failure(
+                                "can't translate OpSpecConstantOp with CompositeInsert: "
+                                "OpSpecConstantOp maps to a WGSL override declaration, "
+                                "but WGSL overrides must have scalar type");
                         case spv::Op::OpVectorShuffle:
-                            TINT_ICE() << "can't translate OpSpecConstantOp with VectorShuffle: "
-                                          "OpSpecConstantOp maps to a WGSL override declaration, "
-                                          "but WGSL overrides must have scalar type";
+                            return Failure(
+                                "can't translate OpSpecConstantOp with VectorShuffle: "
+                                "OpSpecConstantOp maps to a WGSL override declaration, "
+                                "but WGSL overrides must have scalar type");
                         case spv::Op::OpSelect:
-                            TINT_ASSERT(Type(inst.type_id())->IsScalar())
-                                << "can't translate OpSpecConstantOp with Select that returns "
-                                   "a vector: "
-                                   "OpSpecConstantOp maps to a WGSL override declaration, "
-                                   "but WGSL overrides must have scalar type";
+                            if (!Type(inst.type_id())->IsScalar()) {
+                                return Failure(
+                                    "can't translate OpSpecConstantOp with Select that returns "
+                                    "a vector: OpSpecConstantOp maps to a WGSL override "
+                                    "declaration, "
+                                    "but WGSL overrides must have scalar type");
+                            }
                             EmitSpirvBuiltinCall(inst, spirv::BuiltinFn::kSelect, 3);
                             break;
                         default:
-                            TINT_ICE() << "Unknown spec constant operation: " << op;
+                            return Failure("Unknown spec constant operation: " +
+                                           std::to_string(op));
                     }
 
                     // Restore the saved name, if any, in order to provide that
@@ -504,8 +607,9 @@ class Parser {
                 }
                 case spv::Op::OpSpecConstantComposite: {
                     auto spec_id = GetSpecId(inst);
-                    TINT_ASSERT(!spec_id.has_value())
-                        << "OpSpecConstantCompositeOp not supported when set with a SpecId";
+                    if (spec_id.has_value()) {
+                        return Failure("OpSpecConstantComposite cannot be decorated with SpecId");
+                    }
 
                     auto* cnst = SpvConstant(inst.result_id());
                     if (cnst != nullptr) {
@@ -533,6 +637,7 @@ class Parser {
                     break;
             }
         }
+        return Success;
     }
 
     void RegisterNames() {
@@ -590,14 +695,14 @@ class Parser {
             case spv::StorageClass::PushConstant:
                 return core::AddressSpace::kImmediate;
             default:
-                TINT_UNIMPLEMENTED()
-                    << "unhandled SPIR-V storage class: " << static_cast<uint32_t>(sc);
+                TINT_UNREACHABLE()
+                    << "unhandled SPIR-V storage class: " << spv::StorageClassToString(sc);
         }
     }
 
     /// @param b a SPIR-V BuiltIn
     /// @returns the Tint builtin value for a SPIR-V BuiltIn decoration
-    core::BuiltinValue Builtin(spv::BuiltIn b) {
+    Result<core::BuiltinValue> Builtin(spv::BuiltIn b) {
         switch (b) {
             case spv::BuiltIn::FragCoord:
                 return core::BuiltinValue::kPosition;
@@ -641,9 +746,11 @@ class Parser {
                 return core::BuiltinValue::kCullDistance;
             case spv::BuiltIn::PrimitiveId:
                 return core::BuiltinValue::kPrimitiveIndex;
+            case spv::BuiltIn::ViewIndex:
+                return core::BuiltinValue::kViewIndex;
             default:
-                TINT_UNIMPLEMENTED() << "unhandled SPIR-V BuiltIn: " << spv::BuiltInToString(b)
-                                     << " (val = " << static_cast<uint32_t>(b) << ")";
+                return Failure("unhandled SPIR-V BuiltIn: " + std::string(spv::BuiltInToString(b)) +
+                               " (val = " + std::to_string(static_cast<uint32_t>(b)) + ")");
         }
     }
 
@@ -678,7 +785,7 @@ class Parser {
                         break;
                     }
                     default: {
-                        TINT_UNIMPLEMENTED() << " unhandled type decoration " << deco[0];
+                        TINT_UNREACHABLE() << "unhandled type decoration " << deco[0];
                     }
                 }
             }
@@ -768,25 +875,17 @@ class Parser {
                     auto ms = img->is_multisampled() ? type::Multisampled::kMultisampled
                                                      : type::Multisampled::kSingleSampled;
                     auto sampled = static_cast<type::Sampled>(img->sampled());
-                    auto texel_format = ToTexelFormat(img->format());
+                    auto texel_format = ToTexelFormat(img->format()).Get();
 
                     // If the access mode is undefined then default to read/write for the image
                     access_mode = access_mode == core::Access::kUndefined ? core::Access::kReadWrite
                                                                           : access_mode;
 
-                    if (img->dim() != spv::Dim::Dim1D && img->dim() != spv::Dim::Dim2D &&
-                        img->dim() != spv::Dim::Dim3D && img->dim() != spv::Dim::Cube &&
-                        img->dim() != spv::Dim::SubpassData) {
-                        TINT_ICE()
-                            << "Unsupported texture dimension: " << spv::DimToString(img->dim())
-                            << " (val = " << static_cast<uint32_t>(img->dim()) << ")";
-                    }
-                    TINT_ASSERT(img->sampled() != 0)
-                        << "Unsupported texture sample setting: Known at Runtime";
-
-                    if (depth == type::Depth::kDepth && !sampled_ty->Is<core::type::F32>()) {
-                        TINT_ICE() << "Unsupported depth texture sampled type (must be f32)";
-                    }
+                    TINT_ASSERT(img->dim() == spv::Dim::Dim1D || img->dim() == spv::Dim::Dim2D ||
+                                img->dim() == spv::Dim::Dim3D || img->dim() == spv::Dim::Cube ||
+                                img->dim() == spv::Dim::SubpassData);
+                    TINT_ASSERT(img->sampled() != 0);
+                    TINT_ASSERT(depth != type::Depth::kDepth || sampled_ty->Is<core::type::F32>());
 
                     return ty_.Get<spirv::type::Image>(sampled_ty, dim, depth, arrayed, ms, sampled,
                                                        texel_format, access_mode);
@@ -797,13 +896,13 @@ class Parser {
                         Type(spirv_context_->get_type_mgr()->GetId(sampled->image_type())));
                 }
                 default: {
-                    TINT_UNIMPLEMENTED() << "unhandled SPIR-V type: " << type->str();
+                    TINT_UNREACHABLE() << "unhandled SPIR-V type: " << type->str();
                 }
             }
         });
     }
 
-    core::TexelFormat ToTexelFormat(spv::ImageFormat fmt) {
+    Result<core::TexelFormat> ToTexelFormat(spv::ImageFormat fmt) {
         switch (fmt) {
             case spv::ImageFormat::Unknown:
                 return core::TexelFormat::kUndefined;
@@ -894,7 +993,151 @@ class Parser {
             default:
                 break;
         }
-        TINT_ICE() << "invalid image format: " << int(fmt);
+        return Failure("invalid image format: " + std::to_string(dawn::to_underlying(fmt)));
+    }
+
+    /// Validates that all types and their decorations in the SPIR-V module can be handled by Tint.
+    /// @returns Success, or a Failure describing the unsupported type or decoration
+    Result<SuccessType> ValidateTypes() {
+        for (const auto& type : *spirv_context_->get_type_mgr()) {
+            const auto* ty = type.second;
+
+            // Validate type-level decorations.
+            for (const auto& deco : ty->decorations()) {
+                switch (spv::Decoration(deco[0])) {
+                    case spv::Decoration::Block:
+                    case spv::Decoration::BufferBlock:
+                    case spv::Decoration::ArrayStride:
+                        break;
+                    default:
+                        return Failure(
+                            "unhandled type decoration: " +
+                            std::string(spv::DecorationToString(spv::Decoration(deco[0]))));
+                }
+            }
+
+            switch (ty->kind()) {
+                case spvtools::opt::analysis::Type::kVoid:
+                case spvtools::opt::analysis::Type::kBool:
+                case spvtools::opt::analysis::Type::kFloat:
+                case spvtools::opt::analysis::Type::kVector:
+                case spvtools::opt::analysis::Type::kMatrix:
+                case spvtools::opt::analysis::Type::kFunction:
+                case spvtools::opt::analysis::Type::kSampler:
+                case spvtools::opt::analysis::Type::kSampledImage:
+                    break;
+                case spvtools::opt::analysis::Type::kInteger: {
+                    auto* int_ty = ty->AsInteger();
+                    if (int_ty->width() != 32) {
+                        return Failure("unsupported integer width: " +
+                                       std::to_string(int_ty->width()));
+                    }
+                    break;
+                }
+                case spvtools::opt::analysis::Type::kArray: {
+                    auto* arr_ty = ty->AsArray();
+                    if (IsHandleType(arr_ty->element_type())) {
+                        return Failure("arrays of handle types are not supported");
+                    }
+                    if (IsBlockOrBufferBlock(arr_ty->element_type())) {
+                        return Failure("arrays of buffer types are not supported");
+                    }
+                    const auto& length = arr_ty->length_info();
+                    if (length.words.empty() ||
+                        length.words[0] != spvtools::opt::analysis::Array::LengthInfo::kConstant) {
+                        return Failure("specialized array lengths are not supported");
+                    }
+                    break;
+                }
+                case spvtools::opt::analysis::Type::kRuntimeArray: {
+                    auto* arr_ty = ty->AsRuntimeArray();
+                    if (IsHandleType(arr_ty->element_type())) {
+                        return Failure("arrays of handle types are not supported");
+                    }
+                    if (IsBlockOrBufferBlock(arr_ty->element_type())) {
+                        return Failure("arrays of buffer types are not supported");
+                    }
+                    break;
+                }
+                case spvtools::opt::analysis::Type::kStruct: {
+                    auto* struct_ty = ty->AsStruct();
+                    if (struct_ty->element_types().empty()) {
+                        return Failure("empty structures are not supported");
+                    }
+                    for (const auto& [member_idx, decos] : struct_ty->element_decorations()) {
+                        for (const auto& deco : decos) {
+                            switch (spv::Decoration(deco[0])) {
+                                case spv::Decoration::NonWritable:
+                                case spv::Decoration::ColMajor:
+                                case spv::Decoration::NonReadable:
+                                case spv::Decoration::RelaxedPrecision:
+                                case spv::Decoration::Coherent:
+                                case spv::Decoration::Restrict:
+                                case spv::Decoration::RowMajor:
+                                case spv::Decoration::Offset:
+                                case spv::Decoration::MatrixStride:
+                                case spv::Decoration::Invariant:
+                                case spv::Decoration::Location:
+                                case spv::Decoration::NoPerspective:
+                                case spv::Decoration::Flat:
+                                case spv::Decoration::Centroid:
+                                case spv::Decoration::Sample:
+                                    break;
+                                case spv::Decoration::BuiltIn: {
+                                    auto builtin_res = Builtin(spv::BuiltIn(deco[1]));
+                                    if (builtin_res != Success) {
+                                        return builtin_res.Failure();
+                                    }
+                                    break;
+                                }
+                                default:
+                                    return Failure("unhandled member decoration: " +
+                                                   std::string(spv::DecorationToString(
+                                                       spv::Decoration(deco[0]))));
+                            }
+                        }
+                    }
+                    break;
+                }
+                case spvtools::opt::analysis::Type::kPointer: {
+                    auto* ptr_ty = ty->AsPointer();
+                    switch (ptr_ty->storage_class()) {
+                        case spv::StorageClass::Input:
+                        case spv::StorageClass::Output:
+                        case spv::StorageClass::Function:
+                        case spv::StorageClass::Private:
+                        case spv::StorageClass::StorageBuffer:
+                        case spv::StorageClass::Uniform:
+                        case spv::StorageClass::UniformConstant:
+                        case spv::StorageClass::Workgroup:
+                        case spv::StorageClass::PushConstant:
+                            break;
+                        default:
+                            return Failure(
+                                "unhandled SPIR-V storage class: " +
+                                std::string(spv::StorageClassToString(ptr_ty->storage_class())));
+                    }
+                    break;
+                }
+                case spvtools::opt::analysis::Type::kImage: {
+                    auto* img = ty->AsImage();
+                    if (img->depth() == 1) {
+                        auto* s_ty = img->sampled_type();
+                        if (!s_ty->AsFloat() || s_ty->AsFloat()->width() != 32) {
+                            return Failure("depth texture sampled type must be f32");
+                        }
+                    }
+                    auto fmt_res = ToTexelFormat(img->format());
+                    if (fmt_res != Success) {
+                        return fmt_res.Failure();
+                    }
+                    break;
+                }
+                default:
+                    return Failure("unhandled SPIR-V type: " + ty->str());
+            }
+        }
+        return Success;
     }
 
     /// @param type_id the pointer result_id
@@ -945,9 +1188,7 @@ class Parser {
         auto* arr_ty = spirv_context_->get_type_mgr()->GetType(type_id)->AsArray();
         const auto& length = arr_ty->length_info();
         TINT_ASSERT(!length.words.empty());
-        if (length.words[0] != spvtools::opt::analysis::Array::LengthInfo::kConstant) {
-            TINT_UNIMPLEMENTED() << "specialized array lengths";
-        }
+        TINT_ASSERT(length.words[0] == spvtools::opt::analysis::Array::LengthInfo::kConstant);
 
         // Get the value from the constant used for the element count.
         const auto* count_const =
@@ -1045,6 +1286,9 @@ class Parser {
                         case spv::Decoration::Coherent:
                             // Tint has coherent memory semantics, so this is a no-op.
                             break;
+                        case spv::Decoration::Restrict:
+                            // All Tint pointers are restrict. This is a no-op.
+                            break;
                         case spv::Decoration::RowMajor:
                             is_row_major = true;
                             break;
@@ -1054,9 +1298,12 @@ class Parser {
                         case spv::Decoration::Offset:
                             offset = deco[1];
                             break;
-                        case spv::Decoration::BuiltIn:
-                            attributes.builtin = Builtin(spv::BuiltIn(deco[1]));
+                        case spv::Decoration::BuiltIn: {
+                            auto builtin_res = Builtin(spv::BuiltIn(deco[1]));
+                            TINT_ASSERT(builtin_res == Success);
+                            attributes.builtin = builtin_res.Get();
                             break;
+                        }
                         case spv::Decoration::Invariant:
                             attributes.invariant = true;
                             break;
@@ -1077,7 +1324,7 @@ class Parser {
                             break;
 
                         default:
-                            TINT_UNIMPLEMENTED() << "unhandled member decoration: " << deco[0];
+                            TINT_UNREACHABLE() << "unhandled member decoration: " << deco[0];
                     }
                 }
             }
@@ -1198,11 +1445,6 @@ class Parser {
     // @param id the spir-v ID to propagate up
     // @param src the source value being propagated
     core::ir::Value* Propagate(uint32_t id, core::ir::Value* src) {
-        // Function params are always in scope so we should never need to propagate.
-        if (src->Is<core::ir::FunctionParam>()) {
-            return src;
-        }
-
         auto* blk = tint::Switch(
             src,  //
             [&](core::ir::BlockParam* bp) { return bp->Block(); },
@@ -1406,15 +1648,32 @@ class Parser {
             return *v;
         }
 
-        if (auto* c = SpvConstant(id)) {
-            auto* val = b_.Constant(Constant(c));
+        const spvtools::opt::Instruction* inst = spirv_context_->get_def_use_mgr()->GetDef(id);
+        const core::type::Type* inst_ty = Type(inst->type_id());
+
+        if (const spvtools::opt::analysis::Constant* c = SpvConstant(id)) {
+            core::ir::Constant* val = b_.Constant(Constant(c));
+            // SPIR-V opt will deduplicate structs with the same shape. We handle this in the type
+            // code below by using the specific instructions type, not the spirv-opt type. But, when
+            // we retrieve constants, then opt might have used the other type for the struct type.
+            // So, check the instructions type, if it doesn't match what opt returns, then we
+            // rebuild the struct below with our corrected type.
+            if (val->Type() == inst_ty) {
+                values_.Add(id, val);
+                return val;
+            }
+        }
+
+        // In the case of a deduplicated structure, we may need to re-create a null constant
+        if (inst->opcode() == spv::Op::OpConstantNull) {
+            TINT_ASSERT(inst_ty->Is<core::type::Struct>());
+            core::ir::Value* val = b_.Zero(inst_ty);
             values_.Add(id, val);
             return val;
         }
 
         // If we didn't have a value already, and this instruction is a constructed constant, then
         // do the construction.
-        const spvtools::opt::Instruction* inst = spirv_context_->get_def_use_mgr()->GetDef(id);
         if (inst->opcode() == spv::Op::OpConstantComposite) {
             Vector<const core::constant::Value*, 4> args;
             args.Reserve(inst->NumInOperands());
@@ -1425,7 +1684,7 @@ class Parser {
                 args.Push(cnst->Value());
             }
 
-            auto* composite = b_.Composite(Type(inst->type_id()), args);
+            auto* composite = b_.Composite(inst_ty, args);
             AddValue(id, composite);
             return composite;
         }
@@ -1439,10 +1698,10 @@ class Parser {
                 args.Push(Value(arg));
             }
 
-            auto* construct = b_.Construct(iter->second.type, args);
-            current_block_->Append(construct);
-            AddValue(id, construct->Result());
-            return construct->Result();
+            core::ir::Value* construct = nullptr;
+            b_.Append(current_block_, [&] { construct = b_.Construct(iter->second.type, args); });
+            AddValue(id, construct);
+            return construct;
         }
 
         return std::nullopt;
@@ -1457,8 +1716,16 @@ class Parser {
         auto v = ValueNoPropagate(id);
         TINT_ASSERT(v.has_value());
 
-        if (v.value()->Is<core::ir::Constant>() || IdIsInScope(id)) {
+        if (v.value()->Is<core::ir::Constant>() || v.value()->Is<core::ir::FunctionParam>() ||
+            IdIsInScope(id)) {
             return v.value();
+        }
+
+        // A return values from a control instruction cannot be a pointer type
+        // without supporting variable pointers. We regenerate the value so it
+        // is in scope.
+        if (v.value()->Type()->Is<core::type::Pointer>()) {
+            return ReplicatePointer(id);
         }
 
         auto* new_v = Propagate(id, v.value());
@@ -1466,6 +1733,30 @@ class Parser {
             AddValue(id, new_v);
         }
         return new_v;
+    }
+
+    /// Replicates a pointer instruction that is defined inside a control flow construct
+    /// but used outside of it.
+    /// @param id the SPIR-V result ID of the pointer instruction
+    /// @returns the replicated Tint IR value
+    core::ir::Value* ReplicatePointer(uint32_t id) {
+        auto* spv_inst = spirv_context_->get_def_use_mgr()->GetDef(id);
+        TINT_ASSERT(spv_inst);
+        switch (spv_inst->opcode()) {
+            case spv::Op::OpAccessChain:
+            case spv::Op::OpInBoundsAccessChain:
+                EmitAccess(*spv_inst);
+                break;
+            case spv::Op::OpCopyObject:
+                EmitCopyObject(*spv_inst);
+                break;
+            default:
+                TINT_UNREACHABLE() << "unhandled instruction for pointer replication: "
+                                   << spv::OpToString(spv_inst->opcode());
+        }
+        auto new_v = values_.Get(id);
+        TINT_ASSERT(new_v);
+        return *new_v;
     }
 
     /// Creates the Tint IR constant for the SPIR-V `constant` value.
@@ -1498,7 +1789,8 @@ class Parser {
             } else if (float_ty->width() == 32) {
                 return b_.ConstantValue(f32(f->GetFloat()));
             } else {
-                TINT_UNREACHABLE() << "unsupported floating point type width";
+                TINT_UNREACHABLE()
+                    << "unsupported floating point type width: " << float_ty->width();
             }
         }
         if (auto* v = constant->AsVectorConstant()) {
@@ -1533,7 +1825,13 @@ class Parser {
             return ir_.constant_values.Composite(
                 Type(spirv_context_->get_type_mgr()->GetId(s->type())), std::move(elements));
         }
-        TINT_UNIMPLEMENTED() << "unhandled constant type";
+        TINT_ICE() << "unhandled constant type: " << constant->type()->str();
+    }
+
+    /// @returns a literal operand with the given value
+    core::ir::Value* Literal(uint32_t value) {
+        return b_.Constant(ir_.constant_values.Get<core::constant::Scalar<u32>>(
+            ty_.Get<type::Literal>(), u32(value)));
     }
 
     /// Register an IR value for a SPIR-V result ID.
@@ -1560,31 +1858,34 @@ class Parser {
     }
 
     /// Emit an instruction to the current block.
-    /// @param inst the instruction to emit
-    void EmitWithoutSpvResult(core::ir::Instruction* inst) {
-        current_block_->Append(inst);
-        TINT_ASSERT(inst->Results().Length() == 1u);
+    /// @param value the value to emit
+    void EmitWithoutSpvResult(core::ir::Value* value) {
+        if (auto* inst = value->AsInstruction()) {
+            current_block_->Append(inst);
+            TINT_ASSERT(inst->Results().Length() == 1u);
+        }
     }
 
     /// Emit an instruction to the current block.
-    /// @param inst the instruction to emit
+    /// @param value the value to emit
     void EmitWithoutResult(core::ir::Instruction* inst) {
         TINT_ASSERT(inst->Results().IsEmpty());
         current_block_->Append(inst);
     }
 
     /// Emit the module-scope variables.
-    void EmitModuleScopeVariables() {
+    Result<SuccessType> EmitModuleScopeVariables() {
         for (auto& inst : spirv_context_->module()->types_values()) {
             switch (inst.opcode()) {
                 case spv::Op::OpVariable:
-                    EmitVar(inst);
+                    TINT_CHECK_RESULT(EmitVar(inst));
                     break;
                 case spv::Op::OpUndef: {
                     auto* ty = Type(inst.type_id());
 
-                    TINT_ASSERT(!ty->Is<core::type::MemoryView>())
-                        << "cannot create an undef memory view in WGSL";
+                    if (ty->Is<core::type::MemoryView>()) {
+                        return Failure("cannot create an undef memory view in WGSL");
+                    }
 
                     AddValue(inst.result_id(), b_.Zero(ty));
                     break;
@@ -1593,10 +1894,11 @@ class Parser {
                     break;
             }
         }
+        return Success;
     }
 
     /// Emit the functions.
-    void EmitFunctions() {
+    Result<SuccessType> EmitFunctions() {
         // Add all the functions in a first pass and then fill in the function bodies. This means
         // the function will exist fixing an issues where calling a function that hasn't been seen
         // generates the wrong signature.
@@ -1633,7 +1935,7 @@ class Parser {
             current_spirv_function_ = &func;
 
             current_function_ = Function(func.result_id());
-            EmitBlockParent(current_function_->Block(), *func.entry());
+            TINT_CHECK_RESULT(EmitBlockParent(current_function_->Block(), *func.entry()));
 
             // No terminator was emitted, that means then end of block is
             // unreachable. Mark as such.
@@ -1642,10 +1944,11 @@ class Parser {
             }
             current_spirv_function_ = nullptr;
         }
+        return Success;
     }
 
     /// Emit entry point attributes.
-    void EmitEntryPointAttributes() {
+    Result<SuccessType> EmitEntryPointAttributes() {
         // Handle OpEntryPoint declarations.
         for (auto& entry_point : spirv_context_->module()->entry_points()) {
             auto model = entry_point.GetSingleWordInOperand(0);
@@ -1663,7 +1966,7 @@ class Parser {
                     func->SetStage(core::ir::Function::PipelineStage::kVertex);
                     break;
                 default:
-                    TINT_UNIMPLEMENTED() << "unhandled execution model: " << model;
+                    return Failure("unhandled execution model: " + std::to_string(model));
             }
 
             // Set the entry point name.
@@ -1674,8 +1977,10 @@ class Parser {
                 for (const spvtools::opt::Instruction& inst :
                      spirv_context_->module()->annotations()) {
                     if (inst.opcode() != spv::Op::OpDecorate ||
-                        inst.GetSingleWordInOperand(1) != uint32_t(spv::Decoration::BuiltIn) ||
-                        inst.GetSingleWordInOperand(2) != uint32_t(spv::BuiltIn::WorkgroupSize)) {
+                        inst.GetSingleWordInOperand(1) !=
+                            dawn::to_underlying(spv::Decoration::BuiltIn) ||
+                        inst.GetSingleWordInOperand(2) !=
+                            dawn::to_underlying(spv::BuiltIn::WorkgroupSize)) {
                         continue;
                     }
                     uint32_t id = inst.GetSingleWordInOperand(0);
@@ -1719,47 +2024,46 @@ class Parser {
                         b_.Constant(u32(execution_mode.GetSingleWordInOperand(4))));
                     break;
                 case spv::ExecutionMode::DepthGreater:
-                    TINT_ICE() << "ExecutionMode DepthGreater is not supported in WGSL";
-                    /* Ice aborts, so this doesn't fallthrough */
+                    return Failure("ExecutionMode DepthGreater is not supported in WGSL");
                 case spv::ExecutionMode::DepthLess:
-                    TINT_ICE() << "ExecutionMode DepthLess is not supported in WGSL";
-                    /* Ice aborts, so this doesn't fallthrough */
+                    return Failure("ExecutionMode DepthLess is not supported in WGSL");
                 case spv::ExecutionMode::DepthUnchanged:
-                    TINT_ICE() << "ExecutionMode DepthUnchanged is not supported in WGSL";
-                    /* Ice aborts, so this doesn't fallthrough */
+                    return Failure("ExecutionMode DepthUnchanged is not supported in WGSL");
                 case spv::ExecutionMode::EarlyFragmentTests:
-                    TINT_ICE() << "ExecutionMode EarlyFragmentTests is not supported in WGSL";
-                    /* Ice aborts, so this doesn't fallthrough */
+                    return Failure("ExecutionMode EarlyFragmentTests is not supported in WGSL");
                 case spv::ExecutionMode::DepthReplacing:
                 case spv::ExecutionMode::OriginUpperLeft:
                     // These are ignored as they are implicitly supported by Tint IR.
                     break;
                 default:
-                    TINT_UNIMPLEMENTED() << "unhandled execution mode: " << mode;
+                    return Failure("unhandled execution mode: " + std::to_string(mode));
             }
         }
+        return Success;
     }
 
     bool InBlock(core::ir::Block* blk) { return current_blocks_.contains(blk); }
 
     // A block parent is a container for a scope, like a `{}`d section in code. It controls the
     // block addition to the current blocks and the ID stack entry for the block.
-    void EmitBlockParent(core::ir::Block* dst, spvtools::opt::BasicBlock& src) {
+    Result<SuccessType> EmitBlockParent(core::ir::Block* dst, spvtools::opt::BasicBlock& src) {
         TINT_ASSERT(!InBlock(dst));
 
         id_stack_.emplace_back();
         current_blocks_.insert(dst);
 
-        EmitBlock(dst, src);
+        auto res = EmitBlock(dst, src);
 
         current_blocks_.erase(dst);
         id_stack_.pop_back();
+
+        return res;
     }
 
     /// Emit the contents of SPIR-V block @p src into Tint IR block @p dst.
     /// @param dst the Tint IR block to append to
     /// @param src the SPIR-V block to emit
-    void EmitBlock(core::ir::Block* dst, spvtools::opt::BasicBlock& src) {
+    Result<SuccessType> EmitBlock(core::ir::Block* dst, spvtools::opt::BasicBlock& src) {
         TINT_SCOPED_ASSIGNMENT(current_block_, dst);
 
         // Register the merge if this is a header block
@@ -1794,7 +2098,7 @@ class Parser {
         // Note, this comes after the loop code since the current block is set to the loop body
         spirv_id_to_block_.insert({src.id(), current_block_});
 
-        ProcessInstructions(src);
+        TINT_CHECK_RESULT(ProcessInstructions(src));
 
         // Add the body terminator if necessary
         if (loop && !loop->Body()->Terminator()) {
@@ -1814,7 +2118,7 @@ class Parser {
         values_to_replace_.pop_back();
 
         if (!loop) {
-            return;
+            return Success;
         }
 
         // Emit the continuing block. The continue block is within the scope of the body block,
@@ -1835,7 +2139,7 @@ class Parser {
             }
         }
 
-        EmitContinueBlock(src.id(), continue_id, loop);
+        TINT_CHECK_RESULT(EmitContinueBlock(src.id(), continue_id, loop));
 
         // Remove the body block id stack before emitting the merge block.
         current_blocks_.erase(loop->Body());
@@ -1847,7 +2151,7 @@ class Parser {
             for (auto incoming : loop->Continuing()->InboundSiblingBranches()) {
                 TINT_ASSERT(incoming->Is<core::ir::Continue>());
 
-                if (incoming->Args().Length() == loop->Continuing()->Params().Length()) {
+                if (incoming->Args().size() == loop->Continuing()->Params().Length()) {
                     continue;
                 }
 
@@ -1885,10 +2189,13 @@ class Parser {
         // Emit the merge block
         auto merge_id = loop_merge_inst->GetSingleWordInOperand(0);
         const auto& merge_bb = current_spirv_function_->FindBlock(merge_id);
-        EmitBlock(dst, *merge_bb);
+        TINT_CHECK_RESULT(EmitBlock(dst, *merge_bb));
+        return Success;
     }
 
-    void EmitContinueBlock(uint32_t src_id, uint32_t continue_id, core::ir::Loop* loop) {
+    Result<SuccessType> EmitContinueBlock(uint32_t src_id,
+                                          uint32_t continue_id,
+                                          core::ir::Loop* loop) {
         // We're emitting the continue block, so remove it from the continue targets as it can no
         // longer be a target for this loop. This will allow it to be _reused_ as the continue
         // target for a single block loop if needed (which may have this same block as the
@@ -1911,7 +2218,7 @@ class Parser {
             const auto& bb_continue = current_spirv_function_->FindBlock(continue_id);
 
             current_blocks_.insert(loop->Continuing());
-            EmitBlock(loop->Continuing(), *bb_continue);
+            TINT_CHECK_RESULT(EmitBlock(loop->Continuing(), *bb_continue));
             current_blocks_.erase(loop->Continuing());
         }
 
@@ -1946,9 +2253,10 @@ class Parser {
         }
 
         id_stack_.pop_back();
+        return Success;
     }
 
-    void ProcessInstructions(spvtools::opt::BasicBlock& src) {
+    Result<SuccessType> ProcessInstructions(spvtools::opt::BasicBlock& src) {
         for (auto& inst : src) {
             switch (inst.opcode()) {
                 case spv::Op::OpNop:
@@ -1957,13 +2265,13 @@ class Parser {
                     AddValue(inst.result_id(), b_.Zero(Type(inst.type_id())));
                     break;
                 case spv::Op::OpBranch:
-                    EmitBranch(inst);
+                    TINT_CHECK_RESULT(EmitBranch(inst));
                     break;
                 case spv::Op::OpBranchConditional:
-                    EmitBranchConditional(src, inst);
+                    TINT_CHECK_RESULT(EmitBranchConditional(src, inst));
                     break;
                 case spv::Op::OpSwitch:
-                    EmitSwitch(src, inst);
+                    TINT_CHECK_RESULT(EmitSwitch(src, inst));
                     break;
                 case spv::Op::OpLoopMerge:
                     EmitLoopMerge(src, inst);
@@ -1973,7 +2281,7 @@ class Parser {
                     // OpBranchCondition or OpSwitch instruction
                     break;
                 case spv::Op::OpExtInst:
-                    EmitExtInst(inst);
+                    TINT_CHECK_RESULT(EmitExtInst(inst));
                     break;
                 case spv::Op::OpCopyObject:
                     EmitCopyObject(inst);
@@ -1982,8 +2290,8 @@ class Parser {
                     EmitSpirvExplicitBuiltinCall(inst, spirv::BuiltinFn::kConvertFToS);
                     break;
                 case spv::Op::OpConvertFToU:
-                    Emit(b_.Convert(Type(inst.type_id()), Value(inst.GetSingleWordOperand(2))),
-                         inst.result_id());
+                    EmitOrAdd(b_.Convert(Type(inst.type_id()), Value(inst.GetSingleWordOperand(2))),
+                              inst.result_id());
                     break;
                 case spv::Op::OpConvertSToF:
                     EmitSpirvExplicitBuiltinCall(inst, spirv::BuiltinFn::kConvertSToF);
@@ -1992,8 +2300,8 @@ class Parser {
                     EmitSpirvExplicitBuiltinCall(inst, spirv::BuiltinFn::kConvertUToF);
                     break;
                 case spv::Op::OpFConvert:
-                    Emit(b_.Convert(Type(inst.type_id()), Value(inst.GetSingleWordOperand(2))),
-                         inst.result_id());
+                    EmitOrAdd(b_.Convert(Type(inst.type_id()), Value(inst.GetSingleWordOperand(2))),
+                              inst.result_id());
                     break;
                 case spv::Op::OpBitwiseAnd:
                     EmitSpirvExplicitBuiltinCall(inst, spirv::BuiltinFn::kBitwiseAnd);
@@ -2145,7 +2453,7 @@ class Parser {
                     EmitCopyMemory(inst);
                     break;
                 case spv::Op::OpVariable:
-                    EmitVar(inst);
+                    TINT_CHECK_RESULT(EmitVar(inst));
                     break;
                 case spv::Op::OpUnreachable:
                     EmitWithoutResult(b_.Unreachable());
@@ -2310,7 +2618,7 @@ class Parser {
                     EmitSpirvBuiltinCall(inst, spirv::BuiltinFn::kAtomicIDecrement);
                     break;
                 case spv::Op::OpControlBarrier:
-                    EmitControlBarrier(inst);
+                    TINT_CHECK_RESULT(EmitControlBarrier(inst));
                     break;
                 case spv::Op::OpArrayLength:
                     EmitArrayLength(inst);
@@ -2390,6 +2698,9 @@ class Parser {
                 case spv::Op::OpGroupNonUniformAll:
                     EmitSubgroupBuiltin(inst, core::BuiltinFn::kSubgroupAll);
                     break;
+                case spv::Op::OpGroupNonUniformAllEqual:
+                    EmitSubgroupAllEqual(inst);
+                    break;
                 case spv::Op::OpGroupNonUniformAny:
                     EmitSubgroupBuiltin(inst, core::BuiltinFn::kSubgroupAny);
                     break;
@@ -2398,6 +2709,9 @@ class Parser {
                     break;
                 case spv::Op::OpGroupNonUniformBallot:
                     EmitSubgroupBuiltin(inst, core::BuiltinFn::kSubgroupBallot);
+                    break;
+                case spv::Op::OpGroupNonUniformBallotBitCount:
+                    TINT_CHECK_RESULT(EmitSubgroupBallotBitCount(inst));
                     break;
                 case spv::Op::OpGroupNonUniformBroadcastFirst:
                     EmitSubgroupBuiltin(inst, spirv::BuiltinFn::kGroupNonUniformBroadcastFirst);
@@ -2415,18 +2729,20 @@ class Parser {
                     EmitSubgroupBuiltin(inst, spirv::BuiltinFn::kGroupNonUniformShuffleUp);
                     break;
                 case spv::Op::OpGroupNonUniformSMin:
-                    EmitSubgroupMinMax(inst, spirv::BuiltinFn::kGroupNonUniformSMin);
+                    TINT_CHECK_RESULT(
+                        EmitSubgroupMinMax(inst, spirv::BuiltinFn::kGroupNonUniformSMin));
                     break;
                 case spv::Op::OpGroupNonUniformSMax:
-                    EmitSubgroupMinMax(inst, spirv::BuiltinFn::kGroupNonUniformSMax);
+                    TINT_CHECK_RESULT(
+                        EmitSubgroupMinMax(inst, spirv::BuiltinFn::kGroupNonUniformSMax));
                     break;
                 case spv::Op::OpGroupNonUniformUMin:
                 case spv::Op::OpGroupNonUniformFMin:
-                    EmitSubgroupMinMax(inst, core::BuiltinFn::kSubgroupMin);
+                    TINT_CHECK_RESULT(EmitSubgroupMinMax(inst, core::BuiltinFn::kSubgroupMin));
                     break;
                 case spv::Op::OpGroupNonUniformUMax:
                 case spv::Op::OpGroupNonUniformFMax:
-                    EmitSubgroupMinMax(inst, core::BuiltinFn::kSubgroupMax);
+                    TINT_CHECK_RESULT(EmitSubgroupMinMax(inst, core::BuiltinFn::kSubgroupMax));
                     break;
                 case spv::Op::OpGroupNonUniformIAdd:
                 case spv::Op::OpGroupNonUniformFAdd:
@@ -2437,23 +2753,30 @@ class Parser {
                     EmitSubgroupMul(inst);
                     break;
                 case spv::Op::OpGroupNonUniformBitwiseAnd:
-                    EmitSubgroupBitwise(inst, core::BuiltinFn::kSubgroupAnd);
+                    TINT_CHECK_RESULT(EmitSubgroupBitwise(inst, core::BuiltinFn::kSubgroupAnd));
                     break;
                 case spv::Op::OpGroupNonUniformBitwiseOr:
-                    EmitSubgroupBitwise(inst, core::BuiltinFn::kSubgroupOr);
+                    TINT_CHECK_RESULT(EmitSubgroupBitwise(inst, core::BuiltinFn::kSubgroupOr));
                     break;
                 case spv::Op::OpGroupNonUniformBitwiseXor:
-                    EmitSubgroupBitwise(inst, core::BuiltinFn::kSubgroupXor);
+                    TINT_CHECK_RESULT(EmitSubgroupBitwise(inst, core::BuiltinFn::kSubgroupXor));
                     break;
+                case spv::Op::OpIsNan:
+                    return Failure(
+                        "IsNan is not supported because NaNs cannot be represented in WGSL");
+                case spv::Op::OpIsInf:
+                    return Failure(
+                        "IsInf is not supported because Infinities cannot be represented in WGSL");
                 default:
-                    TINT_UNIMPLEMENTED()
-                        << "unhandled SPIR-V instruction: " << spv::OpToString(inst.opcode())
-                        << " (val = " << static_cast<uint32_t>(inst.opcode()) << ")";
+                    return Failure("unhandled SPIR-V instruction: " +
+                                   std::string(spv::OpToString(inst.opcode())) + " (val = " +
+                                   std::to_string(static_cast<uint32_t>(inst.opcode())) + ")");
             }
         }
+        return Success;
     }
 
-    void ValidateScope(spvtools::opt::Instruction& inst) {
+    void AssertSubgroupScope(spvtools::opt::Instruction& inst) {
         auto scope_val = Value(inst.GetSingleWordInOperand(0));
         auto* cnst = scope_val->As<core::ir::Constant>();
         TINT_ASSERT(cnst);
@@ -2463,18 +2786,28 @@ class Parser {
             << "subgroup scope required for GroupNonUniform instructions";
     }
 
-    void EmitSubgroupBitwise(spvtools::opt::Instruction& inst, core::BuiltinFn fn) {
-        ValidateScope(inst);
+    void EmitOrAdd(core::ir::Value* value, uint32_t result_id) {
+        if (auto* inst = value->AsInstruction()) {
+            Emit(inst, result_id);
+        } else {
+            AddValue(result_id, value);
+        }
+    }
+
+    Result<SuccessType> EmitSubgroupBitwise(spvtools::opt::Instruction& inst, core::BuiltinFn fn) {
+        AssertSubgroupScope(inst);
 
         auto group = inst.GetSingleWordInOperand(1);
-        TINT_ASSERT(static_cast<spv::GroupOperation>(group) == spv::GroupOperation::Reduce)
-            << "GroupNonUniformBitwise operations require a Reduce group operation";
+        if (static_cast<spv::GroupOperation>(group) != spv::GroupOperation::Reduce) {
+            return Failure("GroupNonUniformBitwise operations require a Reduce group operation");
+        }
 
-        Emit(b_.Call(Type(inst.type_id()), fn, Args(inst, 4)), inst.result_id());
+        EmitOrAdd(b_.Call(Type(inst.type_id()), fn, Args(inst, 4)), inst.result_id());
+        return Success;
     }
 
     void EmitSubgroupMul(spvtools::opt::Instruction& inst) {
-        ValidateScope(inst);
+        AssertSubgroupScope(inst);
 
         core::BuiltinFn fn = core::BuiltinFn::kNone;
 
@@ -2490,11 +2823,11 @@ class Parser {
                           "`InclusiveScan`, or `ExclusiveScan`";
         }
 
-        Emit(b_.Call(Type(inst.type_id()), fn, Args(inst, 4)), inst.result_id());
+        EmitOrAdd(b_.Call(Type(inst.type_id()), fn, Args(inst, 4)), inst.result_id());
     }
 
     void EmitSubgroupAdd(spvtools::opt::Instruction& inst) {
-        ValidateScope(inst);
+        AssertSubgroupScope(inst);
 
         core::BuiltinFn fn = core::BuiltinFn::kNone;
 
@@ -2510,25 +2843,28 @@ class Parser {
                           "`InclusiveScan`, or `ExclusiveScan`";
         }
 
-        Emit(b_.Call(Type(inst.type_id()), fn, Args(inst, 4)), inst.result_id());
+        EmitOrAdd(b_.Call(Type(inst.type_id()), fn, Args(inst, 4)), inst.result_id());
     }
 
-    void EmitSubgroupMinMax(spvtools::opt::Instruction& inst, core::BuiltinFn fn) {
-        ValidateScope(inst);
+    Result<SuccessType> EmitSubgroupMinMax(spvtools::opt::Instruction& inst, core::BuiltinFn fn) {
+        AssertSubgroupScope(inst);
 
         auto group = inst.GetSingleWordInOperand(1);
-        TINT_ASSERT(static_cast<spv::GroupOperation>(group) == spv::GroupOperation::Reduce)
-            << "group operand Reduce required for `Min`/`Max` instructions";
+        if (static_cast<spv::GroupOperation>(group) != spv::GroupOperation::Reduce) {
+            return Failure("group operand Reduce required for `Min`/`Max` instructions");
+        }
 
-        Emit(b_.Call(Type(inst.type_id()), fn, Args(inst, 4)), inst.result_id());
+        EmitOrAdd(b_.Call(Type(inst.type_id()), fn, Args(inst, 4)), inst.result_id());
+        return Success;
     }
 
-    void EmitSubgroupMinMax(spvtools::opt::Instruction& inst, spirv::BuiltinFn fn) {
-        ValidateScope(inst);
+    Result<SuccessType> EmitSubgroupMinMax(spvtools::opt::Instruction& inst, spirv::BuiltinFn fn) {
+        AssertSubgroupScope(inst);
 
         auto group = inst.GetSingleWordInOperand(1);
-        TINT_ASSERT(static_cast<spv::GroupOperation>(group) == spv::GroupOperation::Reduce)
-            << "group operand Reduce required for `Min`/`Max` instructions";
+        if (static_cast<spv::GroupOperation>(group) != spv::GroupOperation::Reduce) {
+            return Failure("group operand Reduce required for `Min`/`Max` instructions");
+        }
 
         Emit(
             b_.Call<spirv::ir::BuiltinCall>(Type(inst.type_id()), fn,                      //
@@ -2536,6 +2872,7 @@ class Parser {
                                                    b_.Constant(u32(inst.GetSingleWordInOperand(1))),
                                                    Value(inst.GetSingleWordInOperand(2))}),
             inst.result_id());
+        return Success;
     }
 
     void EmitSubgroupBuiltinConstantId(spvtools::opt::Instruction& inst, spirv::BuiltinFn fn) {
@@ -2549,20 +2886,81 @@ class Parser {
         TINT_ASSERT(id->Is<core::ir::Constant>())
             << "non-constant GroupNonUniform `Invocation Id` not supported";
 
-        ValidateScope(inst);
+        AssertSubgroupScope(inst);
         Emit(b_.Call<spirv::ir::BuiltinCall>(Type(inst.type_id()), fn, Args(inst, 2)),
              inst.result_id());
     }
 
     void EmitSubgroupBuiltin(spvtools::opt::Instruction& inst, spirv::BuiltinFn fn) {
-        ValidateScope(inst);
+        AssertSubgroupScope(inst);
         Emit(b_.Call<spirv::ir::BuiltinCall>(Type(inst.type_id()), fn, Args(inst, 2)),
              inst.result_id());
     }
 
     void EmitSubgroupBuiltin(spvtools::opt::Instruction& inst, core::BuiltinFn fn) {
-        ValidateScope(inst);
-        Emit(b_.Call(Type(inst.type_id()), fn, Args(inst, 3)), inst.result_id());
+        AssertSubgroupScope(inst);
+        EmitOrAdd(b_.Call(Type(inst.type_id()), fn, Args(inst, 3)), inst.result_id());
+    }
+
+    Result<SuccessType> EmitSubgroupBallotBitCount(spvtools::opt::Instruction& inst) {
+        AssertSubgroupScope(inst);
+
+        auto ballot_id = inst.GetSingleWordInOperand(2);
+        auto* ballot_inst = spirv_context_->get_def_use_mgr()->GetDef(ballot_id);
+        if (!ballot_inst || ballot_inst->opcode() != spv::Op::OpGroupNonUniformBallot) {
+            return Failure(
+                "OpGroupNonUniformBallotBitCount is only supported when Value is from "
+                "OpGroupNonUniformBallot");
+        }
+
+        auto group = inst.GetSingleWordInOperand(1);
+        auto group_op = static_cast<spv::GroupOperation>(group);
+
+        core::BuiltinFn fn = core::BuiltinFn::kNone;
+        switch (group_op) {
+            case spv::GroupOperation::Reduce:
+                fn = core::BuiltinFn::kSubgroupAdd;
+                break;
+            case spv::GroupOperation::InclusiveScan:
+                fn = core::BuiltinFn::kSubgroupInclusiveAdd;
+                break;
+            case spv::GroupOperation::ExclusiveScan:
+                fn = core::BuiltinFn::kSubgroupExclusiveAdd;
+                break;
+            default:
+                TINT_UNREACHABLE();
+        }
+
+        auto* pred_val = Value(ballot_inst->GetSingleWordInOperand(1));
+        auto* conv = b_.Convert<u32>(pred_val);
+        EmitWithoutSpvResult(conv);
+
+        EmitOrAdd(b_.Call(Type(inst.type_id()), fn, conv), inst.result_id());
+        return Success;
+    }
+
+    void EmitSubgroupAllEqual(spvtools::opt::Instruction& inst) {
+        AssertSubgroupScope(inst);
+
+        auto* val = Value(inst.GetSingleWordInOperand(1));
+        auto* first = b_.Call<spirv::ir::BuiltinCall>(
+            val->Type(), spirv::BuiltinFn::kGroupNonUniformBroadcastFirst,
+            Vector{Value(inst.GetSingleWordInOperand(0)), val});
+        EmitWithoutSpvResult(first->Result());
+
+        // If NaNs and INFs are supported in the future, this lowering will remain correct as long
+        // as floating-point equality comparisons use ordered-and-equal (OpFOrdEqual) semantics.
+        auto* eq = b_.Equal(val, first);
+        EmitWithoutSpvResult(eq);
+
+        core::ir::Value* eq_val = eq;
+        if (val->Type()->Is<core::type::Vector>()) {
+            auto* all_call = b_.Call(ty_.bool_(), core::BuiltinFn::kAll, eq);
+            EmitWithoutSpvResult(all_call);
+            eq_val = all_call;
+        }
+
+        EmitOrAdd(b_.Call(ty_.bool_(), core::BuiltinFn::kSubgroupAll, eq_val), inst.result_id());
     }
 
     struct IfBranchValue {
@@ -2658,7 +3056,7 @@ class Parser {
         if (val) {
             // If we've already seen the value, and it's still in scope, then we can just emit as it
             // isn't referencing a later value.
-            if (IdIsInScope(id)) {
+            if (IdIsInScope(id) || (*val)->Is<core::ir::FunctionParam>()) {
                 term->PushOperand(Value(id, false));
                 return;
             }
@@ -3105,7 +3503,9 @@ class Parser {
         auto* si = Value(inst.GetSingleWordInOperand(0));
         Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(
                  Type(inst.type_id()), spirv::BuiltinFn::kOpImage,
-                 Vector{si->Type()->As<spirv::type::SampledImage>()->Image()}, Args(inst, 2)),
+                 Vector<core::ir::TemplateParameter, 1>{
+                     si->Type()->As<spirv::type::SampledImage>()->Image()},
+                 Args(inst, 2)),
              inst.result_id());
     }
 
@@ -3115,9 +3515,9 @@ class Parser {
         TINT_ASSERT(img_type);
         TINT_ASSERT(img_type->GetMultisampled() != type::Multisampled::kMultisampled)
             << "Creating an OpTypeSampledImage from a multisampled image is not supported";
-        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(Type(inst.type_id()),
-                                                     spirv::BuiltinFn::kOpSampledImage,
-                                                     Vector{tex->Type()}, Args(inst, 2)),
+        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(
+                 Type(inst.type_id()), spirv::BuiltinFn::kOpSampledImage,
+                 Vector<core::ir::TemplateParameter, 1>{tex->Type()}, Args(inst, 2)),
              inst.result_id());
     }
 
@@ -3127,15 +3527,10 @@ class Parser {
 
         Vector<core::ir::Value*, 4> args = {sampled_image, coord};
 
-        if (inst.NumInOperands() > 2) {
-            uint32_t literal_mask = inst.GetSingleWordInOperand(2);
-            args.Push(b_.Constant(u32(literal_mask)));
-
-            if (literal_mask != 0) {
-                args.Push(Value(inst.GetSingleWordInOperand(3)));
-            }
-        } else {
-            args.Push(b_.Zero(ty_.u32()));
+        uint32_t literal_mask = inst.NumInOperands() > 2 ? inst.GetSingleWordInOperand(2) : 0u;
+        args.Push(Literal(literal_mask));
+        if (literal_mask != 0) {
+            args.Push(Value(inst.GetSingleWordInOperand(3)));
         }
 
         Emit(b_.Call<spirv::ir::BuiltinCall>(Type(inst.type_id()), fn, args), inst.result_id());
@@ -3148,18 +3543,13 @@ class Parser {
 
         Vector<core::ir::Value*, 4> args = {sampled_image, coord, dref};
 
-        if (inst.NumInOperands() > 3) {
-            uint32_t literal_mask = inst.GetSingleWordInOperand(3);
-            args.Push(b_.Constant(u32(literal_mask)));
-
-            if (literal_mask != 0) {
-                TINT_ASSERT(static_cast<spv::ImageOperandsMask>(literal_mask) ==
-                            spv::ImageOperandsMask::ConstOffset);
-                TINT_ASSERT(inst.NumInOperands() > 4);
-                args.Push(Value(inst.GetSingleWordInOperand(4)));
-            }
-        } else {
-            args.Push(b_.Zero(ty_.u32()));
+        uint32_t literal_mask = inst.NumInOperands() > 3 ? inst.GetSingleWordInOperand(3) : 0u;
+        args.Push(Literal(literal_mask));
+        if (literal_mask != 0) {
+            TINT_ASSERT(static_cast<spv::ImageOperandsMask>(literal_mask) ==
+                        spv::ImageOperandsMask::ConstOffset);
+            TINT_ASSERT(inst.NumInOperands() > 4);
+            args.Push(Value(inst.GetSingleWordInOperand(4)));
         }
 
         Emit(b_.Call<spirv::ir::BuiltinCall>(Type(inst.type_id()),
@@ -3174,18 +3564,13 @@ class Parser {
 
         Vector<core::ir::Value*, 4> args = {sampled_image, coord, comp};
 
-        if (inst.NumInOperands() > 3) {
-            uint32_t literal_mask = inst.GetSingleWordInOperand(3);
-            args.Push(b_.Constant(u32(literal_mask)));
-
-            if (literal_mask != 0) {
-                TINT_ASSERT(static_cast<spv::ImageOperandsMask>(literal_mask) ==
-                            spv::ImageOperandsMask::ConstOffset);
-                TINT_ASSERT(inst.NumInOperands() > 4);
-                args.Push(Value(inst.GetSingleWordInOperand(4)));
-            }
-        } else {
-            args.Push(b_.Zero(ty_.u32()));
+        uint32_t literal_mask = inst.NumInOperands() > 3 ? inst.GetSingleWordInOperand(3) : 0u;
+        args.Push(Literal(literal_mask));
+        if (literal_mask != 0) {
+            TINT_ASSERT(static_cast<spv::ImageOperandsMask>(literal_mask) ==
+                        spv::ImageOperandsMask::ConstOffset);
+            TINT_ASSERT(inst.NumInOperands() > 4);
+            args.Push(Value(inst.GetSingleWordInOperand(4)));
         }
 
         Emit(b_.Call<spirv::ir::BuiltinCall>(Type(inst.type_id()), spirv::BuiltinFn::kImageGather,
@@ -3199,19 +3584,11 @@ class Parser {
 
         Vector<core::ir::Value*, 4> args = {sampled_image, coord};
 
-        if (inst.NumInOperands() > 2) {
-            uint32_t literal_mask = inst.GetSingleWordInOperand(2);
-            args.Push(b_.Constant(u32(literal_mask)));
-
-            if (literal_mask != 0) {
-                TINT_ASSERT(inst.NumInOperands() > 3);
-            }
-
-            for (uint32_t i = 3; i < inst.NumInOperands(); ++i) {
-                args.Push(Value(inst.GetSingleWordInOperand(i)));
-            }
-        } else {
-            args.Push(b_.Zero(ty_.u32()));
+        uint32_t literal_mask = inst.NumInOperands() > 2 ? inst.GetSingleWordInOperand(2) : 0u;
+        args.Push(Literal(literal_mask));
+        TINT_ASSERT(literal_mask == 0 || inst.NumInOperands() > 3);
+        for (uint32_t i = 3; i < inst.NumInOperands(); ++i) {
+            args.Push(Value(inst.GetSingleWordInOperand(i)));
         }
 
         Emit(b_.Call<spirv::ir::BuiltinCall>(Type(inst.type_id()), fn, args), inst.result_id());
@@ -3228,28 +3605,20 @@ class Parser {
 
         Vector<core::ir::Value*, 4> args = {sampled_image, coord, dref};
 
-        if (inst.NumInOperands() > 3) {
-            uint32_t literal_mask = inst.GetSingleWordInOperand(3);
-            args.Push(b_.Constant(u32(literal_mask)));
+        uint32_t literal_mask = inst.NumInOperands() > 3 ? inst.GetSingleWordInOperand(3) : 0u;
+        args.Push(Literal(literal_mask));
+        TINT_ASSERT(literal_mask == 0 || inst.NumInOperands() > 4);
+        for (uint32_t i = 4; i < inst.NumInOperands(); ++i) {
+            args.Push(Value(inst.GetSingleWordInOperand(i)));
+        }
 
-            if (literal_mask != 0) {
-                TINT_ASSERT(inst.NumInOperands() > 4);
-            }
+        if (HasLod(literal_mask)) {
+            core::ir::Value* lod = args[4];
+            TINT_ASSERT(lod->Is<core::ir::Constant>());
+            TINT_ASSERT(lod->Type()->As<core::type::F32>());
 
-            for (uint32_t i = 4; i < inst.NumInOperands(); ++i) {
-                args.Push(Value(inst.GetSingleWordInOperand(i)));
-            }
-
-            if (HasLod(literal_mask)) {
-                core::ir::Value* lod = args[4];
-                TINT_ASSERT(lod->Is<core::ir::Constant>());
-                TINT_ASSERT(lod->Type()->As<core::type::F32>());
-
-                auto v = lod->As<core::ir::Constant>()->Value()->ValueAs<float>();
-                TINT_ASSERT(v == 0.0f) << "Dref LOD values must be 0.0";
-            }
-        } else {
-            args.Push(b_.Zero(ty_.u32()));
+            auto v = lod->As<core::ir::Constant>()->Value()->ValueAs<float>();
+            TINT_ASSERT(v == 0.0f) << "Dref LOD values must be 0.0";
         }
 
         Emit(b_.Call<spirv::ir::BuiltinCall>(Type(inst.type_id()), fn, args), inst.result_id());
@@ -3266,12 +3635,12 @@ class Parser {
         if (texel_ty->IsScalar()) {
             auto* c = b_.Construct(ty_.vec4(texel_ty), texel);
             EmitWithoutSpvResult(c);
-            texel = c->Result();
+            texel = c;
         } else {
             auto* vec_ty = texel_ty->As<core::type::Vector>();
             TINT_ASSERT(vec_ty);
 
-            core::ir::Instruction* c = nullptr;
+            core::ir::Value* c = nullptr;
             if (vec_ty->Width() == 2) {
                 c = b_.Construct(ty_.vec4(vec_ty->Type()), texel, b_.Zero(vec_ty));
             } else if (vec_ty->Width() == 3) {
@@ -3279,19 +3648,13 @@ class Parser {
             }
             if (c != nullptr) {
                 EmitWithoutSpvResult(c);
-                texel = c->Result();
+                texel = c;
             }
         }
 
-        Vector<core::ir::Value*, 4> args = {image, coord, texel};
-        if (inst.NumInOperands() > 3) {
-            uint32_t literal_mask = inst.GetSingleWordInOperand(3);
-            args.Push(b_.Constant(u32(literal_mask)));
-            TINT_ASSERT(literal_mask == 0);
-        } else {
-            args.Push(b_.Zero(ty_.u32()));
-        }
-
+        uint32_t literal_mask = inst.NumInOperands() > 3 ? inst.GetSingleWordInOperand(3) : 0u;
+        TINT_ASSERT(literal_mask == 0);
+        Vector<core::ir::Value*, 4> args = {image, coord, texel, Literal(literal_mask)};
         Emit(b_.Call<spirv::ir::BuiltinCall>(ty_.void_(), spirv::BuiltinFn::kImageWrite, args),
              inst.result_id());
     }
@@ -3300,7 +3663,8 @@ class Parser {
         auto* image = Value(inst.GetSingleWordInOperand(0));
 
         auto* ty = Type(inst.type_id());
-        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(ty, fn, Vector{ty->DeepestElement()}, image),
+        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(
+                 ty, fn, Vector<core::ir::TemplateParameter, 1>{ty->DeepestElement()}, image),
              inst.result_id());
     }
 
@@ -3309,8 +3673,9 @@ class Parser {
         auto* level = Value(inst.GetSingleWordInOperand(1));
 
         auto* ty = Type(inst.type_id());
-        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(ty, spirv::BuiltinFn::kImageQuerySizeLod,
-                                                     Vector{ty->DeepestElement()}, image, level),
+        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(
+                 ty, spirv::BuiltinFn::kImageQuerySizeLod,
+                 Vector<core::ir::TemplateParameter, 1>{ty->DeepestElement()}, image, level),
              inst.result_id());
     }
 
@@ -3341,51 +3706,58 @@ class Parser {
                       strct, u32(field_index));
         EmitWithoutSpvResult(access);
 
-        Emit(b_.Call(Type(inst.type_id()), core::BuiltinFn::kArrayLength, Vector{access->Result()}),
-             inst.result_id());
+        EmitOrAdd(b_.Call(Type(inst.type_id()), core::BuiltinFn::kArrayLength, Vector{access}),
+                  inst.result_id());
     }
 
-    void EmitControlBarrier(const spvtools::opt::Instruction& inst) {
+    Result<SuccessType> EmitControlBarrier(const spvtools::opt::Instruction& inst) {
         auto get_constant = [&](uint32_t idx) {
             uint32_t id = inst.GetSingleWordOperand(idx);
-            if (auto* constant = spirv_context_->get_constant_mgr()->FindDeclaredConstant(id)) {
-                return constant->GetU32();
-            }
-            TINT_ICE() << "invalid or missing operands for control barrier";
+            auto* constant = spirv_context_->get_constant_mgr()->FindDeclaredConstant(id);
+            TINT_ASSERT(constant);
+            return constant->GetU32();
         };
 
         uint32_t execution = get_constant(0);
         uint32_t memory = get_constant(1);
         uint32_t semantics = get_constant(2);
 
-        TINT_ASSERT(execution == uint32_t(spv::Scope::Workgroup))
-            << "unsupported control barrier execution scope: "
-            << "expected Workgroup (2), got: " << execution;
+        if (execution != dawn::to_underlying(spv::Scope::Workgroup)) {
+            return Failure(
+                "unsupported control barrier execution scope: expected Workgroup, got: " +
+                std::string(spv::ScopeToString(spv::Scope(execution))));
+        }
 
-        if (semantics & uint32_t(spv::MemorySemanticsMask::AcquireRelease)) {
-            semantics &= ~static_cast<uint32_t>(spv::MemorySemanticsMask::AcquireRelease);
+        if (semantics & dawn::to_underlying(spv::MemorySemanticsMask::AcquireRelease)) {
+            semantics &= ~dawn::to_underlying(spv::MemorySemanticsMask::AcquireRelease);
         } else {
-            TINT_ICE() << "control barrier semantics requires acquire and release";
+            return Failure("control barrier semantics requires acquire and release");
         }
-        TINT_ASSERT(memory == uint32_t(spv::Scope::Workgroup))
-            << "control barrier requires workgroup memory scope";
 
-        if (semantics & uint32_t(spv::MemorySemanticsMask::WorkgroupMemory)) {
+        if (memory != dawn::to_underlying(spv::Scope::Workgroup)) {
+            return Failure("control barrier requires workgroup memory scope");
+        }
+
+        if (semantics & dawn::to_underlying(spv::MemorySemanticsMask::WorkgroupMemory)) {
             EmitWithoutSpvResult(b_.Call(ty_.void_(), core::BuiltinFn::kWorkgroupBarrier));
-            semantics &= ~static_cast<uint32_t>(spv::MemorySemanticsMask::WorkgroupMemory);
+            semantics &= ~dawn::to_underlying(spv::MemorySemanticsMask::WorkgroupMemory);
         }
 
-        if (semantics & uint32_t(spv::MemorySemanticsMask::UniformMemory)) {
+        if (semantics & dawn::to_underlying(spv::MemorySemanticsMask::UniformMemory)) {
             EmitWithoutSpvResult(b_.Call(ty_.void_(), core::BuiltinFn::kStorageBarrier));
-            semantics &= ~static_cast<uint32_t>(spv::MemorySemanticsMask::UniformMemory);
+            semantics &= ~dawn::to_underlying(spv::MemorySemanticsMask::UniformMemory);
         }
 
-        if (semantics & uint32_t(spv::MemorySemanticsMask::ImageMemory)) {
+        if (semantics & dawn::to_underlying(spv::MemorySemanticsMask::ImageMemory)) {
             EmitWithoutSpvResult(b_.Call(ty_.void_(), core::BuiltinFn::kTextureBarrier));
-            semantics &= ~static_cast<uint32_t>(spv::MemorySemanticsMask::ImageMemory);
+            semantics &= ~dawn::to_underlying(spv::MemorySemanticsMask::ImageMemory);
         }
 
-        TINT_ASSERT(!semantics) << "unsupported control barrier semantics: " << semantics;
+        if (semantics != 0) {
+            return Failure("unsupported control barrier semantics: " + std::to_string(semantics));
+        }
+
+        return Success;
     }
 
     void CheckAtomicNotFloat(const spvtools::opt::Instruction& inst) {
@@ -3401,13 +3773,14 @@ class Parser {
             << "Atomic operations on floating point values not supported.";
 
         EmitWithoutSpvResult(b_.Call<spirv::ir::BuiltinCall>(
-            ty_.void_(), spirv::BuiltinFn::kAtomicStore, Args(inst, 0)));
+                                   ty_.void_(), spirv::BuiltinFn::kAtomicStore, Args(inst, 0))
+                                 ->Result());
     }
 
     void EmitBitcast(const spvtools::opt::Instruction& inst) {
         auto val = Value(inst.GetSingleWordInOperand(0));
         auto ty = Type(inst.type_id());
-        Emit(b_.Bitcast(ty, val), inst.result_id());
+        EmitOrAdd(b_.Bitcast(ty, val), inst.result_id());
     }
 
     core::ir::ControlInstruction* StopWalkingAt(uint32_t id) {
@@ -3426,13 +3799,14 @@ class Parser {
         return nullptr;
     }
 
-    void EmitBranch(spvtools::opt::Instruction& inst) {
+    Result<SuccessType> EmitBranch(spvtools::opt::Instruction& inst) {
         auto dest_id = inst.GetSingleWordInOperand(0);
 
         // Disallow fallthrough
         for (auto& switch_blocks : current_switch_blocks_) {
-            TINT_ASSERT(switch_blocks.count(dest_id) == 0)
-                << "switch fallthrough not supported by the SPIR-V reader";
+            if (switch_blocks.count(dest_id) != 0) {
+                return Failure("switch fallthrough not supported by the SPIR-V reader");
+            }
         }
 
         // The destination is a continuing block, so insert a `continue`
@@ -3441,7 +3815,7 @@ class Parser {
             auto id = spirv_context_->get_instr_block(&inst)->id();
             inst_to_spirv_block_[new_inst] = id;
             EmitWithoutResult(new_inst);
-            return;
+            return Success;
         }
         // If this is branching to a previous merge block then we're done. It can be a previous
         // merge block in the case of an `if` breaking out of a `switch` or `loop`.
@@ -3455,13 +3829,14 @@ class Parser {
             } else if (ctrl_inst->Is<core::ir::Switch>()) {
                 EmitWithoutResult(b_.Exit(ctrl_inst));
             }
-            return;
+            return Success;
         }
 
         TINT_ASSERT(current_spirv_function_);
         const auto& bb = current_spirv_function_->FindBlock(dest_id);
 
-        EmitBlock(current_block_, *bb);
+        TINT_CHECK_RESULT(EmitBlock(current_block_, *bb));
+        return Success;
     }
 
     // Given a true and false branch find if there is a common convergence point before the merge
@@ -3611,7 +3986,9 @@ class Parser {
             }
             if (false_id == merge_id && true_is_header) {
                 auto* val = b_.Not(cond);
-                EmitWithoutSpvResult(val);
+                if (auto* inst = val->AsInstruction()) {
+                    EmitWithoutSpvResult(inst->Result());
+                }
                 EmitWithoutResult(b_.BreakIf(loop, val));
                 return true;
             }
@@ -3619,9 +3996,9 @@ class Parser {
         return false;
     }
 
-    void EmitPremergeBlock(uint32_t merge_id,
-                           uint32_t premerge_start_id,
-                           core::ir::If* premerge_if_) {
+    Result<SuccessType> EmitPremergeBlock(uint32_t merge_id,
+                                          uint32_t premerge_start_id,
+                                          core::ir::If* premerge_if_) {
         auto iter = merge_to_premerge_.find(merge_id);
         TINT_ASSERT(iter != merge_to_premerge_.end());
 
@@ -3629,7 +4006,7 @@ class Parser {
         // the condition variable.
         if (iter->second.condition) {
             auto* premerge_cond = b_.Load(iter->second.condition);
-            EmitWithoutSpvResult(premerge_cond);
+            EmitWithoutSpvResult(premerge_cond->Result());
             premerge_if_->SetOperand(core::ir::If::kConditionOperandOffset,
                                      premerge_cond->Result());
         }
@@ -3638,30 +4015,32 @@ class Parser {
         EmitWithoutResult(premerge_if_);
 
         const auto& bb_premerge = current_spirv_function_->FindBlock(premerge_start_id);
-        EmitBlockParent(premerge_if_->True(), *bb_premerge);
+        TINT_CHECK_RESULT(EmitBlockParent(premerge_if_->True(), *bb_premerge));
         if (!premerge_if_->True()->Terminator()) {
             premerge_if_->True()->Append(b_.Exit(premerge_if_));
         }
 
         premerge_if_->False()->Append(b_.Unreachable());
+        return Success;
     }
 
-    void EmitIfBranch(uint32_t id, core::ir::If* if_, core::ir::Block* blk) {
+    Result<SuccessType> EmitIfBranch(uint32_t id, core::ir::If* if_, core::ir::Block* blk) {
         const auto& bb = current_spirv_function_->FindBlock(id);
-        EmitBlockParent(blk, *bb);
+        TINT_CHECK_RESULT(EmitBlockParent(blk, *bb));
         if (!blk->Terminator()) {
             blk->Append(b_.Exit(if_));
         }
+        return Success;
     }
 
-    void EmitBranchConditional(const spvtools::opt::BasicBlock& bb,
-                               const spvtools::opt::Instruction& inst) {
+    Result<SuccessType> EmitBranchConditional(const spvtools::opt::BasicBlock& bb,
+                                              const spvtools::opt::Instruction& inst) {
         auto cond = Value(inst.GetSingleWordInOperand(0));
         auto true_id = inst.GetSingleWordInOperand(1);
         auto false_id = inst.GetSingleWordInOperand(2);
 
         if (ProcessBranchAsLoopHeader(cond, true_id, false_id)) {
-            return;
+            return Success;
         }
 
         // If the true and false block are the same, then we change the condition into
@@ -3670,7 +4049,7 @@ class Parser {
         if (true_id == false_id) {
             auto* binary = b_.Binary(core::BinaryOp::kOr, cond->Type(), cond, b_.Constant(true));
             EmitWithoutSpvResult(binary);
-            cond = binary->Result();
+            cond = binary;
         }
 
         auto* if_ = b_.If(cond);
@@ -3708,7 +4087,7 @@ class Parser {
             auto* new_inst = EmitBranchStopBlock(ctrl, if_, if_->True(), true_id);
             inst_to_spirv_block_[new_inst] = bb.id();
         } else {
-            EmitIfBranch(true_id, if_, if_->True());
+            TINT_CHECK_RESULT(EmitIfBranch(true_id, if_, if_->True()));
         }
 
         // Pre-SPIRV 1.6 the true and false blocks could be the same. If that's the case then we
@@ -3719,21 +4098,23 @@ class Parser {
             auto* new_inst = EmitBranchStopBlock(ctrl, if_, if_->False(), false_id);
             inst_to_spirv_block_[new_inst] = bb.id();
         } else {
-            EmitIfBranch(false_id, if_, if_->False());
+            TINT_CHECK_RESULT(EmitIfBranch(false_id, if_, if_->False()));
         }
 
         // There was a premerge, remove it from the merge stack and then emit the premerge into an
         // `if true` block in order to maintain re-convergence guarantees. The premerge will contain
         // all the blocks up to the merge block.
         if (premerge_start_id.has_value()) {
-            EmitPremergeBlock(merge_id.value(), premerge_start_id.value(), premerge_if_);
+            TINT_CHECK_RESULT(
+                EmitPremergeBlock(merge_id.value(), premerge_start_id.value(), premerge_if_));
         }
 
         // Emit the merge block if it exists.
         if (merge_id.has_value()) {
             const auto& bb_merge = current_spirv_function_->FindBlock(merge_id.value());
-            EmitBlock(current_block_, *bb_merge);
+            TINT_CHECK_RESULT(EmitBlock(current_block_, *bb_merge));
         }
+        return Success;
     }
 
     void EmitLoop(const spvtools::opt::BasicBlock& bb) {
@@ -3779,7 +4160,8 @@ class Parser {
         // instructions in the loop header are emitted.
     }
 
-    void EmitSwitch(const spvtools::opt::BasicBlock& bb, const spvtools::opt::Instruction& inst) {
+    Result<SuccessType> EmitSwitch(const spvtools::opt::BasicBlock& bb,
+                                   const spvtools::opt::Instruction& inst) {
         auto* selector = Value(inst.GetSingleWordInOperand(0));
         auto default_id = inst.GetSingleWordInOperand(1);
 
@@ -3800,14 +4182,14 @@ class Parser {
             current_switch_blocks_[switch_blocks_id].emplace(default_id);
 
             const auto& bb_default = current_spirv_function_->FindBlock(default_id);
-            EmitBlockParent(default_blk, *bb_default);
+            TINT_CHECK_RESULT(EmitBlockParent(default_blk, *bb_default));
         }
         if (!default_blk->Terminator()) {
             default_blk->Append(b_.ExitSwitch(switch_));
         }
 
-        std::unordered_map<uint32_t, core::ir::Switch::Case*> block_id_to_case;
-        block_id_to_case[default_id] = &(switch_->Cases().Back());
+        std::unordered_map<uint32_t, size_t> block_id_to_case_index;
+        block_id_to_case_index[default_id] = switch_->Cases().Length() - 1;
 
         for (uint32_t i = 2; i < inst.NumInOperandWords(); i += 2) {
             auto blk_id = inst.GetSingleWordInOperand(i + 1);
@@ -3830,27 +4212,29 @@ class Parser {
             }
 
             // Determine if we've seen this block and should combine selectors
-            auto iter = block_id_to_case.find(blk_id);
-            if (iter != block_id_to_case.end()) {
-                iter->second->selectors.Push(core::ir::Switch::CaseSelector{sel});
+            auto case_index_iter = block_id_to_case_index.find(blk_id);
+            if (case_index_iter != block_id_to_case_index.end()) {
+                switch_->Cases()[case_index_iter->second].selectors.Push(
+                    core::ir::Switch::CaseSelector{sel});
                 continue;
             }
 
             core::ir::Block* blk = b_.Case(switch_, Vector{sel});
             if (blk_id != merge_id) {
                 const auto& basic_block = current_spirv_function_->FindBlock(blk_id);
-                EmitBlockParent(blk, *basic_block);
+                TINT_CHECK_RESULT(EmitBlockParent(blk, *basic_block));
             }
             if (!blk->Terminator()) {
                 blk->Append(b_.ExitSwitch(switch_));
             }
-            block_id_to_case[blk_id] = &(switch_->Cases().Back());
+            block_id_to_case_index[blk_id] = switch_->Cases().Length() - 1;
         }
 
         current_switch_blocks_.pop_back();
 
         const auto& bb_merge = current_spirv_function_->FindBlock(merge_id);
-        EmitBlock(current_block_, *bb_merge);
+        TINT_CHECK_RESULT(EmitBlock(current_block_, *bb_merge));
+        return Success;
     }
 
     Vector<core::ir::Value*, 4> Args(const spvtools::opt::Instruction& inst, uint32_t start) {
@@ -3862,15 +4246,16 @@ class Parser {
     }
 
     void EmitBuiltinCall(const spvtools::opt::Instruction& inst, core::BuiltinFn fn) {
-        Emit(b_.Call(Type(inst.type_id()), fn, Args(inst, 2)), inst.result_id());
+        EmitOrAdd(b_.Call(Type(inst.type_id()), fn, Args(inst, 2)), inst.result_id());
     }
 
     void EmitSpirvExplicitBuiltinCall(const spvtools::opt::Instruction& inst,
                                       spirv::BuiltinFn fn,
                                       uint32_t first_operand_idx = 2) {
-        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(Type(inst.type_id()), fn,
-                                                     Vector{Type(inst.type_id())->DeepestElement()},
-                                                     Args(inst, first_operand_idx)),
+        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(
+                 Type(inst.type_id()), fn,
+                 Vector<core::ir::TemplateParameter, 1>{Type(inst.type_id())->DeepestElement()},
+                 Args(inst, first_operand_idx)),
              inst.result_id());
     }
 
@@ -3884,9 +4269,9 @@ class Parser {
 
     void EmitBitCount(const spvtools::opt::Instruction& inst) {
         auto* res_ty = Type(inst.type_id());
-        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(res_ty, spirv::BuiltinFn::kBitCount,
-                                                     Vector{res_ty->DeepestElement()},
-                                                     Args(inst, 2)),
+        Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(
+                 res_ty, spirv::BuiltinFn::kBitCount,
+                 Vector<core::ir::TemplateParameter, 1>{res_ty->DeepestElement()}, Args(inst, 2)),
              inst.result_id());
     }
 
@@ -3929,24 +4314,22 @@ class Parser {
     /// @param inst the SPIR-V instruction for OpCopyMemory
     void EmitCopyMemory(const spvtools::opt::Instruction& inst) {
         auto load = b_.Load(Value(inst.GetSingleWordOperand(1)));
-        EmitWithoutSpvResult(load);
+        EmitWithoutSpvResult(load->Result());
         EmitWithoutResult(b_.Store(Value(inst.GetSingleWordOperand(0)), load));
     }
 
     /// @param inst the SPIR-V instruction for OpExtInst
-    void EmitExtInst(const spvtools::opt::Instruction& inst) {
+    Result<SuccessType> EmitExtInst(const spvtools::opt::Instruction& inst) {
         auto inst_set = inst.GetSingleWordInOperand(0);
         if (ignored_imports_.count(inst_set) > 0) {
             // Ignore it but don't error out.
-            return;
+            return Success;
         }
         if (glsl_std_450_imports_.count(inst_set) > 0) {
-            EmitGlslStd450ExtInst(inst);
-            return;
+            return EmitGlslStd450ExtInst(inst);
         }
-
-        TINT_UNIMPLEMENTED() << "unhandled extended instruction import with ID "
-                             << inst.GetSingleWordInOperand(0);
+        TINT_UNREACHABLE()
+            << "unrecognized extended instruction set should have been caught during registration";
     }
 
     // Returns the WGSL standard library function for the given GLSL.std.450 extended instruction
@@ -4115,8 +4498,9 @@ class Parser {
         return spirv::BuiltinFn::kNone;
     }
 
-    Vector<const core::type::Type*, 1> GlslStd450ExplicitParams(uint32_t ext_opcode,
-                                                                const core::type::Type* result_ty) {
+    Vector<core::ir::TemplateParameter, 1> GlslStd450ExplicitParams(
+        uint32_t ext_opcode,
+        const core::type::Type* result_ty) {
         if (ext_opcode == GLSLstd450SSign || ext_opcode == GLSLstd450SAbs ||
             ext_opcode == GLSLstd450SMax || ext_opcode == GLSLstd450SMin ||
             ext_opcode == GLSLstd450SClamp || ext_opcode == GLSLstd450UMax ||
@@ -4129,7 +4513,7 @@ class Parser {
     }
 
     /// @param inst the SPIR-V instruction for OpAccessChain
-    void EmitGlslStd450ExtInst(const spvtools::opt::Instruction& inst) {
+    Result<SuccessType> EmitGlslStd450ExtInst(const spvtools::opt::Instruction& inst) {
         const auto ext_opcode = inst.GetSingleWordInOperand(1);
         auto* spv_ty = Type(inst.type_id());
 
@@ -4159,8 +4543,8 @@ class Parser {
             EmitWithoutSpvResult(call);
             EmitWithoutSpvResult(fract);
             EmitWithoutSpvResult(whole);
-            Emit(b_.Construct(spv_ty, fract, whole), inst.result_id());
-            return;
+            EmitOrAdd(b_.Construct(spv_ty, fract, whole), inst.result_id());
+            return Success;
         }
         if (wgsl_fn == core::BuiltinFn::kFrexp) {
             // For `FrexpStruct`, which is, essentially, a WGSL `frexp`
@@ -4177,7 +4561,7 @@ class Parser {
             auto* call = b_.Call(result_ty, wgsl_fn, operands);
             auto* fract = b_.Access(mem_ty, call, 0_u);
             auto* exp = b_.Access(ty_.MatchWidth(ty_.i32(), mem_ty), call, 1_u);
-            auto* exp_res = exp->Result();
+            core::ir::Value* exp_res = exp;
 
             EmitWithoutSpvResult(call);
             EmitWithoutSpvResult(fract);
@@ -4186,18 +4570,17 @@ class Parser {
             if (auto* str = spv_ty->As<core::type::Struct>()) {
                 auto* exp_ty = str->Members()[1]->Type();
                 if (exp_ty->DeepestElement()->IsUnsignedIntegerScalar()) {
-                    auto* uexp = b_.Bitcast(exp_ty, exp);
-                    exp_res = uexp->Result();
-                    EmitWithoutSpvResult(uexp);
+                    exp_res = b_.Bitcast(exp_ty, exp);
+                    EmitWithoutSpvResult(exp_res);
                 }
             }
 
-            Emit(b_.Construct(spv_ty, fract, exp_res), inst.result_id());
-            return;
+            EmitOrAdd(b_.Construct(spv_ty, fract, exp_res), inst.result_id());
+            return Success;
         }
         if (wgsl_fn != core::BuiltinFn::kNone) {
-            Emit(b_.Call(spv_ty, wgsl_fn, operands), inst.result_id());
-            return;
+            EmitOrAdd(b_.Call(spv_ty, wgsl_fn, operands), inst.result_id());
+            return Success;
         }
 
         const auto spv_fn = GetGlslStd450SpirvEquivalentFuncName(ext_opcode);
@@ -4205,10 +4588,10 @@ class Parser {
             auto explicit_params = GlslStd450ExplicitParams(ext_opcode, spv_ty);
             Emit(b_.CallExplicit<spirv::ir::BuiltinCall>(spv_ty, spv_fn, explicit_params, operands),
                  inst.result_id());
-            return;
+            return Success;
         }
 
-        TINT_UNIMPLEMENTED() << "unhandled GLSL.std.450 instruction " << ext_opcode;
+        TINT_UNREACHABLE() << "unhandled GLSL.std.450 instruction " << ext_opcode;
     }
 
     /// @param inst the SPIR-V instruction for OpAccessChain
@@ -4229,7 +4612,7 @@ class Parser {
         }
 
         auto* access = b_.Access(Type(inst.type_id(), access_mode), base, std::move(indices));
-        Emit(access, inst.result_id());
+        EmitOrAdd(access, inst.result_id());
     }
 
     /// @param inst the SPIR-V instruction
@@ -4239,7 +4622,11 @@ class Parser {
                    uint32_t first_operand_idx = 2) {
         auto* val = Value(inst.GetSingleWordOperand(first_operand_idx));
         auto* unary = b_.Unary(op, val);
-        Emit(unary, inst.result_id());
+        if (auto* unary_inst = unary->AsInstruction()) {
+            Emit(unary_inst, inst.result_id());
+        } else {
+            AddValue(inst.result_id(), unary);
+        }
     }
 
     /// @param inst the SPIR-V instruction
@@ -4250,7 +4637,11 @@ class Parser {
         auto* lhs = Value(inst.GetSingleWordOperand(first_operand_idx));
         auto* rhs = Value(inst.GetSingleWordOperand(first_operand_idx + 1));
         auto* binary = b_.Binary(op, Type(inst.type_id()), lhs, rhs);
-        Emit(binary, inst.result_id());
+        if (auto* res = binary->AsInstruction()) {
+            Emit(res, inst.result_id());
+        } else {
+            AddValue(inst.result_id(), binary);
+        }
     }
 
     /// Emits the logical negation of the result of the given SPIR-V instruction.
@@ -4262,8 +4653,12 @@ class Parser {
         auto* binary = b_.Binary(op, Type(inst.type_id()), lhs, rhs);
         EmitWithoutSpvResult(binary);
 
-        auto* res = b_.Not(binary);
-        Emit(res, inst.result_id());
+        auto* inv = b_.Not(binary);
+        if (auto* inv_inst = inv->AsInstruction()) {
+            Emit(inv_inst, inst.result_id());
+        } else {
+            AddValue(inst.result_id(), inv);
+        }
     }
 
     /// @param inst the SPIR-V instruction for OpCompositeExtract
@@ -4275,7 +4670,7 @@ class Parser {
         }
         auto* object = Value(inst.GetSingleWordOperand(composite_index));
         auto* access = b_.Access(Type(inst.type_id()), object, std::move(indices));
-        Emit(access, inst.result_id());
+        EmitOrAdd(access, inst.result_id());
     }
 
     /// @param inst the SPIR-V instruction for OpCompositeInsert
@@ -4292,7 +4687,7 @@ class Parser {
         auto* ptr_ty = ty_.ptr(function, object->Type());
         auto* access = b_.Access(ptr_ty, tmp, std::move(indices));
 
-        EmitWithoutSpvResult(tmp);
+        EmitWithoutSpvResult(tmp->Result());
         EmitWithoutSpvResult(access);
         EmitWithoutResult(b_.Store(access, object));
         Emit(b_.Load(tmp), inst.result_id());
@@ -4301,7 +4696,7 @@ class Parser {
     /// @param inst the SPIR-V instruction for OpCompositeConstruct
     void EmitConstruct(const spvtools::opt::Instruction& inst) {
         auto* construct = b_.Construct(Type(inst.type_id()), Args(inst, 2));
-        Emit(construct, inst.result_id());
+        EmitOrAdd(construct, inst.result_id());
     }
 
     /// @param inst the SPIR-V instruction for OpVectorInsertDynamic
@@ -4312,7 +4707,7 @@ class Parser {
         auto* tmp = b_.Var(
             ty_.ptr(core::AddressSpace::kFunction, Type(inst.type_id()), core::Access::kReadWrite));
         tmp->SetInitializer(vector);
-        EmitWithoutSpvResult(tmp);
+        EmitWithoutSpvResult(tmp->Result());
         EmitWithoutResult(b_.StoreVectorElement(tmp, index, component));
         Emit(b_.Load(tmp), inst.result_id());
     }
@@ -4342,7 +4737,7 @@ class Parser {
             auto* swizzle_type = ty_.MatchWidth(el_ty, current_indices.Length());
             auto* swizzle = b_.Swizzle(swizzle_type, current_vector, current_indices);
             EmitWithoutSpvResult(swizzle);
-            swizzles.Push(swizzle->Result());
+            swizzles.Push(swizzle);
             current_indices.Clear();
         };
 
@@ -4381,7 +4776,7 @@ class Parser {
             AddValue(inst.result_id(), swizzles[0]);
         } else {
             // There were multiple swizzles, so we combine them all to produce the final result.
-            Emit(b_.Construct(result_ty, swizzles), inst.result_id());
+            EmitOrAdd(b_.Construct(result_ty, swizzles), inst.result_id());
         }
     }
 
@@ -4391,7 +4786,7 @@ class Parser {
     }
 
     /// @param inst the SPIR-V instruction for OpVariable
-    void EmitVar(const spvtools::opt::Instruction& inst) {
+    Result<SuccessType> EmitVar(const spvtools::opt::Instruction& inst) {
         // Handle decorations.
         std::optional<uint32_t> group;
         std::optional<uint32_t> binding;
@@ -4425,9 +4820,12 @@ class Parser {
                 case spv::Decoration::Binding:
                     binding = deco->GetSingleWordOperand(2);
                     break;
-                case spv::Decoration::BuiltIn:
-                    io_attributes.builtin = Builtin(spv::BuiltIn(deco->GetSingleWordOperand(2)));
+                case spv::Decoration::BuiltIn: {
+                    TINT_CHECK_RESULT_UNWRAP(builtin_val,
+                                             Builtin(spv::BuiltIn(deco->GetSingleWordOperand(2))));
+                    io_attributes.builtin = builtin_val;
                     break;
+                }
                 case spv::Decoration::Invariant:
                     io_attributes.invariant = true;
                     break;
@@ -4456,7 +4854,8 @@ class Parser {
                     // Hint to the compiler that it may compile as if there is no aliasing. Ignore.
                     break;
                 default:
-                    TINT_UNIMPLEMENTED() << "unhandled decoration " << d;
+                    return Failure("unhandled decoration " +
+                                   std::string(spv::DecorationToString(spv::Decoration(d))));
             }
         }
 
@@ -4477,12 +4876,21 @@ class Parser {
         }
 
         auto* element_ty = Type(inst.type_id(), access_mode)->As<core::type::Pointer>();
-        if (element_ty->AddressSpace() == core::AddressSpace::kOut &&
-            element_ty->StoreType()->IsIntegerScalarOrVector()) {
-            io_attributes.interpolation = {
-                .type = core::InterpolationType::kFlat,
-                .sampling = core::InterpolationSampling::kUndefined,
-            };
+        if (element_ty->AddressSpace() == core::AddressSpace::kOut) {
+            if (element_ty->StoreType()->IsIntegerScalarOrVector()) {
+                io_attributes.interpolation = {
+                    .type = core::InterpolationType::kFlat,
+                    .sampling = core::InterpolationSampling::kUndefined,
+                };
+            } else if (auto* str = element_ty->StoreType()->As<core::type::Struct>()) {
+                for (auto* member : str->Members()) {
+                    if (member->Type()->IsIntegerScalarOrVector()) {
+                        const_cast<core::type::StructMember*>(member)->SetInterpolation(
+                            core::Interpolation{core::InterpolationType::kFlat,
+                                                core::InterpolationSampling::kUndefined});
+                    }
+                }
+            }
         }
 
         auto* var = b_.Var(element_ty);
@@ -4492,7 +4900,6 @@ class Parser {
 
         if (group || binding) {
             TINT_ASSERT(group && binding);
-
             // Remap any samplers which match an entry in the sampler mappings
             // table.
             if (element_ty->StoreType()->Is<core::type::Sampler>()) {
@@ -4517,6 +4924,7 @@ class Parser {
         var_to_original_access_mode_.insert({var, access_mode});
 
         Emit(var, inst.result_id());
+        return Success;
     }
 
   private:
@@ -4628,7 +5036,7 @@ class Parser {
     // Structure hold spec composite information
     struct SpecComposite {
         // The composite type
-        const core::type::Type* type;
+        const core::type::Type* type = nullptr;
         // The composite arguments
         Vector<uint32_t, 4> args;
     };
@@ -4650,7 +5058,7 @@ class Parser {
 
 }  // namespace
 
-Result<core::ir::Module> Parse(Slice<const uint32_t> spirv, const Options& options) {
+Result<core::ir::Module> Parse(std::span<const uint32_t> spirv, const Options& options) {
     return Parser(options).Run(spirv);
 }
 

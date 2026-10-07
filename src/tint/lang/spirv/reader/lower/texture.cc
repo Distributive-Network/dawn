@@ -27,7 +27,6 @@
 
 #include "src/tint/lang/spirv/reader/lower/texture.h"
 
-#include <optional>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -35,7 +34,7 @@
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/clone_context.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/spirv/builtin_fn.h"
@@ -82,10 +81,10 @@ struct State {
     /// Function to texture replacements
     Hashmap<core::ir::Function*, core::ir::Function*, 4> func_to_rewritten_{};
 
-    /// Set of textures used in dref calls which need to be depth textures.
-    Hashset<core::ir::Value*, 4> textures_to_convert_to_depth_{};
-    /// Set of samplers used in dref calls which need to be comparison samplers
-    Hashset<core::ir::Value*, 4> samplers_to_convert_to_comparison_{};
+    /// Textures used in dref calls which need to be depth textures.
+    Vector<core::ir::Value*, 4> textures_to_convert_to_depth_{};
+    /// Samplers used in dref calls which need to be comparison samplers
+    Vector<core::ir::Value*, 4> samplers_to_convert_to_comparison_{};
 
     /// Process the module.
     void Process() {
@@ -127,7 +126,8 @@ struct State {
             });
         }
 
-        Vector<spirv::ir::BuiltinCall*, 4> depth_worklist;
+        std::vector<std::function<void()>> worklist;
+        worklist.reserve(128);
         for (auto* inst : ir.Instructions()) {
             if (auto* builtin = inst->As<spirv::ir::BuiltinCall>()) {
                 switch (builtin->Func()) {
@@ -135,11 +135,15 @@ struct State {
                         SampledImage(builtin);
                         break;
                     case spirv::BuiltinFn::kImageDrefGather:
+                        worklist.push_back(
+                            [this, builtin] { FindVarsForImageGatherDref(builtin); });
+                        break;
                     case spirv::BuiltinFn::kImageSampleDrefImplicitLod:
                     case spirv::BuiltinFn::kImageSampleDrefExplicitLod:
                     case spirv::BuiltinFn::kImageSampleProjDrefImplicitLod:
                     case spirv::BuiltinFn::kImageSampleProjDrefExplicitLod:
-                        depth_worklist.Push(builtin);
+                        worklist.push_back(
+                            [this, builtin] { FindVarsForImageSampleDref(builtin); });
                         break;
                     default:
                         break;
@@ -147,33 +151,47 @@ struct State {
             }
         }
 
-        // TODO(dsinclair): Propagate OpTypeSampledImage through function params by replacing with
-        // the texture/sampler
+        // For each depth function, find the parameters which needed be converted. We don't convert
+        // the actual calls yet, as we may need to parameters to have propagated through function
+        // parameters.
+        for (auto& cb : worklist) {
+            cb();
+        }
+        worklist.clear();
 
-        // Run the depth functions first so we can convert all the types to depth that are needed.
-        // This then allows things like textureSample calls below to have the correct return type
-        // and be able to convert the results if needed.
-        for (auto* builtin : depth_worklist) {
-            switch (builtin->Func()) {
-                case spirv::BuiltinFn::kImageSampleDrefImplicitLod:
-                case spirv::BuiltinFn::kImageSampleDrefExplicitLod:
-                case spirv::BuiltinFn::kImageSampleProjDrefImplicitLod:
-                case spirv::BuiltinFn::kImageSampleProjDrefExplicitLod:
-                    ImageSampleDref(builtin);
-                    break;
-                case spirv::BuiltinFn::kImageDrefGather:
-                    ImageGatherDref(builtin);
-                    break;
-                default:
-                    TINT_UNREACHABLE();
+        Hashset<core::ir::Value*, 4> converted{};
+        while (!textures_to_convert_to_depth_.IsEmpty()) {
+            auto tex = textures_to_convert_to_depth_.Pop();
+            if (!converted.Add(tex)) {
+                continue;
             }
+
+            tint::Switch(
+                FindRootVarFor(tex),  //
+                [&](core::ir::InstructionResult* res) {
+                    auto* var = res->Instruction()->As<core::ir::Var>();
+                    TINT_ASSERT(var);
+                    ConvertVarToDepth(var);
+                },
+                [&](core::ir::FunctionParam* param) { ConvertTextureParam(param); },  //
+                TINT_ICE_ON_NO_MATCH);
         }
 
-        for (auto tex : textures_to_convert_to_depth_) {
-            ConvertVarToDepth(FindRootVarFor(tex));
-        }
-        for (auto tex : samplers_to_convert_to_comparison_) {
-            ConvertVarToComparison(FindRootVarFor(tex));
+        while (!samplers_to_convert_to_comparison_.IsEmpty()) {
+            auto samp = samplers_to_convert_to_comparison_.Pop();
+            if (!converted.Add(samp)) {
+                continue;
+            }
+
+            tint::Switch(
+                FindRootVarFor(samp),  //
+                [&](core::ir::InstructionResult* res) {
+                    auto* var = res->Instruction()->As<core::ir::Var>();
+                    TINT_ASSERT(var);
+                    ConvertVarToComparison(var);
+                },
+                [&](core::ir::FunctionParam* param) { ConvertSamplerParam(param); },  //
+                TINT_ICE_ON_NO_MATCH);
         }
         UpdateValues();
 
@@ -184,68 +202,60 @@ struct State {
                     case spirv::BuiltinFn::kOpSampledImage:
                         // Note, we _also_ do this here even though it was done above. The one above
                         // registers for the depth functions, but, we may have forked functions in
-                        // the `UpdateValues` when it does the `ConvertUserCalls`. This would then
+                        // the `UpdateValues` when it does the `ConvertUserCall`. This would then
                         // generate new `SampledImage` objects which need to be registered. In the
                         // worse case, we just write the same data twice.
                         SampledImage(builtin);
                         break;
                     case spirv::BuiltinFn::kOpImage:
+                        worklist.push_back([this, builtin] { Image(builtin); });
+                        break;
                     case spirv::BuiltinFn::kImageRead:
                     case spirv::BuiltinFn::kImageFetch:
+                        worklist.push_back([this, builtin] { ImageFetch(builtin); });
+                        break;
                     case spirv::BuiltinFn::kImageGather:
+                        worklist.push_back([this, builtin] { ImageGather(builtin); });
+                        break;
                     case spirv::BuiltinFn::kImageQueryLevels:
+                        worklist.push_back([this, builtin] {
+                            ImageQuery(builtin, core::BuiltinFn::kTextureNumLevels);
+                        });
+                        break;
                     case spirv::BuiltinFn::kImageQuerySamples:
+                        worklist.push_back([this, builtin] {
+                            ImageQuery(builtin, core::BuiltinFn::kTextureNumSamples);
+                        });
+                        break;
                     case spirv::BuiltinFn::kImageQuerySize:
                     case spirv::BuiltinFn::kImageQuerySizeLod:
+                        worklist.push_back([this, builtin] { ImageQuerySize(builtin); });
+                        break;
                     case spirv::BuiltinFn::kImageSampleExplicitLod:
                     case spirv::BuiltinFn::kImageSampleImplicitLod:
                     case spirv::BuiltinFn::kImageSampleProjImplicitLod:
                     case spirv::BuiltinFn::kImageSampleProjExplicitLod:
+                        worklist.push_back([this, builtin] { ImageSample(builtin); });
+                        break;
                     case spirv::BuiltinFn::kImageWrite:
-                        builtin_worklist.Push(builtin);
+                        worklist.push_back([this, builtin] { ImageWrite(builtin); });
+                        break;
+                    case spirv::BuiltinFn::kImageSampleDrefImplicitLod:
+                    case spirv::BuiltinFn::kImageSampleDrefExplicitLod:
+                    case spirv::BuiltinFn::kImageSampleProjDrefImplicitLod:
+                    case spirv::BuiltinFn::kImageSampleProjDrefExplicitLod:
+                        worklist.push_back([this, builtin] { ImageSampleDref(builtin); });
+                        break;
+                    case spirv::BuiltinFn::kImageDrefGather:
+                        worklist.push_back([this, builtin] { ImageGatherDref(builtin); });
                         break;
                     default:
                         TINT_UNREACHABLE() << "unknown spirv builtin: " << builtin->Func();
                 }
             }
         }
-
-        for (auto* builtin : builtin_worklist) {
-            switch (builtin->Func()) {
-                case spirv::BuiltinFn::kOpImage:
-                    Image(builtin);
-                    break;
-                case spirv::BuiltinFn::kImageRead:
-                    ImageFetch(builtin);
-                    break;
-                case spirv::BuiltinFn::kImageFetch:
-                    ImageFetch(builtin);
-                    break;
-                case spirv::BuiltinFn::kImageGather:
-                    ImageGather(builtin);
-                    break;
-                case spirv::BuiltinFn::kImageQueryLevels:
-                    ImageQuery(builtin, core::BuiltinFn::kTextureNumLevels);
-                    break;
-                case spirv::BuiltinFn::kImageQuerySamples:
-                    ImageQuery(builtin, core::BuiltinFn::kTextureNumSamples);
-                    break;
-                case spirv::BuiltinFn::kImageQuerySize:
-                case spirv::BuiltinFn::kImageQuerySizeLod:
-                    ImageQuerySize(builtin);
-                    break;
-                case spirv::BuiltinFn::kImageSampleExplicitLod:
-                case spirv::BuiltinFn::kImageSampleImplicitLod:
-                case spirv::BuiltinFn::kImageSampleProjImplicitLod:
-                case spirv::BuiltinFn::kImageSampleProjExplicitLod:
-                    ImageSample(builtin);
-                    break;
-                case spirv::BuiltinFn::kImageWrite:
-                    ImageWrite(builtin);
-                    break;
-                default:
-                    TINT_UNREACHABLE();
-            }
+        for (auto& cb : worklist) {
+            cb();
         }
 
         // Destroy all the OpSampledImage instructions.
@@ -302,7 +312,7 @@ struct State {
                 }
 
                 auto args = call->Args();
-                for (size_t i = 0; i < args.Length(); ++i) {
+                for (size_t i = 0; i < args.size(); ++i) {
                     auto& arg = args[i];
 
                     auto* ptr_ty = arg->Type()->As<core::type::Pointer>();
@@ -366,15 +376,44 @@ struct State {
     }
 
     // Given a value, walk back up and find the root `var`.
-    core::ir::Var* FindRootVarFor(core::ir::Value* val) {
+    core::ir::Value* FindRootVarFor(core::ir::Value* val) {
+        if (val->Is<core::ir::FunctionParam>()) {
+            return val;
+        }
+
         auto* inst_res = val->As<core::ir::InstructionResult>();
         TINT_ASSERT(inst_res);
         return tint::Switch(
             inst_res->Instruction(),  //
             [&](core::ir::Let* l) { return FindRootVarFor(l->Value()); },
             [&](core::ir::Load* l) { return FindRootVarFor(l->From()); },
-            [&](core::ir::Var* v) { return v; },  //
+            [&](core::ir::Var* v) { return v->Result(); },  //
             TINT_ICE_ON_NO_MATCH);
+    }
+
+    // Given a function parameter to convert to either a depth texture or comparison sampler we get
+    // all the call sites for the function. We then mark the argument value for the given parameter
+    // for conversion. This will then trigger that variable to convert up the call stack. Eventually
+    // we'll stop and convert the root variable. Then, that conversion will trigger a walk back down
+    // which will convert the call argument types and do any forking of functions to handle the new
+    // parameter types.
+    void ConvertTextureParam(core::ir::FunctionParam* param) {
+        for (auto& usage : param->Function()->UsagesUnsorted()) {
+            auto* caller = usage->instruction->As<core::ir::UserCall>();
+            if (!caller) {
+                continue;
+            }
+            textures_to_convert_to_depth_.Push(caller->Args()[param->Index()]);
+        }
+    }
+    void ConvertSamplerParam(core::ir::FunctionParam* param) {
+        for (auto& usage : param->Function()->UsagesUnsorted()) {
+            auto* caller = usage->instruction->As<core::ir::UserCall>();
+            if (!caller) {
+                continue;
+            }
+            samplers_to_convert_to_comparison_.Push(caller->Args()[param->Index()]);
+        }
     }
 
     void ConvertVarToDepth(core::ir::Var* var) {
@@ -445,7 +484,7 @@ struct State {
         const auto& args = uc->Args();
 
         Vector<size_t, 2> to_convert;
-        for (size_t i = 0; i < args.Length(); ++i) {
+        for (size_t i = 0; i < args.size(); ++i) {
             if (params[i]->Type() != args[i]->Type()) {
                 to_convert.Push(i);
             }
@@ -554,7 +593,7 @@ struct State {
             }
 
             auto* new_ty = ty.MatchWidth(coords->Type()->DeepestElement(), count);
-            return b.Swizzle(new_ty, coords, swizzle_idx)->Result();
+            return b.Swizzle(new_ty, coords, swizzle_idx);
         };
 
         auto coords_needed = CoordsRequiredForDim(tex_ty->Dim(), is_proj);
@@ -573,14 +612,13 @@ struct State {
         auto* new_coords_ty = ty.MatchWidth(coords_ty->Type(), new_coords_width);
 
         auto* swizzle = mk_coords(new_coords_width);
-        core::ir::Value* last =
-            b.Swizzle(coords_ty->Type(), coords, Vector{new_coords_width})->Result();
+        core::ir::Value* last = b.Swizzle(coords_ty->Type(), coords, Vector{new_coords_width});
 
         if (is_proj) {
             // New coords
             // Divide the coordinates by the last value to simulate the
             // projection behaviour.
-            new_args.Push(b.Divide(swizzle, last)->Result());
+            new_args.Push(b.Divide(swizzle, last));
         } else {
             TINT_ASSERT(new_coords_ty->Is<core::type::Vector>());
 
@@ -588,7 +626,7 @@ struct State {
             new_args.Push(swizzle);
             // Array index
             if (!last->Type()->Is<core::type::I32>()) {
-                last = b.Convert(ty.i32(), last)->Result();
+                last = b.Convert(ty.i32(), last);
             }
             new_args.Push(last);
         }
@@ -643,8 +681,7 @@ struct State {
     void Image(spirv::ir::BuiltinCall* call) {
         const auto& args = call->Args();
         core::ir::Value* tex = nullptr;
-        [[maybe_unused]] core::ir::Value* sampler = nullptr;
-        std::tie(tex, sampler) = GetTextureSampler(args[0]);
+        std::tie(tex, std::ignore) = GetTextureSampler(args[0]);
 
         call->Result()->ReplaceAllUsesWith(tex);
         call->Destroy();
@@ -668,7 +705,7 @@ struct State {
                 core::ir::Value* lod = args[idx++];
 
                 if (!lod->Type()->Is<core::type::I32>()) {
-                    lod = b.Convert(ty.i32(), lod)->Result();
+                    lod = b.Convert(ty.i32(), lod);
                 }
                 new_args.Push(lod);
             } else if (!tex_ty->IsAnyOf<core::type::DepthMultisampledTexture,
@@ -682,7 +719,7 @@ struct State {
                 core::ir::Value* sample = args[idx++];
 
                 if (!sample->Type()->Is<core::type::I32>()) {
-                    sample = b.Convert(ty.i32(), sample)->Result();
+                    sample = b.Convert(ty.i32(), sample);
                 }
                 new_args.Push(sample);
             }
@@ -692,7 +729,7 @@ struct State {
             if (tex_ty->IsAnyOf<core::type::DepthTexture, core::type::DepthMultisampledTexture>()) {
                 call_ty = call_ty->DeepestElement();
             }
-            auto* res = b.Call(call_ty, core::BuiltinFn::kTextureLoad, new_args)->Result();
+            auto* res = b.Call(call_ty, core::BuiltinFn::kTextureLoad, new_args);
 
             // Restore the vec4 result by padding with 0's.
             if (call_ty != call->Result()->Type()) {
@@ -700,11 +737,22 @@ struct State {
                 TINT_ASSERT(vec && vec->Width() == 4);
 
                 auto* z = b.Zero(call_ty);
-                res = b.Construct(call->Result()->Type(), res, z, z, z)->Result();
+                res = b.Construct(call->Result()->Type(), res, z, z, z);
             }
             call->Result()->ReplaceAllUsesWith(res);
         });
         call->Destroy();
+    }
+
+    void FindVarsForImageGatherDref(spirv::ir::BuiltinCall* call) {
+        const auto& args = call->Args();
+
+        core::ir::Value* tex = nullptr;
+        core::ir::Value* sampler = nullptr;
+        std::tie(tex, sampler) = GetTextureSampler(args[0]);
+
+        textures_to_convert_to_depth_.Push(tex);
+        samplers_to_convert_to_comparison_.Push(sampler);
     }
 
     void ImageGatherDref(spirv::ir::BuiltinCall* call) {
@@ -714,9 +762,6 @@ struct State {
             core::ir::Value* tex = nullptr;
             core::ir::Value* sampler = nullptr;
             std::tie(tex, sampler) = GetTextureSampler(args[0]);
-
-            textures_to_convert_to_depth_.Add(tex);
-            samplers_to_convert_to_comparison_.Add(sampler);
 
             auto* coords = args[1];
             auto* dref = args[2];
@@ -735,8 +780,8 @@ struct State {
                 ProcessOffset(args[4], new_args);
             }
 
-            b.CallWithResult(call->DetachResult(), core::BuiltinFn::kTextureGatherCompare,
-                             new_args);
+            b.CallReplaceResult(call->DetachResult(), core::BuiltinFn::kTextureGatherCompare,
+                                new_args);
         });
         call->Destroy();
     }
@@ -767,9 +812,22 @@ struct State {
                 ProcessOffset(args[4], new_args);
             }
 
-            b.CallWithResult(call->DetachResult(), core::BuiltinFn::kTextureGather, new_args);
+            b.CallReplaceResult(call->DetachResult(), core::BuiltinFn::kTextureGather, new_args);
         });
         call->Destroy();
+    }
+
+    void FindVarsForImageSampleDref(spirv::ir::BuiltinCall* call) {
+        const auto& args = call->Args();
+
+        auto* sampled_image = args[0];
+
+        core::ir::Value* tex = nullptr;
+        core::ir::Value* sampler = nullptr;
+        std::tie(tex, sampler) = GetTextureSampler(sampled_image);
+
+        textures_to_convert_to_depth_.Push(tex);
+        samplers_to_convert_to_comparison_.Push(sampler);
     }
 
     void ImageSampleDref(spirv::ir::BuiltinCall* call) {
@@ -780,9 +838,6 @@ struct State {
         core::ir::Value* tex = nullptr;
         core::ir::Value* sampler = nullptr;
         std::tie(tex, sampler) = GetTextureSampler(sampled_image);
-
-        textures_to_convert_to_depth_.Add(tex);
-        samplers_to_convert_to_comparison_.Add(sampler);
 
         auto* tex_ty = tex->Type();
 
@@ -814,7 +869,7 @@ struct State {
                 ProcessOffset(args[idx++], new_args);
             }
 
-            b.CallWithResult(call->DetachResult(), fn, new_args);
+            b.CallReplaceResult(call->DetachResult(), fn, new_args);
         });
 
         call->Destroy();
@@ -858,7 +913,7 @@ struct State {
                 // Depth texture LOD in WGSL is i32/u32 but f32 in SPIR-V.
                 // Convert to i32
                 if (tex_ty->Is<core::type::DepthTexture>()) {
-                    lod = b.Convert(ty.i32(), lod)->Result();
+                    lod = b.Convert(ty.i32(), lod);
                 }
                 new_args.Push(lod);
             }
@@ -876,7 +931,7 @@ struct State {
             if (tex_ty->IsAnyOf<core::type::DepthTexture, core::type::DepthMultisampledTexture>()) {
                 call_ty = call_ty->DeepestElement();
             }
-            auto* res = b.Call(call_ty, fn, new_args)->Result();
+            auto* res = b.Call(call_ty, fn, new_args);
 
             // Restore the vec4 result by padding with 0's.
             if (call_ty != call->Result()->Type()) {
@@ -884,7 +939,7 @@ struct State {
                 TINT_ASSERT(vec && vec->Width() == 4);
 
                 auto* z = b.Zero(call_ty);
-                res = b.Construct(call->Result()->Type(), res, z, z, z)->Result();
+                res = b.Construct(call->Result()->Type(), res, z, z, z);
             }
 
             call->Result()->ReplaceAllUsesWith(res);
@@ -919,10 +974,9 @@ struct State {
             auto* type = call->Result()->Type();
 
             // WGSL requires a `u32` result component where SPIR-V allows `i32` or `u32`
-            core::ir::Value* res =
-                b.Call(ty.MatchWidth(ty.u32(), type), fn, Vector{image})->Result();
+            core::ir::Value* res = b.Call(ty.MatchWidth(ty.u32(), type), fn, Vector{image});
             if (type->IsSignedIntegerScalarOrVector()) {
-                res = b.Convert(type, res)->Result();
+                res = b.Convert(type, res);
             }
 
             call->Result()->ReplaceAllUsesWith(res);
@@ -956,17 +1010,16 @@ struct State {
                 args.Push(call->Args()[1]);
             }
 
-            core::ir::Value* res =
-                b.Call(wgsl_type, core::BuiltinFn::kTextureDimensions, args)->Result();
+            core::ir::Value* res = b.Call(wgsl_type, core::BuiltinFn::kTextureDimensions, args);
 
             if (core::type::IsTextureArray(tex_ty->Dim())) {
                 core::ir::Value* layers =
-                    b.Call(ty.u32(), core::BuiltinFn::kTextureNumLayers, image)->Result();
-                res = b.Construct(ty.MatchWidth(ty.u32(), type), res, layers)->Result();
+                    b.Call(ty.u32(), core::BuiltinFn::kTextureNumLayers, image);
+                res = b.Construct(ty.MatchWidth(ty.u32(), type), res, layers);
             }
 
             if (type->IsSignedIntegerScalarOrVector()) {
-                res = b.Convert(type, res)->Result();
+                res = b.Convert(type, res);
             }
 
             call->Result()->ReplaceAllUsesWith(res);
@@ -1030,15 +1083,11 @@ struct State {
 }  // namespace
 
 Result<SuccessType> Texture(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(ValidateAndDumpIfNeeded(ir, "spirv.Texture",
-                                              core::ir::Capabilities{
-                                                  core::ir::Capability::kAllowMultipleEntryPoints,
-                                                  core::ir::Capability::kAllowOverrides,
-                                                  core::ir::Capability::kAllowNonCoreTypes,
-                                                  core::ir::Capability::kAllowPointerToHandle,
-                                              }));
+    AssertValid(ir, "before spirv.Texture");
 
     State{ir}.Process();
+
+    ir.properties.Remove(core::ir::Property::kAllowPointerToHandle);
 
     return Success;
 }

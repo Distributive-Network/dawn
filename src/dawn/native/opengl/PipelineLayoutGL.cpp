@@ -25,29 +25,32 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/PipelineLayoutGL.h"
+#include "src/dawn/native/opengl/PipelineLayoutGL.h"
 
-#include "dawn/common/MatchVariant.h"
-#include "dawn/native/BindGroupLayoutInternal.h"
-#include "dawn/native/opengl/DeviceGL.h"
+#include "src/dawn/common/MatchVariant.h"
+#include "src/dawn/native/BindGroupLayoutInternal.h"
+#include "src/dawn/native/opengl/DeviceGL.h"
 
 namespace dawn::native::opengl {
 
 PipelineLayout::PipelineLayout(Device* device,
                                const UnpackedPtr<PipelineLayoutDescriptor>& descriptor)
     : PipelineLayoutBase(device, descriptor) {
-    FlatBindingIndex uboIndex{0};
-    FlatBindingIndex samplerIndex{0};
-    FlatBindingIndex sampledTextureIndex{0};
-    FlatBindingIndex ssboIndex{0};
-    FlatBindingIndex storageTextureIndex{0};
+    FlatBindingIndex uboIndex{0u};
+    FlatBindingIndex samplerIndex{0u};
+    FlatBindingIndex sampledTextureIndex{0u};
+    FlatBindingIndex ssboIndex{0u};
+    FlatBindingIndex storageTextureIndex{0u};
 
     for (BindGroupIndex group : GetBindGroupLayoutsMask()) {
         const BindGroupLayoutInternalBase* bgl = GetBindGroupLayout(group);
         mIndexInfo[group].resize(bgl->GetBindingCount());
 
-        for (BindingIndex bindingIndex{0}; bindingIndex < bgl->GetBindingCount(); ++bindingIndex) {
+        for (BindingIndex bindingIndex{0u}; bindingIndex < bgl->GetBindingCount(); ++bindingIndex) {
             const BindingInfo& bindingInfo = bgl->GetBindingInfo(bindingIndex);
+            if (bindingInfo.visibility == wgpu::ShaderStage::None) {
+                continue;
+            }
             MatchVariant(
                 bindingInfo.bindingLayout,
                 [&](const BufferBindingInfo& layout) {
@@ -96,12 +99,9 @@ PipelineLayout::PipelineLayout(Device* device,
 
     mNumSamplers = samplerIndex;
     mNumSampledTextures = sampledTextureIndex;
-    mNumSSBO = ssboIndex;
 
-    // Set internal uniform bindings as the next unused uboIndex.
+    // Set the internal uniform binding as the next unused uboIndex.
     mInternalTextureBuiltinsUniformBinding = uboIndex;
-    uboIndex++;
-    mInternalArrayLengthUniformBinding = uboIndex;
 }
 
 const PipelineLayout::BindingIndexInfo& PipelineLayout::GetBindingIndexInfo() const {
@@ -116,16 +116,8 @@ FlatBindingIndex PipelineLayout::GetNumSampledTextures() const {
     return mNumSampledTextures;
 }
 
-FlatBindingIndex PipelineLayout::GetNumSSBO() const {
-    return mNumSSBO;
-}
-
 FlatBindingIndex PipelineLayout::GetInternalTextureBuiltinsUniformBinding() const {
     return mInternalTextureBuiltinsUniformBinding;
-}
-
-FlatBindingIndex PipelineLayout::GetInternalArrayLengthUniformBinding() const {
-    return mInternalArrayLengthUniformBinding;
 }
 
 }  // namespace dawn::native::opengl

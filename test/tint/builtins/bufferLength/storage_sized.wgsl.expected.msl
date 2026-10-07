@@ -1,5 +1,12 @@
-SKIP: FAILED
+#include <metal_stdlib>
+using namespace metal;
 
-buffers are not supported by the MSL backend
+struct tint_module_vars_struct {
+  device uint* out;
+};
 
-tint executable returned error: exit status 1
+[[max_total_threads_per_threadgroup(1)]]
+kernel void v_1(device uint* out [[buffer(1)]]) {
+  tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.out=out};
+  (*tint_module_vars.out) = 128u;
+}

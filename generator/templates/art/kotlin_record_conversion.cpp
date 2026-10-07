@@ -29,25 +29,28 @@
 {% macro define_kotlin_record_structure(struct_name, members) %}
     struct {{struct_name}} {
         {% for member in kotlin_record_members(members) %}
-            //* HACK: Hardcode that ANativeWindow is a jlong instead of an actual pointer. Instead
-            //* of this, we should have manually written method that directly creates the
-            //* wgpu::Surface from the Java Surface.
-            {% if member.name.get() == "window" and member.type.name.get() == "void *"%}
-                jlong {{ as_varName(member.name) }};
-            {% else %}
-                {{ arg_to_jni_type(member) }} {{ as_varName(member.name) }};
+            {% if not member.kotlin_only %}
+                //* HACK: Hardcode that ANativeWindow is a jlong instead of an actual pointer. Instead
+                //* of this, we should have manually written method that directly creates the
+                //* wgpu::Surface from the Java Surface.
+                {% if member.name.get() == "window" and member.type.name.get() == "void *"%}
+                    jlong {{ as_varName(member.name) }};
+                {% else %}
+                    {{ arg_to_jni_type(member) }} {{ as_varName(member.name) }};
+                {% endif %}
             {% endif %}
         {% endfor%}
     };
 {% endmacro %}
 
-{% macro define_kotlin_to_struct_conversion(function_name, kotlin_name, struct_name, members,is_structure_converter=False) %}
+{% macro define_kotlin_to_struct_conversion(function_name, kotlin_name, struct_name, members, is_structure_converter=False) %}
     inline void {{function_name}}(JNIContext* c, const {{kotlin_name}}& inStruct, {{struct_name}}* outStruct) {
         JNIEnv* env = c->env;
         JNIClasses* classes = JNIClasses::getInstance(env);
         *outStruct = {};
 
         {% for member in kotlin_record_members(members) %}
+            {% if not member.kotlin_only %}
             {
                 {% if member.type.category == 'callback function' %}
                     if (inStruct.{{ as_varName(member.name) }})
@@ -75,9 +78,28 @@
                                 {% set userdata = 'userdata1' %}
                             //* User data is used to carry the JNI context (env) for use by the
                             //* callback.
+                            {% if member.type.name.get() in ['uncaptured error callback', 'dawn load cache data callback', 'dawn store cache data callback'] %}
+                            std::shared_ptr<UserData> userData1 = static_cast<UserData *>({{ userdata }})->shared_from_this();
+                            {% else %}
                             std::unique_ptr<UserData> userData1{static_cast<UserData *>({{ userdata }})};
-                            JNIEnv *env = NULL;
+                            {% endif %}
+                            {% if member.type.name.get() == 'request device callback' %}
+                            // This implicitly relies on the descriptor (which contains the error/device loss callbacks)
+                            // being processed before the callback parameter in wgpuAdapterRequestDevice's arguments list.
+                            // Since ConvertInternal processes arguments in order, c->recurringCallbacks will be correctly populated before we reach here.
+                            if (status == WGPURequestDeviceStatus_Success && device != nullptr) {
+                                RegisterDeviceCallbacks(device, userData1->recurringCallbacks);
+                                userData1->recurringCallbacks.clear();
+                            }
+                            {% endif %}
+                            {% if member.type.name.get() == 'device lost callback' %}
+                            if (device != nullptr) {
+                                // `device` is `WGPUDevice const *`, so we must dereference it to get the handle.
+                                FreeDeviceCallbacks(*device);
+                            }
+                            {% endif %}
                             JavaVM* jvm = userData1->jvm;
+                            JNIEnv *env = NULL;
                             //* Deal with difference in signatures between Oracle's jni.h and Android's.
                             #ifdef _JAVASOFT_JNI_H_  //* Oracle's jni.h violates the JNI spec.
                                 jvm->AttachCurrentThread(reinterpret_cast<void**>(&env), NULL);
@@ -122,7 +144,7 @@
 
                             {# Generate the C++ variable conversions (e.g. _status, _message) #}
                             {%- for arg in kotlin_record_members(member.type.arguments) -%}
-                                {{ convert_to_kotlin(arg.name.camelCase(), '_' + arg.name.camelCase(), 'input->' + arg.length.name.camelCase() if arg.length.name, arg) }}
+                                {{ convert_to_kotlin(arg.name.camelCase(), '_' + arg.name.camelCase(), 'input->' + arg.length.name.camelCase() if arg.length and arg.length != 'constant' else (arg.constant_length | string if arg.length == 'constant' and arg.constant_length != 1 else None), arg) }}
                                 {%- set vName = '_' + arg.name.camelCase() -%}
                                 {%- set aName = arg.name.get() -%}
                                 {%- if aName == 'status' %}
@@ -174,13 +196,43 @@
 
                             env->CallVoidMethod(userData1->executor, executeMethodID, runnable);
                         };
-                        //* The user data is owned by the callback and freed when it is called.
-                        callbackInfo.{{ userdata }} = std::unique_ptr<UserData>(new UserData({
-                          .callback = env->NewGlobalRef(inStruct.{{member.name.camelCase()}}),
-                          .executor = env->NewGlobalRef(inStruct.{{as_varName(member.name)}}Executor),
-                          .jvm = c->jvm
-                        })).release();
+                        {% if member.type.name.get() in ['uncaptured error callback', 'dawn load cache data callback', 'dawn store cache data callback'] %}
+                        auto newUserDataShared = std::make_shared<UserData>();
+                        newUserDataShared->callback = env->NewGlobalRef(inStruct.{{member.name.camelCase()}});
+                        newUserDataShared->executor = env->NewGlobalRef(inStruct.{{as_varName(member.name)}}Executor);
+                        newUserDataShared->jvm = c->jvm;
+                        c->recurringCallbacks.push_back(newUserDataShared);
+                        callbackInfo.{{ userdata }} = newUserDataShared.get();
+                        {% else %}
+                        UserData* newUserData = new UserData();
+                        newUserData->callback = env->NewGlobalRef(inStruct.{{member.name.camelCase()}});
+                        newUserData->executor = env->NewGlobalRef(inStruct.{{as_varName(member.name)}}Executor);
+                        newUserData->jvm = c->jvm;
+                        {% if member.type.name.get() == 'request device callback' %}
+                        newUserData->recurringCallbacks = std::move(c->recurringCallbacks);
+                        {% endif %}
+                        callbackInfo.{{ userdata }} = newUserData;
+                        {% endif %}
                     }
+                    {% if member.type.name.get() == 'device lost callback' %}
+                    else {
+                        auto& callbackInfo = outStruct->{{as_varName(member.name)}}Info;
+                        callbackInfo = {};
+                        {% if find_by_name(callbackInfoType.members, 'mode') %}
+                            callbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
+                        {% endif %}
+                        callbackInfo.callback = [](
+                            {%- for callbackArg in member.type.arguments %}
+                                {{- as_annotated_cType(callbackArg) }}{{ ', ' if not loop.last }}
+                            {%- endfor -%}
+                            , void* userdata1, void* userdata2) {
+                            if (device != nullptr) {
+                                // `device` is `WGPUDevice const *`, so we must dereference it to get the handle.
+                                FreeDeviceCallbacks(*device);
+                            }
+                        };
+                    }
+                    {% endif %}
                 {% elif member.type.category != 'kotlin type' %}
                     auto& in = inStruct.{{member.name.camelCase()}};
                     auto& out = outStruct->{{member.name.camelCase()}};
@@ -198,37 +250,60 @@
                         {{ unreachable_code() }}
                     {% endif %}
                 {% elif member.length %}
-                    auto& outLength = outStruct->{{member.length.name.camelCase()}};
-                    {% if member.constant_length %}
-                        {{ unreachable_code() }}
-                    {% endif %}
-                    //* Convert container, including the length field.
-                    {% if member.type.name.get() == 'uint32_t' or member.type.category in ['bitmask', 'enum'] %}
-                        out = reinterpret_cast<const {{ as_cType(member.type.name) }}*>(c->GetIntArrayElements(in));
-                        outLength = env->GetArrayLength(in);
-                    {% elif member.type.name.get() == 'void' %}
-                        out = env->GetDirectBufferAddress(in);
-                        outLength = env->GetDirectBufferCapacity(in);
-                    {% else %}
-                        //* These container types are represented in Kotlin as arrays of objects.
-                        outLength = env->GetArrayLength(in);
-                        auto array = c->AllocArray<{{ as_cType(member.type.name) }}>(outLength);
-                        out = array;
-
-                        {% if member.type.category == 'object' %}
-                            jclass memberClass = classes->{{ member.type.name.camelCase() }};
-                            jmethodID getHandle = env->GetMethodID(memberClass, "getHandle", "()J");
+                    {% if member.length != 'constant' %}
+                        auto& outLength = outStruct->{{member.length.name.camelCase()}};
+                        //* Convert container, including the length field.
+                        {% if member.type.name.get() == 'uint32_t' or member.type.category in ['bitmask', 'enum'] %}
+                            out = reinterpret_cast<const {{ as_cType(member.type.name) }}*>(c->GetIntArrayElements(in));
+                            outLength = env->GetArrayLength(in);
+                        {% elif member.type.name.get() == 'void' %}
+                            out = env->GetDirectBufferAddress(in);
+                            outLength = env->GetDirectBufferCapacity(in);
+                        {% elif member.type.name.get() == 'char' %}
+                            outLength = env->GetArrayLength(in);
+                            auto array = c->AllocArray<const char*>(outLength);
                             for (int idx = 0; idx != outLength; idx++) {
-                                jobject element = env->GetObjectArrayElement(in, idx);
-                                array[idx] = reinterpret_cast<{{ as_cType(member.type.name) }}>(
-                                        env->CallLongMethod(element, getHandle));
+                                jstring element = static_cast<jstring>(env->GetObjectArrayElement(in, idx));
+                                array[idx] = c->GetStringUTFChars(element);
                             }
-                        {% elif member.type.category == 'structure' %}
-                            for (int idx = 0; idx != outLength; idx++) {
-                                ToNative(c, env, env->GetObjectArrayElement(in, idx), &array[idx]);
+                            out = array;
+                        {% else %}
+                            //* These container types are represented in Kotlin as arrays of objects.
+                            outLength = env->GetArrayLength(in);
+                            auto array = c->AllocArray<{{ as_cType(member.type.name) }}>(outLength);
+                            out = array;
+
+                            {% if member.type.category == 'object' %}
+                                jclass memberClass = classes->{{ member.type.name.camelCase() }};
+                                jmethodID getHandle = env->GetMethodID(memberClass, "getHandle", "()J");
+                                for (int idx = 0; idx != outLength; idx++) {
+                                    jobject element = env->GetObjectArrayElement(in, idx);
+                                    array[idx] = reinterpret_cast<{{ as_cType(member.type.name) }}>(
+                                            env->CallLongMethod(element, getHandle));
+                                }
+                            {% elif member.type.category == 'structure' %}
+                                for (int idx = 0; idx != outLength; idx++) {
+                                    ToNative(c, env, env->GetObjectArrayElement(in, idx), &array[idx]);
+                                }
+                            {% else %}
+                                {{ unreachable_code() }}
+                            {% endif %}
+                        {% endif %}
+                    {% else %}
+                        {% if member.type.name.get() == 'float' %}
+                            jsize arrayLength = env->GetArrayLength(static_cast<jarray>(in));
+                            if (arrayLength == {{ member.constant_length }}) {
+                                auto array = c->AllocArray<float>({{ member.constant_length }});
+                                env->GetFloatArrayRegion(static_cast<jfloatArray>(in), 0, {{ member.constant_length }}, array);
+                                out = array;
+                            } else {
+                                // If the array length doesn't match the expected constant length,
+                                // do not proceed to avoid potential crashes or uninitialized data.
+                                // The out variable remains in its default-initialized state (e.g., nullptr).
+                                return;
                             }
                         {% else %}
-                            {{ unreachable_code() }}
+                            {{ unreachable_code('Unsupported constant array type: ' ~ member.type.name.get()) }}
                         {% endif %}
                     {% endif %}
                 //* From here members are single values.
@@ -257,6 +332,7 @@
                     {{ unreachable_code() }}
                 {% endif %}
             }
+            {% endif %}
         {% endfor -%}
     }
 {% endmacro %}

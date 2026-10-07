@@ -28,15 +28,15 @@
 #ifndef SRC_DAWN_NATIVE_METAL_MULTIDRAWENCODER_H_
 #define SRC_DAWN_NATIVE_METAL_MULTIDRAWENCODER_H_
 
+#import <Metal/Metal.h>
+
 #include <vector>
 
-#include "dawn/common/NonCopyable.h"
-#include "dawn/native/Commands.h"
-#include "dawn/native/IndirectDrawMetadata.h"
-#include "dawn/native/InternalPipelineStore.h"
-#include "dawn/native/metal/DeviceMTL.h"
-
-#import <Metal/Metal.h>
+#include "src/dawn/native/Commands.h"
+#include "src/dawn/native/IndirectDrawMetadata.h"
+#include "src/dawn/native/InternalPipelineStore.h"
+#include "src/dawn/native/metal/DeviceMTL.h"
+#include "src/utils/non_copyable.h"
 
 namespace dawn::native::metal {
 
@@ -63,7 +63,7 @@ class MultiDrawConverterPipeline : public RefCounted {
 
 struct MultiDrawExecutionData {
     NSPRef<id<MTLIndirectCommandBuffer>> mIndirectCommandBuffer;
-    uint32_t mMaxDrawCount;
+    uint32_t mMaxDrawCount = 0;
 };
 
 ResultOrError<std::vector<MultiDrawExecutionData>> PrepareMultiDraws(

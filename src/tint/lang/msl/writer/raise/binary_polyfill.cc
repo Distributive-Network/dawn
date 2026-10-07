@@ -27,8 +27,10 @@
 
 #include "src/tint/lang/msl/writer/raise/binary_polyfill.h"
 
+#include <vector>
+
 #include "src/tint/lang/core/ir/builder.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/msl/ir/builtin_call.h"
 
 namespace tint::msl::writer::raise {
@@ -47,29 +49,26 @@ struct State {
 
     /// Process the module.
     void Process() {
-        // Find the binary operators that need replacing.
-        Vector<core::ir::CoreBinary*, 4> fmod_worklist;
-        Vector<core::ir::CoreBinary*, 4> logical_bool_worklist;
+        std::vector<std::function<void()>> worklist;
+        worklist.reserve(128);
 
         for (auto* inst : ir.Instructions()) {
-            if (auto* binary = inst->As<core::ir::CoreBinary>()) {
-                auto op = binary->Op();
-                auto* lhs_type = binary->LHS()->Type();
-                if (op == core::BinaryOp::kModulo && lhs_type->IsFloatScalarOrVector()) {
-                    fmod_worklist.Push(binary);
-                } else if ((op == core::BinaryOp::kAnd || op == core::BinaryOp::kOr) &&
-                           lhs_type->IsBoolScalarOrVector()) {
-                    logical_bool_worklist.Push(binary);
-                }
+            core::ir::CoreBinary* binary = inst->As<core::ir::CoreBinary>();
+            if (binary == nullptr) {
+                continue;
+            }
+
+            auto op = binary->Op();
+            auto* lhs_type = binary->LHS()->Type();
+            if (op == core::BinaryOp::kModulo && lhs_type->IsFloatScalarOrVector()) {
+                worklist.push_back([this, binary] { FMod(binary); });
+            } else if ((op == core::BinaryOp::kAnd || op == core::BinaryOp::kOr) &&
+                       lhs_type->IsBoolScalarOrVector()) {
+                worklist.push_back([this, binary] { LogicalBool(binary); });
             }
         }
-
-        // Replace the instructions that we found.
-        for (auto* fmod : fmod_worklist) {
-            FMod(fmod);
-        }
-        for (auto* logical_bool : logical_bool_worklist) {
-            LogicalBool(logical_bool);
+        for (auto& cb : worklist) {
+            cb();
         }
     }
 
@@ -94,7 +93,7 @@ struct State {
             auto* int_lhs = b.Convert(int_ty, binary->LHS());
             auto* int_rhs = b.Convert(int_ty, binary->RHS());
             auto* int_binary = b.Binary(binary->Op(), int_ty, int_lhs, int_rhs);
-            b.ConvertWithResult(binary->DetachResult(), int_binary);
+            b.ConvertReplaceResult(binary->DetachResult(), int_binary);
         });
         binary->Destroy();
     }
@@ -103,15 +102,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> BinaryPolyfill(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(
-        ValidateAndDumpIfNeeded(ir, "msl.BinaryPolyfill",
-                                core::ir::Capabilities{
-                                    core::ir::Capability::kAllow8BitIntegers,
-                                    core::ir::Capability::kAllowPointSizeBuiltin,
-                                    core::ir::Capability::kAllowAnyLetType,
-                                    core::ir::Capability::kAllowNonCoreTypes,
-                                    core::ir::Capability::kMslAllowEntryPointInterface,
-                                }));
+    AssertValid(ir, "before msl.BinaryPolyfill");
 
     State{ir}.Process();
 

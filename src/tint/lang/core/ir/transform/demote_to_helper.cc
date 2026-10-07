@@ -29,7 +29,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/utils/ice/ice.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
@@ -214,8 +214,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> DemoteToHelper(Module& ir) {
-    TINT_CHECK_RESULT(
-        ValidateAndDumpIfNeeded(ir, "core.DemoteToHelper", kDemoteToHelperCapabilities));
+    core::ir::AssertValid(ir, "before core.DemoteToHelper");
 
     State{ir}.Process();
 

@@ -28,11 +28,10 @@
 #ifndef SRC_DAWN_NATIVE_METAL_RENDERPIPELINEMTL_H_
 #define SRC_DAWN_NATIVE_METAL_RENDERPIPELINEMTL_H_
 
-#include "dawn/native/RenderPipeline.h"
-
-#include "dawn/common/NSRef.h"
-
 #import <Metal/Metal.h>
+
+#include "src/dawn/common/NSRef.h"
+#include "src/dawn/native/RenderPipeline.h"
 
 namespace dawn::native::metal {
 
@@ -59,8 +58,6 @@ class RenderPipeline final : public RenderPipelineBase {
     // vertex buffer table.
     uint32_t GetMtlVertexBufferIndex(VertexBufferSlot slot) const;
 
-    wgpu::ShaderStage GetStagesRequiringStorageBufferLength() const;
-
     MaybeError InitializeImpl() override;
 
   private:
@@ -69,14 +66,12 @@ class RenderPipeline final : public RenderPipelineBase {
     NSRef<MTLVertexDescriptor> MakeVertexDesc() const;
     NSRef<MTLDepthStencilDescriptor> MakeDepthStencilDesc();
 
-    MTLPrimitiveType mMtlPrimitiveTopology;
-    MTLWinding mMtlFrontFace;
-    MTLCullMode mMtlCullMode;
+    MTLPrimitiveType mMtlPrimitiveTopology{};
+    MTLWinding mMtlFrontFace{};
+    MTLCullMode mMtlCullMode{};
     NSPRef<id<MTLRenderPipelineState>> mMtlRenderPipelineState;
     NSPRef<id<MTLDepthStencilState>> mMtlDepthStencilState;
-    PerVertexBuffer<uint32_t> mMtlVertexBufferIndices;
-
-    wgpu::ShaderStage mStagesRequiringStorageBufferLength = wgpu::ShaderStage::None;
+    PerVertexBuffer<uint32_t> mMtlVertexBufferIndices{};
 };
 
 }  // namespace dawn::native::metal

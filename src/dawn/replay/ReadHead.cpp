@@ -25,32 +25,34 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/replay/ReadHead.h"
+#include "src/dawn/replay/ReadHead.h"
 
 #include <algorithm>
+
+#include "src/utils/numeric.h"
 
 namespace dawn::replay {
 
 ReadHead::ReadHead(std::span<const uint8_t> data) : mData(data), mReadHead(data.begin()) {}
 
 MaybeError ReadHead::ReadBytes(std::span<uint8_t> dest) {
-    auto newHead = mReadHead + dest.size();
+    auto newHead = mReadHead + sign_cast(dest.size());
     if (newHead <= mData.end()) {
         std::copy_n(mReadHead, dest.size(), dest.begin());
         mReadHead = newHead;
         return {};
     }
     mBad = true;
-    return DAWN_INTERNAL_ERROR("Read past end of data");
+    return DAWN_UNRECOVERABLE_ERROR("Read past end of data");
 }
 
 ResultOrError<const uint32_t*> ReadHead::GetData(size_t size) {
     if (size % 4 != 0) {
         mBad = true;
-        return DAWN_INTERNAL_ERROR("GetData size not multiple of 4");
+        return DAWN_UNRECOVERABLE_ERROR("GetData size not multiple of 4");
     }
-    size_t alignedSize = (size + 3) & ~3;
-    auto newHead = mReadHead + alignedSize;
+    size_t alignedSize = (size + 3) & ~3u;
+    auto newHead = mReadHead + sign_cast(alignedSize);
     if (newHead <= mData.end()) {
         const uint32_t* data = reinterpret_cast<const uint32_t*>(&*mReadHead);
         mReadHead = newHead;
@@ -58,7 +60,7 @@ ResultOrError<const uint32_t*> ReadHead::GetData(size_t size) {
     }
 
     mBad = true;
-    return DAWN_INTERNAL_ERROR("GetData past end of data");
+    return DAWN_UNRECOVERABLE_ERROR("GetData past end of data");
 }
 
 bool ReadHead::IsBad() const {

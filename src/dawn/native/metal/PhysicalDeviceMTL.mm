@@ -25,25 +25,27 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/metal/PhysicalDeviceMTL.h"
+#include "src/dawn/native/metal/PhysicalDeviceMTL.h"
 
-#include "dawn/common/CoreFoundationRef.h"
-#include "dawn/common/GPUInfo.h"
-#include "dawn/common/Log.h"
-#include "dawn/common/NSRef.h"
-#include "dawn/common/Platform.h"
-#include "dawn/common/SystemUtils.h"
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/Instance.h"
 #include "dawn/native/MetalBackend.h"
-#include "dawn/native/metal/BufferMTL.h"
-#include "dawn/native/metal/DeviceMTL.h"
-#include "dawn/native/metal/UtilsMetal.h"
 #include "dawn/platform/DawnPlatform.h"
+#include "src/dawn/common/CoreFoundationRef.h"
+#include "src/dawn/common/GPUInfo.h"
+#include "src/dawn/common/NSRef.h"
+#include "src/dawn/common/SystemUtils.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/Instance.h"
+#include "src/dawn/native/metal/BufferMTL.h"
+#include "src/dawn/native/metal/DeviceMTL.h"
+#include "src/dawn/native/metal/UtilsMetal.h"
+#include "src/utils/compiler.h"
+#include "src/utils/log.h"
+#include "src/utils/platform.h"
 
 #if DAWN_PLATFORM_IS(MACOS)
 #import <IOKit/IOKitLib.h>
-#include "dawn/common/IOKitRef.h"
+
+#include "src/dawn/common/IOKitRef.h"
 #endif
 
 #include <string>
@@ -54,8 +56,8 @@ namespace dawn::native::metal {
 namespace {
 
 struct PCIIDs {
-    uint32_t vendorId;
-    uint32_t deviceId;
+    uint32_t vendorId = 0;
+    uint32_t deviceId = 0;
 };
 
 struct Vendor {
@@ -72,16 +74,16 @@ const Vendor kVendors[] = {
 // Find vendor ID from MTLDevice name.
 MaybeError GetVendorIdFromVendors(id<MTLDevice> device, PCIIDs* ids) {
     uint32_t vendorId = 0;
-    const char* deviceName = [device.name UTF8String];
+    std::string_view deviceName = [device.name UTF8String];
     for (const auto& it : kVendors) {
-        if (strstr(deviceName, it.trademark) != nullptr) {
+        if (deviceName.find(it.trademark) != std::string_view::npos) {
             vendorId = it.vendorId;
             break;
         }
     }
 
     if (vendorId == 0) {
-        return DAWN_INTERNAL_ERROR("Failed to find vendor id with the device");
+        return DAWN_UNRECOVERABLE_ERROR("Failed to find vendor id with the device");
     }
 
     // Set vendor id with 0
@@ -130,7 +132,7 @@ MaybeError GetDeviceIORegistryPCIInfo(id<MTLDevice> device, PCIIDs* ids) {
     CFRef<CFMutableDictionaryRef> matchingDict =
         AcquireCFRef(IORegistryEntryIDMatching([device registryID]));
     if (matchingDict == nullptr) {
-        return DAWN_INTERNAL_ERROR("Failed to create the matching dict for the device");
+        return DAWN_UNRECOVERABLE_ERROR("Failed to create the matching dict for the device");
     }
 
     // IOServiceGetMatchingService will consume the reference on the matching dictionary,
@@ -139,14 +141,14 @@ MaybeError GetDeviceIORegistryPCIInfo(id<MTLDevice> device, PCIIDs* ids) {
         AcquireIORef(IOServiceGetMatchingService(kIOMainPortDefault, matchingDict.Detach()));
 
     if (acceleratorEntry == IO_OBJECT_NULL) {
-        return DAWN_INTERNAL_ERROR("Failed to get the IO registry entry for the accelerator");
+        return DAWN_UNRECOVERABLE_ERROR("Failed to get the IO registry entry for the accelerator");
     }
 
     // Get the parent entry that will be the IOPCIDevice
     IORef<io_registry_entry_t> deviceEntry;
     if (IORegistryEntryGetParentEntry(acceleratorEntry.Get(), kIOServicePlane,
                                       deviceEntry.InitializeInto()) != kIOReturnSuccess) {
-        return DAWN_INTERNAL_ERROR("Failed to get the IO registry entry for the device");
+        return DAWN_UNRECOVERABLE_ERROR("Failed to get the IO registry entry for the device");
     }
 
     DAWN_ASSERT(deviceEntry != IO_OBJECT_NULL);
@@ -229,7 +231,7 @@ bool IsGPUCounterSupported(id<MTLDevice> device,
 }
 
 // https://developer.apple.com/documentation/metal/mtlgpufamily/apple9?language=objc
-enum class MTLGPUFamily {
+enum class MTLGPUFamily : uint8_t {
     Apple1,
     Apple2,
     Apple3,
@@ -383,10 +385,24 @@ ResultOrError<Ref<DeviceBase>> PhysicalDevice::CreateDeviceImpl(
 }
 
 void PhysicalDevice::SetupBackendAdapterToggles(dawn::platform::Platform* platform,
-                                                TogglesState* adapterToggles) const {}
+                                                TogglesState* adapterToggles) const {
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+    if (@available(macos 26.0, ios 26.0, *)) {
+        if (![*mDevice supportsFamily:MTLGPUFamilyMetal4]) {
+            adapterToggles->ForceSet(Toggle::MetalEnableTensors, false);
+        }
+    } else
+#endif
+    {
+        adapterToggles->ForceSet(Toggle::MetalEnableTensors, false);
+    }
+}
 
 void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platform,
                                                TogglesState* deviceToggles) const {
+    uint32_t deviceId = GetDeviceId();
+    uint32_t vendorId = GetVendorId();
+
     {
         bool haveStoreAndMSAAResolve = false;
 #if DAWN_PLATFORM_IS(MACOS)
@@ -414,7 +430,12 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         deviceToggles->Default(Toggle::MetalUseArgumentBuffers, false);
 
         bool haveBaseVertexBaseInstance = true;
-#if DAWN_PLATFORM_IS(IOS) && !DAWN_PLATFORM_IS(TVOS) && \
+        // The iOS Simulator only advertises the MTLFeatureSet_iOS_GPUFamily2 feature set, but
+        // base vertex/instance draws execute correctly there because Metal commands are serviced
+        // by the host GPU, which always supports them.
+        // NOTE: TARGET_OS_SIMULATOR can be defined but set to false for MacOS builds.
+#if DAWN_PLATFORM_IS(IOS) && !DAWN_PLATFORM_IS(TVOS) &&        \
+    (!defined(TARGET_OS_SIMULATOR) || !TARGET_OS_SIMULATOR) && \
     (!defined(__IPHONE_16_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_16_0)
         haveBaseVertexBaseInstance = [*mDevice supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily3_v1];
 #endif
@@ -422,6 +443,10 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         deviceToggles->Default(Toggle::DisableBaseVertex, !haveBaseVertexBaseInstance);
         deviceToggles->Default(Toggle::DisableBaseInstance, !haveBaseVertexBaseInstance);
     }
+
+    // Metal queue events are, by default, triggered via the Metal threads, and so are always
+    // spontaneous.
+    deviceToggles->Default(Toggle::SpontaneousQueueEvents, true);
 
     // Vertex buffer robustness is implemented by using programmable vertex pulling. The
     // VertexPulling transform also handles non-4-byte aligned vertex buffer accesses.
@@ -431,13 +456,17 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
     // of the Metal Spec (v3.2).
     // TODO(crbug/390426577): Consider removing this toggle as it is no longer needs to be toggled
     // as it is (semantically correctly) supported for all Metal 2.3+.
-    deviceToggles->Default(Toggle::DisableDemoteToHelper, true);
+    if (gpu_info::IsApple(vendorId)) {
+        // When per-sample shading is enabled, writes that occur after discard_fragment() are
+        // sometimes still visible on Apple Silicon, so we use DemoteToHelper.
+        // See https://crbug.com/562093713
+        deviceToggles->Default(Toggle::DisableDemoteToHelper, false);
+    } else {
+        deviceToggles->Default(Toggle::DisableDemoteToHelper, true);
+    }
 
     // TODO(crbug.com/dawn/846): tighten this workaround when the driver bug is fixed.
     deviceToggles->Default(Toggle::AlwaysResolveIntoZeroLevelAndLayer, true);
-
-    uint32_t deviceId = GetDeviceId();
-    uint32_t vendorId = GetVendorId();
 
     // TODO(crbug.com/dawn/847): Use MTLStorageModeShared instead of MTLStorageModePrivate when
     // creating MTLCounterSampleBuffer in QuerySet on Intel platforms, otherwise it fails to
@@ -467,10 +496,13 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         deviceToggles->Default(Toggle::MetalPolyfillUnpack2x16snorm, true);
         deviceToggles->Default(Toggle::MetalPolyfillUnpack2x16unorm, true);
     }
-
-    // chromium:407109056: Floating point clamp is slightly inaccurate for subnormal values.
     if (gpu_info::IsAMD(vendorId)) {
+        // chromium:42251267 tanh with f16 is incorrect on AMD.
+        deviceToggles->Default(Toggle::MetalPolyfillTanhF16, true);
+        // chromium:407109056: Floating point clamp is slightly inaccurate for subnormal values.
         deviceToggles->Default(Toggle::MetalPolyfillClampFloat, true);
+        // crbug.com/508265321: Nested subgroupMin/Max operations cause a crash in the AMD driver.
+        deviceToggles->Default(Toggle::CollapseSubgroupMinMax, true);
     }
 
     // On some Intel GPUs vertex only render pipeline get wrong depth result if no fragment
@@ -518,6 +550,10 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         deviceToggles->Default(Toggle::UseBlitForDepthTextureToTextureCopyToNonzeroSubresource,
                                true);
 
+        // Dynamically indexed stores on boolean vectors cause problems on Intel Mac
+        // (crbug.com/540789158).
+        deviceToggles->Default(Toggle::PolyfillBoolVecDynamicStore, true);
+
         if ([NSProcessInfo.processInfo
                 isOperatingSystemAtLeastVersion:NSOperatingSystemVersion{12, 0, 0}]) {
             deviceToggles->ForceSet(
@@ -543,6 +579,13 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         if ([*mDevice supportsFamily:static_cast<::MTLGPUFamily>(1008)]) {
             deviceToggles->Default(Toggle::MetalSerializeTimestampGenerationAndResolution, true);
         }
+
+        // Fix for u32 div and mod bug on Apple Silicon (crbug.com/517225032).
+        // Confirmed to be fixed starting in macOS 26.6.0 build 25G70, so check for 26.6.1 to be
+        // sure that we have the fix.
+        if (!IsMacOSVersionAtLeast(26, 6, 1)) {
+            deviceToggles->Default(Toggle::MetalFixU32DivMod, true);
+        }
     }
 
     // Local testing shows the workaround is needed on AMD Radeon HD 8870M (gcn-1) MacOS 12.1;
@@ -564,6 +607,11 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
             Toggle::MetalUseBothDepthAndStencilAttachmentsForCombinedDepthStencilFormats, true);
     }
 #endif
+
+    // https://crbug.com/42241269: Bool in workgroup storage causes problems on Mac AMD and Intel.
+    if (gpu_info::IsAMD(vendorId) || gpu_info::IsIntel(vendorId)) {
+        deviceToggles->Default(Toggle::MetalReplaceWorkgroupBoolWithU32, true);
+    }
 
     // Enable the integer range analysis for shader robustness by default if the corresponding
     // platform feature is enabled.
@@ -703,6 +751,7 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
     EnableFeature(Feature::Float32Blendable);
     EnableFeature(Feature::FlexibleTextureViews);
     EnableFeature(Feature::TextureFormatsTier1);
+    EnableFeature(Feature::TextureCompressionUnaligned);
 
     // SIMD-scoped permute operations is supported by GPU family Metal3, Apple6, Apple7, Apple8,
     // and Mac2.
@@ -717,6 +766,11 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
     if (([*mDevice supportsFamily:MTLGPUFamilyApple6] ||
          [*mDevice supportsFamily:MTLGPUFamilyMac2])) {
         EnableFeature(Feature::Subgroups);
+        // Apple doesn't support selecting a subgroup size, but if there is only one possible size
+        // we can trivially enable the feature.
+        if (mSubgroupMinSize == mSubgroupMaxSize) {
+            EnableFeature(Feature::SubgroupSizeControl);
+        }
     }
 
     if ([*mDevice supportsFamily:MTLGPUFamilyApple7]) {
@@ -731,6 +785,8 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
     EnableFeature(Feature::SharedFenceMTLSharedEvent);
 
     EnableFeature(Feature::Unorm16TextureFormats);
+    EnableFeature(Feature::Unorm16Filterable);
+    EnableFeature(Feature::Unorm16FormatsForExternalTexture);
 
     EnableFeature(Feature::HostMappedPointer);
 
@@ -744,6 +800,17 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
 
     if (SupportTextureComponentSwizzle(*mDevice)) {
         EnableFeature(Feature::TextureComponentSwizzle);
+    }
+
+    if ([*mDevice supportsFamily:MTLGPUFamilyApple9]) {
+        EnableFeature(Feature::AtomicVec2uMinMax);
+    }
+
+    // Early 64-bit (ulong) support when both mac2 and apple8. (This means the M2)
+    // See footnote 11 of https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf
+    if ([*mDevice supportsFamily:MTLGPUFamilyMac2] &&
+        [*mDevice supportsFamily:MTLGPUFamilyApple8]) {
+        EnableFeature(Feature::AtomicVec2uMinMax);
     }
 
     if ([*mDevice readWriteTextureSupport] == MTLReadWriteTextureTier2) {
@@ -784,26 +851,26 @@ void PhysicalDevice::InitializeVendorArchitectureImpl() {
 
 MaybeError PhysicalDevice::InitializeSupportedLimitsImpl(CombinedLimits* limits) {
     struct MTLDeviceLimits {
-        uint32_t maxVertexAttribsPerDescriptor;
-        uint32_t maxBufferArgumentEntriesPerFunc;
-        uint32_t maxTextureArgumentEntriesPerFunc;
-        uint32_t maxSamplerStateArgumentEntriesPerFunc;
-        uint32_t maxThreadsPerThreadgroup;
-        uint32_t maxTotalThreadgroupMemory;
-        uint32_t maxFragmentInputs;
-        uint32_t maxFragmentInputComponents;
-        uint32_t max1DTextureSize;
-        uint32_t max2DTextureSize;
-        uint32_t max3DTextureSize;
-        uint32_t maxTextureArrayLayers;
-        uint32_t minBufferOffsetAlignment;
-        uint32_t maxColorRenderTargets;
-        uint32_t maxTotalRenderTargetSize;
+        uint32_t maxVertexAttribsPerDescriptor = 0;
+        uint32_t maxBufferArgumentEntriesPerFunc = 0;
+        uint32_t maxTextureArgumentEntriesPerFunc = 0;
+        uint32_t maxSamplerStateArgumentEntriesPerFunc = 0;
+        uint32_t maxThreadsPerThreadgroup = 0;
+        uint32_t maxTotalThreadgroupMemory = 0;
+        uint32_t maxFragmentInputs = 0;
+        uint32_t maxFragmentInputComponents = 0;
+        uint32_t max1DTextureSize = 0;
+        uint32_t max2DTextureSize = 0;
+        uint32_t max3DTextureSize = 0;
+        uint32_t maxTextureArrayLayers = 0;
+        uint32_t minBufferOffsetAlignment = 0;
+        uint32_t maxColorRenderTargets = 0;
+        uint32_t maxTotalRenderTargetSize = 0;
     };
 
     struct LimitsForFamily {
-        uint32_t MTLDeviceLimits::* limit;
-        ityp::array<MTLGPUFamily, uint32_t, 11> values;
+        uint32_t MTLDeviceLimits::* limit = nullptr;
+        ityp::array<MTLGPUFamily, uint32_t, 11> values{};
     };
 
     // clang-format off
@@ -912,7 +979,9 @@ MaybeError PhysicalDevice::InitializeSupportedLimitsImpl(CombinedLimits* limits)
     limits->v1.minUniformBufferOffsetAlignment = mtlLimits.minBufferOffsetAlignment;
     limits->v1.minStorageBufferOffsetAlignment = mtlLimits.minBufferOffsetAlignment;
 
-    uint64_t maxBufferSize = Buffer::QueryMaxBufferLength(*mDevice);
+    // Hard limit at UINT32_MAX because we pass storage (and vertex) buffer sizes to MSL as u32.
+    uint64_t maxBufferSize = std::min(static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()),
+                                      Buffer::QueryMaxBufferLength(*mDevice));
     limits->v1.maxBufferSize = maxBufferSize;
 
     // Metal has no documented limit on the size of a binding. Use the maximum
@@ -966,9 +1035,7 @@ void PhysicalDevice::PopulateBackendProperties(UnpackedPtr<AdapterInfo>& info,
                                                const TogglesState& toggles) const {
     if (auto* memoryHeapProperties = info.Get<AdapterPropertiesMemoryHeaps>()) {
         if ([*mDevice hasUnifiedMemory]) {
-            auto* heapInfo = new MemoryHeapInfo[1];
-            memoryHeapProperties->heapCount = 1;
-            memoryHeapProperties->heapInfo = heapInfo;
+            auto heapInfo = HeapArray<MemoryHeapInfo>(1);
 
             heapInfo[0].properties =
                 wgpu::HeapProperty::DeviceLocal | wgpu::HeapProperty::HostVisible |
@@ -985,48 +1052,77 @@ void PhysicalDevice::PopulateBackendProperties(UnpackedPtr<AdapterInfo>& info,
                 // excluding the conditional causes build errors.
                 DAWN_UNREACHABLE();
             }
+
+            memoryHeapProperties->heapInfo = std::move(heapInfo).MoveToSpan();
         } else {
 #if DAWN_PLATFORM_IS(MACOS)
-            auto* heapInfo = new MemoryHeapInfo[2];
-            memoryHeapProperties->heapCount = 2;
-            memoryHeapProperties->heapInfo = heapInfo;
+            auto heapInfo = HeapArray<MemoryHeapInfo>(2);
 
             heapInfo[0].properties = wgpu::HeapProperty::DeviceLocal;
             heapInfo[0].size = [*mDevice recommendedMaxWorkingSetSize];
 
             mach_msg_type_number_t hostBasicInfoMsg = HOST_BASIC_INFO_COUNT;
             host_basic_info_data_t hostInfo{};
-            DAWN_CHECK(host_info(mach_host_self(), HOST_BASIC_INFO,
-                                 reinterpret_cast<host_info_t>(&hostInfo),
-                                 &hostBasicInfoMsg) == KERN_SUCCESS);
+            auto status = host_info(mach_host_self(), HOST_BASIC_INFO,
+                                    reinterpret_cast<host_info_t>(&hostInfo), &hostBasicInfoMsg);
+            DAWN_CHECK(status == KERN_SUCCESS);
 
             heapInfo[1].properties = wgpu::HeapProperty::HostVisible |
                                      wgpu::HeapProperty::HostCoherent |
                                      wgpu::HeapProperty::HostCached;
             heapInfo[1].size = hostInfo.max_mem;
+
+            memoryHeapProperties->heapInfo = std::move(heapInfo).MoveToSpan();
 #else
             DAWN_UNREACHABLE();
 #endif
         }
     }
     if (auto* subgroupMatrixConfigs = info.Get<AdapterPropertiesSubgroupMatrixConfigs>()) {
-        DAWN_ASSERT([*mDevice supportsFamily:MTLGPUFamilyApple7]);
+        if (toggles.IsEnabled(Toggle::MetalEnableTensors)) {
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+            if (@available(macos 26.0, ios 26.0, *)) {
+                DAWN_ASSERT([*mDevice supportsFamily:MTLGPUFamilyMetal4]);
+            } else
+#endif
+            {
+                DAWN_ASSERT(false);
+            }
 
-        auto* configs = new SubgroupMatrixConfig[2];
-        subgroupMatrixConfigs->configCount = 2;
-        subgroupMatrixConfigs->configs = configs;
+            // TODO(553457823): decide which other matrix configurations to expose.
+            auto configs = HeapArray<SubgroupMatrixConfig>(1);
+            configs[0].componentType = wgpu::SubgroupMatrixComponentType::F16;
+            configs[0].resultComponentType = wgpu::SubgroupMatrixComponentType::F16;
+            configs[0].M = 32;
+            configs[0].N = 32;
+            configs[0].K = 32;
+            configs[0].minSubgroupSize = GetSubgroupMinSize();
+            configs[0].maxSubgroupSize = GetSubgroupMaxSize();
 
-        configs[0].componentType = wgpu::SubgroupMatrixComponentType::F32;
-        configs[0].resultComponentType = wgpu::SubgroupMatrixComponentType::F32;
-        configs[0].M = 8;
-        configs[0].N = 8;
-        configs[0].K = 8;
+            subgroupMatrixConfigs->configs = std::move(configs).MoveToSpan();
+        } else {
+            DAWN_ASSERT([*mDevice supportsFamily:MTLGPUFamilyApple7]);
 
-        configs[1].componentType = wgpu::SubgroupMatrixComponentType::F16;
-        configs[1].resultComponentType = wgpu::SubgroupMatrixComponentType::F16;
-        configs[1].M = 8;
-        configs[1].N = 8;
-        configs[1].K = 8;
+            auto configs = HeapArray<SubgroupMatrixConfig>(2);
+
+            configs[0].componentType = wgpu::SubgroupMatrixComponentType::F32;
+            configs[0].resultComponentType = wgpu::SubgroupMatrixComponentType::F32;
+            configs[0].M = 8;
+            configs[0].N = 8;
+            configs[0].K = 8;
+            configs[0].minSubgroupSize = GetSubgroupMinSize();
+            configs[0].maxSubgroupSize = GetSubgroupMaxSize();
+
+            configs[1].componentType = wgpu::SubgroupMatrixComponentType::F16;
+            configs[1].resultComponentType = wgpu::SubgroupMatrixComponentType::F16;
+            configs[1].M = 8;
+            configs[1].N = 8;
+            configs[1].K = 8;
+            configs[1].minSubgroupSize = GetSubgroupMinSize();
+            configs[1].maxSubgroupSize = GetSubgroupMaxSize();
+
+            subgroupMatrixConfigs->configs = std::move(configs).MoveToSpan();
+        }
     }
 }
 }  // namespace dawn::native::metal

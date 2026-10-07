@@ -30,8 +30,8 @@
 
 #include <string>
 
-#include "dawn/native/Error.h"
-#include "dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/d3d/d3d_platform.h"
 
 namespace dawn::native::d3d {
 
@@ -44,7 +44,7 @@ bool IsDepthStencil(DXGI_FORMAT format);
 DXGI_FORMAT DXGITypelessTextureFormat(const DeviceBase* device, wgpu::TextureFormat format);
 DXGI_FORMAT DXGITextureFormat(const DeviceBase* device, wgpu::TextureFormat format);
 
-ResultOrError<wgpu::TextureFormat> FromUncompressedColorDXGITextureFormat(DXGI_FORMAT format);
+ResultOrValError<wgpu::TextureFormat> FromUncompressedColorDXGITextureFormat(DXGI_FORMAT format);
 
 DXGI_FORMAT DXGIVertexFormat(wgpu::VertexFormat format);
 

@@ -1,30 +1,22 @@
-//* Copyright 2025 The Dawn & Tint Authors
-//*
-//* Redistribution and use in source and binary forms, with or without
-//* modification, are permitted provided that the following conditions are met:
-//*
-//* 1. Redistributions of source code must retain the above copyright notice, this
-//*    list of conditions and the following disclaimer.
-//*
-//* 2. Redistributions in binary form must reproduce the above copyright notice,
-//*    this list of conditions and the following disclaimer in the documentation
-//*    and/or other materials provided with the distribution.
-//*
-//* 3. Neither the name of the copyright holder nor the names of its
-//*    contributors may be used to endorse or promote products derived from
-//*    this software without specific prior written permission.
-//*
-//* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-//* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-//* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-//* DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-//* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-//* DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-//* SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-//* CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-//* OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-//* OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/*
+ * Copyright 2025 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+{% from 'art/api_kotlin_types.kt' import kotlin_annotation, kotlin_declaration, kotlin_definition, check_if_doc_present, generate_kdoc, generate_simple_kdoc, add_kdoc_disclaimer, kotlin_member_optin, kotlin_class_optin, item_requires_optin with context %}
+{% from 'art/api_kotlin_async_helpers.kt' import async_wrapper, analyze_callback with context %}
+{{ add_kdoc_disclaimer() }}
 package {{ kotlin_package }}
 
 import dalvik.annotation.optimization.FastNative
@@ -34,8 +26,6 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
-{% from 'art/api_kotlin_types.kt' import kotlin_annotation, kotlin_declaration, kotlin_definition, check_if_doc_present, generate_kdoc, generate_simple_kdoc with context %}
-{% from 'art/api_kotlin_async_helpers.kt' import async_wrapper, analyze_callback with context %}
 
 //* Generating KDocs
 {% set all_objects_info = kdocs.objects%}
@@ -44,9 +34,14 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 {% if doc_str | trim %}
     {{ generate_simple_kdoc(doc_str) }}
 {% endif %}
+{% set experimental = kotlin_class_optin(obj) -%}
+{% if experimental %}
+    //* Requires opt-in if this entire WebGPU object class itself is experimental.
+    {{ experimental }}
+{% endif %}
 public class {{ kotlin_name(obj) }} private constructor(public val handle: Long): AutoCloseable {
     {% set all_method_info = object_info.methods if object_info else {} %}
-    {% for method in obj.methods if include_method(obj, method) %}
+    {% for method in obj.methods if include_method(method) %}
         {% set _kotlin_return = kotlin_return(method) %}
         //* Generating KDocs
         {% set method_info = all_method_info.get(method.name.snake_case()) %}
@@ -58,6 +53,11 @@ public class {{ kotlin_name(obj) }} private constructor(public val handle: Long)
         {{ generate_kdoc(main_doc, return_doc, arg_docs_map, method_args, "\n     * ", indent_prefix = "    ") }}
 
         {%- endif %}
+        {% set experimental = kotlin_member_optin(method, parent=obj) -%}
+        {% if experimental %}
+            //* Requires opt-in if the method, its return type, or any of its arguments require experimental opt-in.
+            {{ experimental }}
+        {% endif %}
         @FastNative
         @JvmName("{{ method.name.camelCase() }}")
         {% for arg in kotlin_record_members(method.arguments) %}
@@ -85,6 +85,9 @@ public class {{ kotlin_name(obj) }} private constructor(public val handle: Long)
             //* For the Kotlin getter, strip word 'get' from name and convert the remainder to
             //* camelCase() (lower case first word). E.g. "get foo bar" translated to fooBar.
             {% set name = method.name.chunks[1] + method.name.chunks[2:] | map('title') | join %}
+            {% if experimental %}
+                {{ experimental }}
+            {% endif %}
             @get:JvmName("{{ name }}")
             public val {{ name }}: {{ kotlin_declaration(_kotlin_return) if _kotlin_return else 'Unit' }} get() = {{ method.name.camelCase() }}()
 
@@ -100,6 +103,12 @@ public class {{ kotlin_name(obj) }} private constructor(public val handle: Long)
         {%- endfor -%}
 
     {% endfor %}
+    /**
+     * Decrements the reference count of the object and frees resources when the count reaches zero.
+     *
+     * This is the standard way to manage object lifetimes and should be used in `use` blocks.
+     * After calling this, the object is no longer usable.
+     */
     external override fun close()
 
     //* By default, the equals() function implements referential equality.

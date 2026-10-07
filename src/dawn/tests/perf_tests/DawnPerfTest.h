@@ -33,8 +33,9 @@
 #include <string>
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/utils/compiler.h"
 
 void InitDawnPerfTestEnvironment(int argc, char** argv);
 
@@ -47,6 +48,19 @@ class DawnPerfTestPlatform;
 
 class DawnPerfTestEnvironment : public DawnTestEnvironment {
   public:
+    struct PerfResult {
+        std::string metric;
+        std::string testSuite;
+        std::string story;
+        std::string trace;
+        double value;
+        std::string units;
+        bool important;
+        // Index of the trial this measurement came from. Each test runs
+        // kNumTrials trials, so results are repeated samples of the same metric.
+        unsigned int trial;
+    };
+
     DawnPerfTestEnvironment(int argc, char** argv);
     ~DawnPerfTestEnvironment() override;
 
@@ -60,6 +74,11 @@ class DawnPerfTestEnvironment : public DawnTestEnvironment {
     // not be written to a json file.
     const char* GetTraceFile() const;
 
+    // Returns whether perf results should be written to a json file.
+    bool HasPerfResultsFile() const;
+
+    void AddPerfResult(PerfResult result);
+
     DawnPerfTestPlatform* GetPlatform() const;
 
   private:
@@ -69,7 +88,11 @@ class DawnPerfTestEnvironment : public DawnTestEnvironment {
     // If non-zero, overrides the number of steps.
     unsigned int mOverrideStepsToRun = 0;
 
-    const char* mTraceFile = nullptr;
+    // Empty if traces should not be written to a file.
+    std::string mTraceFile;
+    // Empty if perf results should not be written to a file.
+    std::string mPerfResultsFile;
+    std::vector<PerfResult> mPerfResults;
 
     std::unique_ptr<DawnPerfTestPlatform> mPlatform;
 };
@@ -110,10 +133,11 @@ class DawnPerfTestBase {
 
   private:
     void DoRunLoop(double maxRunTime);
-    void OutputResults();
+    void OutputResults(const std::vector<char>& traceData = {});
 
     void PrintResultImpl(const std::string& trace,
-                         const std::string& value,
+                         double numericValue,
+                         const std::string& valueStr,
                          const std::string& units,
                          bool important) const;
 
@@ -125,7 +149,9 @@ class DawnPerfTestBase {
     const unsigned int mMaxStepsInFlight;
     unsigned int mStepsToRun = 0;
     unsigned int mNumStepsPerformed = 0;
-    double mCpuTime;
+    // Index of the trial currently being run, recorded with each perf result.
+    unsigned int mCurrentTrial = 0;
+    double mCpuTime = 0;
     std::unique_ptr<utils::Timer> mTimer;
     std::optional<double> mGPUTime;
 };
@@ -145,6 +171,7 @@ class DawnPerfTestWithParams : public DawnTestWithParams<Params>, public DawnPer
     void SetUp() final {
         DawnTestWithParams<Params>::SetUp();
 
+        // Perf tests are not meaningful on the CPU.
         DAWN_TEST_UNSUPPORTED_IF(this->IsCPU());
 
         if (mSupportsTimestampQuery) {
@@ -201,7 +228,7 @@ class DawnPerfTestWithParams : public DawnTestWithParams<Params>, public DawnPer
         const uint64_t* readbackValues =
             static_cast<const uint64_t*>(mReadbackBuffer.GetConstMappedRange());
         ASSERT_EQ(2u, kTimestampQueryCount);
-        double gpuTimeElapsed = (readbackValues[1] - readbackValues[0]) / 1e9;
+        double gpuTimeElapsed = (DAWN_UNSAFE_TODO(readbackValues[1]) - readbackValues[0]) / 1e9;
         AddGPUTime(gpuTimeElapsed);
         mReadbackBuffer.Unmap();
     }

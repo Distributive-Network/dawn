@@ -56,7 +56,11 @@ tint_target_add_dependencies(tint_lang_msl_writer lib
   tint_lang_core_intrinsic
   tint_lang_core_ir
   tint_lang_core_ir_transform
+  tint_lang_core_ir_validator
   tint_lang_core_type
+  tint_lang_msl_writer_common
+  tint_lang_msl_writer_printer
+  tint_lang_msl_writer_raise
   tint_utils
   tint_utils_containers
   tint_utils_diagnostic
@@ -64,6 +68,7 @@ tint_target_add_dependencies(tint_lang_msl_writer lib
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -73,14 +78,6 @@ tint_target_add_external_dependencies(tint_lang_msl_writer lib
   "src_utils"
 )
 
-if(TINT_BUILD_MSL_WRITER)
-  tint_target_add_dependencies(tint_lang_msl_writer lib
-    tint_lang_msl_writer_common
-    tint_lang_msl_writer_printer
-    tint_lang_msl_writer_raise
-  )
-endif(TINT_BUILD_MSL_WRITER)
-
 endif(TINT_BUILD_MSL_WRITER)
 if(TINT_BUILD_MSL_WRITER)
 ################################################################################
@@ -89,6 +86,7 @@ if(TINT_BUILD_MSL_WRITER)
 # Condition: TINT_BUILD_MSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_msl_writer_test test
+  lang/msl/writer/alias_test.cc
   lang/msl/writer/binary_test.cc
   lang/msl/writer/constant_test.cc
   lang/msl/writer/discard_test.cc
@@ -98,6 +96,7 @@ tint_add_target(tint_lang_msl_writer_test test
   lang/msl/writer/let_test.cc
   lang/msl/writer/loop_test.cc
   lang/msl/writer/return_test.cc
+  lang/msl/writer/tensor_test.cc
   lang/msl/writer/type_test.cc
   lang/msl/writer/var_test.cc
   lang/msl/writer/writer_test.cc
@@ -109,7 +108,12 @@ tint_target_add_dependencies(tint_lang_msl_writer_test test
   tint_lang_core_constant
   tint_lang_core_intrinsic
   tint_lang_core_ir
+  tint_lang_core_ir_validator
   tint_lang_core_type
+  tint_lang_msl_validate
+  tint_lang_msl_writer
+  tint_lang_msl_writer_common
+  tint_lang_msl_writer_printer
   tint_utils
   tint_utils_containers
   tint_utils_diagnostic
@@ -117,6 +121,7 @@ tint_target_add_dependencies(tint_lang_msl_writer_test test
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -127,21 +132,12 @@ tint_target_add_external_dependencies(tint_lang_msl_writer_test test
   "src_utils"
 )
 
-if(TINT_BUILD_MSL_WRITER)
-  tint_target_add_dependencies(tint_lang_msl_writer_test test
-    tint_lang_msl_validate
-    tint_lang_msl_writer
-    tint_lang_msl_writer_common
-    tint_lang_msl_writer_printer
-  )
 endif(TINT_BUILD_MSL_WRITER)
-
-endif(TINT_BUILD_MSL_WRITER)
-if(TINT_BUILD_MSL_WRITER)
+if(TINT_BUILD_FUZZERS AND TINT_BUILD_MSL_WRITER)
 ################################################################################
 # Target:    tint_lang_msl_writer_fuzz
 # Kind:      fuzz
-# Condition: TINT_BUILD_MSL_WRITER
+# Condition: TINT_BUILD_FUZZERS AND TINT_BUILD_MSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_msl_writer_fuzz fuzz
   lang/msl/writer/writer_fuzz.cc
@@ -150,19 +146,23 @@ tint_add_target(tint_lang_msl_writer_fuzz fuzz
 tint_target_add_dependencies(tint_lang_msl_writer_fuzz fuzz
   tint_api_common
   tint_api_helpers
-  tint_cmd_fuzz_ir_fuzz
+  tint_cmd_fuzz_common
   tint_lang_core
   tint_lang_core_constant
   tint_lang_core_ir
+  tint_lang_core_ir_validator
   tint_lang_core_type
+  tint_lang_msl_writer
+  tint_lang_msl_writer_common
+  tint_lang_msl_writer_printer
   tint_utils
-  tint_utils_bytes
   tint_utils_containers
   tint_utils_diagnostic
   tint_utils_ice
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -172,12 +172,4 @@ tint_target_add_external_dependencies(tint_lang_msl_writer_fuzz fuzz
   "src_utils"
 )
 
-if(TINT_BUILD_MSL_WRITER)
-  tint_target_add_dependencies(tint_lang_msl_writer_fuzz fuzz
-    tint_lang_msl_writer
-    tint_lang_msl_writer_common
-    tint_lang_msl_writer_printer
-  )
-endif(TINT_BUILD_MSL_WRITER)
-
-endif(TINT_BUILD_MSL_WRITER)
+endif(TINT_BUILD_FUZZERS AND TINT_BUILD_MSL_WRITER)

@@ -25,9 +25,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/tests/unittests/validation/ValidationTest.h"
-
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/tests/unittests/validation/ValidationTest.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 class QueueWriteBufferValidationTest : public ValidationTest {
   private:
@@ -71,7 +70,7 @@ TEST_F(QueueWriteBufferValidationTest, OutOfBoundsOverflow) {
 
     // An offset that when added to "4" would overflow to be zero and pass validation without
     // overflow checks.
-    uint64_t offset = uint64_t(int64_t(0) - int64_t(4));
+    uint64_t offset = static_cast<uint64_t>(-4);
 
     ASSERT_DEVICE_ERROR(queue.WriteBuffer(buf, offset, foo, 4));
 }

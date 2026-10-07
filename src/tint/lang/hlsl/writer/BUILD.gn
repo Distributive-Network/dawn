@@ -55,7 +55,9 @@ if (tint_build_hlsl_writer) {
       "${tint_src_dir}/lang/core/constant",
       "${tint_src_dir}/lang/core/intrinsic",
       "${tint_src_dir}/lang/core/ir",
+      "${tint_src_dir}/lang/core/ir/analysis",
       "${tint_src_dir}/lang/core/ir/transform",
+      "${tint_src_dir}/lang/core/ir/validator",
       "${tint_src_dir}/lang/core/type",
       "${tint_src_dir}/lang/hlsl/writer/common",
       "${tint_src_dir}/lang/hlsl/writer/printer",
@@ -67,6 +69,7 @@ if (tint_build_hlsl_writer) {
       "${tint_src_dir}/utils/macros",
       "${tint_src_dir}/utils/math",
       "${tint_src_dir}/utils/memory",
+      "${tint_src_dir}/utils/reflection",
       "${tint_src_dir}/utils/rtti",
       "${tint_src_dir}/utils/symbol",
       "${tint_src_dir}/utils/text",
@@ -103,7 +106,10 @@ if (tint_build_unittests) {
         "${tint_src_dir}/lang/core/constant",
         "${tint_src_dir}/lang/core/intrinsic",
         "${tint_src_dir}/lang/core/ir",
+        "${tint_src_dir}/lang/core/ir/validator",
         "${tint_src_dir}/lang/core/type",
+        "${tint_src_dir}/lang/hlsl/validate",
+        "${tint_src_dir}/lang/hlsl/writer",
         "${tint_src_dir}/lang/hlsl/writer/common",
         "${tint_src_dir}/utils",
         "${tint_src_dir}/utils/command",
@@ -113,36 +119,32 @@ if (tint_build_unittests) {
         "${tint_src_dir}/utils/macros",
         "${tint_src_dir}/utils/math",
         "${tint_src_dir}/utils/memory",
+        "${tint_src_dir}/utils/reflection",
         "${tint_src_dir}/utils/rtti",
         "${tint_src_dir}/utils/symbol",
         "${tint_src_dir}/utils/text",
       ]
-
-      if (tint_build_hlsl_writer) {
-        deps += [
-          "${tint_src_dir}/lang/hlsl/validate",
-          "${tint_src_dir}/lang/hlsl/writer",
-        ]
-      }
     }
   }
 }
-if (tint_build_hlsl_writer) {
+if (tint_build_fuzzers && tint_build_hlsl_writer) {
   tint_fuzz_source_set("fuzz") {
     sources = [ "writer_fuzz.cc" ]
     deps = [
       "${dawn_root}/src/utils",
       "${tint_src_dir}/api/common",
       "${tint_src_dir}/api/helpers",
-      "${tint_src_dir}/cmd/fuzz/ir:fuzz",
+      "${tint_src_dir}/cmd/fuzz/common",
       "${tint_src_dir}/lang/core",
       "${tint_src_dir}/lang/core/constant",
       "${tint_src_dir}/lang/core/ir",
+      "${tint_src_dir}/lang/core/ir/validator",
       "${tint_src_dir}/lang/core/type",
+      "${tint_src_dir}/lang/hlsl/validate",
+      "${tint_src_dir}/lang/hlsl/writer",
       "${tint_src_dir}/lang/hlsl/writer/common",
       "${tint_src_dir}/lang/hlsl/writer/printer",
       "${tint_src_dir}/utils",
-      "${tint_src_dir}/utils/bytes",
       "${tint_src_dir}/utils/command",
       "${tint_src_dir}/utils/containers",
       "${tint_src_dir}/utils/diagnostic",
@@ -150,16 +152,10 @@ if (tint_build_hlsl_writer) {
       "${tint_src_dir}/utils/macros",
       "${tint_src_dir}/utils/math",
       "${tint_src_dir}/utils/memory",
+      "${tint_src_dir}/utils/reflection",
       "${tint_src_dir}/utils/rtti",
       "${tint_src_dir}/utils/symbol",
       "${tint_src_dir}/utils/text",
     ]
-
-    if (tint_build_hlsl_writer) {
-      deps += [
-        "${tint_src_dir}/lang/hlsl/validate",
-        "${tint_src_dir}/lang/hlsl/writer",
-      ]
-    }
   }
 }

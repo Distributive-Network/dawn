@@ -38,6 +38,7 @@
 #include "dawn/wire/WireCmd_autogen.h"
 #include "dawn/wire/WireServer.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/MutexProtected.h"
 
 namespace dawn::wire::server {
 
@@ -55,24 +56,25 @@ struct ObjectDataBase {
     T handle = nullptr;
     ObjectGeneration generation = 0;
 
-    AllocationState state;
+    AllocationState state{};
 };
 
 // Stores what the backend knows about the type.
 template <typename T>
 struct ObjectData : public ObjectDataBase<T> {};
 
-enum class BufferMapWriteState { Unmapped, Mapped, MapError };
+struct BufferMapState {
+    std::unique_ptr<MemoryTransferService::MemoryHandle> memoryHandle = nullptr;
+};
 
 template <>
 struct ObjectData<WGPUBuffer> : public ObjectDataBase<WGPUBuffer> {
-    // TODO(enga): Use a tagged pointer to save space.
-    std::unique_ptr<MemoryTransferService::ReadHandle> readHandle;
-    std::unique_ptr<MemoryTransferService::WriteHandle> writeHandle;
-    BufferMapWriteState mapWriteState = BufferMapWriteState::Unmapped;
+    MutexRefProtected<BufferMapState> mapState;
+
     WGPUBufferUsage usage = WGPUBufferUsage_None;
-    // Indicate if writeHandle needs to be destroyed on unmap
+    // Indicate if memoryHandle needs to be destroyed on unmap
     bool mappedAtCreation = false;
+    bool backedWithSharedMemory = false;
 };
 
 struct DeviceInfo {
@@ -91,8 +93,8 @@ struct ObjectData<WGPUDevice> : public ObjectDataBase<WGPUDevice> {
 // are guaranteed to have been reserved, but not guaranteed to be backed by a valid backend handle.
 template <typename T>
 struct Reserved {
-    ObjectId id;
-    raw_ptr<ObjectData<T>> data;
+    ObjectId id = 0;
+    raw_ptr<ObjectData<T>> data = nullptr;
 
     const ObjectData<T>* operator->() const {
         DAWN_ASSERT(data != nullptr);
@@ -113,8 +115,8 @@ struct Reserved {
 // guaranteed to be backed by a valid backend handle.
 template <typename T>
 struct Known {
-    ObjectId id;
-    raw_ptr<ObjectData<T>> data;
+    ObjectId id = 0;
+    raw_ptr<ObjectData<T>> data = nullptr;
 
     const ObjectData<T>* operator->() const {
         DAWN_ASSERT(data != nullptr);
@@ -194,20 +196,28 @@ class KnownObjectsBase {
         return WireResult::Success;
     }
 
-    WireResult FillReservation(ObjectId id, T handle, Known<T>* known = nullptr) {
-        DAWN_ASSERT(id < mKnown.size());
-        DAWN_ASSERT(handle != nullptr);
-        Data* data = &mKnown[id];
+    std::vector<T> AcquireAllHandles() {
+        std::vector<T> objects;
+        for (Data& data : mKnown) {
+            if (data.state == AllocationState::Allocated && data.handle != nullptr) {
+                objects.push_back(data.handle);
+                data.state = AllocationState::Free;
+                data.handle = nullptr;
+            }
+        }
 
-        if (data->state != AllocationState::Reserved) {
-            return WireResult::FatalError;
+        return objects;
+    }
+
+    std::vector<T> GetAllHandles() const {
+        std::vector<T> objects;
+        for (const Data& data : mKnown) {
+            if (data.state == AllocationState::Allocated && data.handle != nullptr) {
+                objects.push_back(data.handle);
+            }
         }
-        data->handle = handle;
-        data->state = AllocationState::Allocated;
-        if (known != nullptr) {
-            *known = {id, data};
-        }
-        return WireResult::Success;
+
+        return objects;
     }
 
     // Allocates the data for a given ID and returns it in result.
@@ -247,8 +257,28 @@ class KnownObjectsBase {
         return WireResult::Success;
     }
 
+  protected:
+    WireResult FillReservationImpl(ObjectHandle handle, T nativeHandle, Known<T>* known = nullptr) {
+        DAWN_ASSERT(handle.id < mKnown.size());
+        DAWN_ASSERT(nativeHandle != nullptr);
+        Data* data = &mKnown[handle.id];
+
+        if (data->state != AllocationState::Reserved) {
+            return WireResult::FatalError;
+        }
+        if (data->generation != handle.generation) {
+            return WireResult::FatalError;
+        }
+        data->handle = nativeHandle;
+        data->state = AllocationState::Allocated;
+        if (known != nullptr) {
+            *known = {handle.id, data};
+        }
+        return WireResult::Success;
+    }
+
     // Marks an ID as deallocated
-    void Free(ObjectId id) {
+    void FreeImpl(ObjectId id) {
         DAWN_ASSERT(id < mKnown.size());
         Data data;
         data.generation = mKnown[id].generation;
@@ -256,31 +286,6 @@ class KnownObjectsBase {
         mKnown[id] = std::move(data);
     }
 
-    std::vector<T> AcquireAllHandles() {
-        std::vector<T> objects;
-        for (Data& data : mKnown) {
-            if (data.state == AllocationState::Allocated && data.handle != nullptr) {
-                objects.push_back(data.handle);
-                data.state = AllocationState::Free;
-                data.handle = nullptr;
-            }
-        }
-
-        return objects;
-    }
-
-    std::vector<T> GetAllHandles() const {
-        std::vector<T> objects;
-        for (const Data& data : mKnown) {
-            if (data.state == AllocationState::Allocated && data.handle != nullptr) {
-                objects.push_back(data.handle);
-            }
-        }
-
-        return objects;
-    }
-
-  protected:
     std::vector<Data> mKnown;
 };
 
@@ -288,6 +293,12 @@ template <typename T>
 class KnownObjects : public KnownObjectsBase<T> {
   public:
     KnownObjects() = default;
+
+    WireResult FillReservation(ObjectHandle handle, T nativeHandle, Known<T>* known = nullptr) {
+        return KnownObjectsBase<T>::FillReservationImpl(handle, nativeHandle, known);
+    }
+
+    void Free(ObjectId id) { KnownObjectsBase<T>::FreeImpl(id); }
 };
 
 template <>
@@ -295,15 +306,11 @@ class KnownObjects<WGPUDevice> : public KnownObjectsBase<WGPUDevice> {
   public:
     KnownObjects() = default;
 
-    WireResult Allocate(Reserved<WGPUDevice>* result,
-                        ObjectHandle handle,
-                        AllocationState state = AllocationState::Allocated) {
-        WIRE_TRY(KnownObjectsBase<WGPUDevice>::Allocate(result, handle, state));
-        return WireResult::Success;
-    }
-
-    WireResult FillReservation(ObjectId id, WGPUDevice handle, Known<WGPUDevice>* known = nullptr) {
-        auto result = KnownObjectsBase<WGPUDevice>::FillReservation(id, handle, known);
+    WireResult FillReservation(ObjectHandle handle,
+                               WGPUDevice nativeHandle,
+                               Known<WGPUDevice>* known = nullptr) {
+        auto result =
+            KnownObjectsBase<WGPUDevice>::FillReservationImpl(handle, nativeHandle, known);
         if (result == WireResult::Success) {
             mKnownSet.insert((*known)->handle);
         }
@@ -312,13 +319,20 @@ class KnownObjects<WGPUDevice> : public KnownObjectsBase<WGPUDevice> {
 
     void Free(ObjectId id) {
         mKnownSet.erase(mKnown[id].handle);
-        KnownObjectsBase<WGPUDevice>::Free(id);
+        KnownObjectsBase<WGPUDevice>::FreeImpl(id);
+    }
+
+    // Clear mKnownSet so that device handles acquired here and subsequently released
+    // do not leave dangling raw_ptr entries in mKnownSet.
+    std::vector<WGPUDevice> AcquireAllHandles() {
+        mKnownSet.clear();
+        return KnownObjectsBase<WGPUDevice>::AcquireAllHandles();
     }
 
     bool IsKnown(WGPUDevice device) const { return mKnownSet.contains(device); }
 
   private:
-    absl::flat_hash_set<WGPUDevice> mKnownSet;
+    absl::flat_hash_set<raw_ptr<WGPUDeviceImpl>> mKnownSet;
 };
 
 }  // namespace dawn::wire::server

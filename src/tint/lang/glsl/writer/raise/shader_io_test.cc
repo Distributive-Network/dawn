@@ -25,11 +25,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include "src/tint/lang/glsl/writer/raise/shader_io.h"
+
 #include <utility>
 
 #include "src/tint/lang/core/ir/transform/helper_test.h"
 #include "src/tint/lang/core/type/struct.h"
-#include "src/tint/lang/glsl/writer/raise/shader_io.h"
 
 namespace tint::glsl::writer::raise {
 namespace {
@@ -40,7 +41,7 @@ using namespace tint::core::number_suffixes;  // NOLINT
 class GlslWriter_ShaderIOTest : public core::ir::transform::TransformTest {
   public:
     GlslWriter_ShaderIOTest() {
-        capabilities.Add(core::ir::Capability::kLoosenValidationForShaderIO);
+        mod.properties.Add(core::ir::Property::kAllowBackendSpecificShaderIO);
     }
 };
 
@@ -67,6 +68,24 @@ TEST_F(GlslWriter_ShaderIOTest, NoInputsOrOutputs) {
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
+}
+
+TEST_F(GlslWriter_ShaderIOTest, BgraSwizzle_NonF32) {
+    auto* ep = b.Function("foo", ty.void_());
+    auto* color = b.FunctionParam("color", ty.vec4i());
+    color->SetLocation(0);
+    ep->SetParams({color});
+    ep->SetStage(core::ir::Function::PipelineStage::kVertex);
+
+    b.Append(ep->Block(), [&] { b.Return(ep); });
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    config.bgra_swizzle_locations.insert(0);
+
+    auto result = RunWithFailure(ShaderIO, config);
+    EXPECT_NE(result, Success);
+    EXPECT_EQ(result.Failure().reason, "BGRA swizzle is only supported for f32 types");
 }
 
 TEST_F(GlslWriter_ShaderIOTest, Parameters_NonStruct) {
@@ -409,8 +428,7 @@ TEST_F(GlslWriter_ShaderIOTest, ReturnValue_NonStructBuiltin) {
     auto* src = R"(
 %foo = @vertex func():vec4<f32> [@invariant, @position] {
   $B1: {
-    %2:vec4<f32> = construct 0.5f
-    ret %2
+    ret vec4<f32>(0.5f)
   }
 }
 )";
@@ -424,22 +442,21 @@ $B1: {  # root
 
 %foo_inner = func():vec4<f32> {
   $B2: {
-    %4:vec4<f32> = construct 0.5f
-    ret %4
+    ret vec4<f32>(0.5f)
   }
 }
 %foo = @vertex func():void {
   $B3: {
-    %6:vec4<f32> = call %foo_inner
-    %7:f32 = swizzle %6, x
-    %8:f32 = swizzle %6, y
-    %9:f32 = negation %8
-    %10:f32 = swizzle %6, z
-    %11:f32 = swizzle %6, w
-    %12:f32 = mul 2.0f, %10
-    %13:f32 = sub %12, %11
-    %14:vec4<f32> = construct %7, %9, %13, %11
-    store %foo_position, %14
+    %5:vec4<f32> = call %foo_inner
+    %6:f32 = swizzle %5, x
+    %7:f32 = swizzle %5, y
+    %8:f32 = negation %7
+    %9:f32 = swizzle %5, z
+    %10:f32 = swizzle %5, w
+    %11:f32 = mul 2.0f, %9
+    %12:f32 = sub %11, %10
+    %13:vec4<f32> = construct %6, %8, %12, %10
+    store %foo_position, %13
     store %foo___point_size, 1.0f
     ret
   }
@@ -465,8 +482,7 @@ TEST_F(GlslWriter_ShaderIOTest, ReturnValue_NonStructLocation) {
     auto* src = R"(
 %foo = @fragment func():vec4<f32> [@location(1)] {
   $B1: {
-    %2:vec4<f32> = construct 0.5f
-    ret %2
+    ret vec4<f32>(0.5f)
   }
 }
 )";
@@ -479,14 +495,13 @@ $B1: {  # root
 
 %foo_inner = func():vec4<f32> {
   $B2: {
-    %3:vec4<f32> = construct 0.5f
-    ret %3
+    ret vec4<f32>(0.5f)
   }
 }
 %foo = @fragment func():void {
   $B3: {
-    %5:vec4<f32> = call %foo_inner
-    store %foo_loc1_Output, %5
+    %4:vec4<f32> = call %foo_inner
+    store %foo_loc1_Output, %4
     ret
   }
 }
@@ -547,9 +562,7 @@ Outputs = struct @align(16) {
 
 %foo = @vertex func():Outputs {
   $B1: {
-    %2:vec4<f32> = construct 0.0f
-    %3:Outputs = construct %2, 0.25f, 0.75f
-    ret %3
+    ret Outputs(vec4<f32>(0.0f), 0.25f, 0.75f)
   }
 }
 )";
@@ -571,28 +584,26 @@ $B1: {  # root
 
 %foo_inner = func():Outputs {
   $B2: {
-    %6:vec4<f32> = construct 0.0f
-    %7:Outputs = construct %6, 0.25f, 0.75f
-    ret %7
+    ret Outputs(vec4<f32>(0.0f), 0.25f, 0.75f)
   }
 }
 %foo = @vertex func():void {
   $B3: {
-    %9:Outputs = call %foo_inner
-    %10:vec4<f32> = access %9, 0u
-    %11:f32 = swizzle %10, x
-    %12:f32 = swizzle %10, y
-    %13:f32 = negation %12
-    %14:f32 = swizzle %10, z
-    %15:f32 = swizzle %10, w
-    %16:f32 = mul 2.0f, %14
-    %17:f32 = sub %16, %15
-    %18:vec4<f32> = construct %11, %13, %17, %15
-    store %foo_position, %18
-    %19:f32 = access %9, 1u
-    store %foo_loc0_Output, %19
-    %20:f32 = access %9, 2u
-    store %foo_loc1_Output, %20
+    %7:Outputs = call %foo_inner
+    %8:vec4<f32> = access %7, 0u
+    %9:f32 = swizzle %8, x
+    %10:f32 = swizzle %8, y
+    %11:f32 = negation %10
+    %12:f32 = swizzle %8, z
+    %13:f32 = swizzle %8, w
+    %14:f32 = mul 2.0f, %12
+    %15:f32 = sub %14, %13
+    %16:vec4<f32> = construct %9, %11, %15, %13
+    store %foo_position, %16
+    %17:f32 = access %7, 1u
+    store %foo_loc0_Output, %17
+    %18:f32 = access %7, 2u
+    store %foo_loc1_Output, %18
     store %foo___point_size, 1.0f
     ret
   }
@@ -641,8 +652,7 @@ Output = struct @align(4) {
 
 %foo = @fragment func():Output {
   $B1: {
-    %2:Output = construct 0.25f, 0.75f
-    ret %2
+    ret Output(0.25f, 0.75f)
   }
 }
 )";
@@ -661,17 +671,16 @@ $B1: {  # root
 
 %foo_inner = func():Output {
   $B2: {
-    %4:Output = construct 0.25f, 0.75f
-    ret %4
+    ret Output(0.25f, 0.75f)
   }
 }
 %foo = @fragment func():void {
   $B3: {
-    %6:Output = call %foo_inner
-    %7:f32 = access %6, 0u
-    store %foo_loc0_idx0_Output, %7
-    %8:f32 = access %6, 1u
-    store %foo_loc0_idx1_Output, %8
+    %5:Output = call %foo_inner
+    %6:f32 = access %5, 0u
+    store %foo_loc0_idx0_Output, %6
+    %7:f32 = access %5, 1u
+    store %foo_loc0_idx1_Output, %7
     ret
   }
 }
@@ -909,8 +918,7 @@ MyStruct = struct @align(4) {
 
 %vert = @vertex func(%input:MyStruct, %ival:i32 [@location(2), @interpolate(flat)]):vec4<f32> [@invariant, @position] {
   $B1: {
-    %4:vec4<f32> = construct 0.5f
-    ret %4
+    ret vec4<f32>(0.5f)
   }
 }
 )";
@@ -930,25 +938,24 @@ $B1: {  # root
 
 %vert_inner = func(%input:MyStruct, %ival:i32):vec4<f32> {
   $B2: {
-    %8:vec4<f32> = construct 0.5f
-    ret %8
+    ret vec4<f32>(0.5f)
   }
 }
 %vert = @vertex func():void {
   $B3: {
-    %10:f32 = load %vert_loc1_Input
-    %11:MyStruct = construct %10
-    %12:i32 = load %vert_loc2_Input
-    %13:vec4<f32> = call %vert_inner, %11, %12
-    %14:f32 = swizzle %13, x
-    %15:f32 = swizzle %13, y
-    %16:f32 = negation %15
-    %17:f32 = swizzle %13, z
-    %18:f32 = swizzle %13, w
-    %19:f32 = mul 2.0f, %17
-    %20:f32 = sub %19, %18
-    %21:vec4<f32> = construct %14, %16, %20, %18
-    store %vert_position, %21
+    %9:f32 = load %vert_loc1_Input
+    %10:MyStruct = construct %9
+    %11:i32 = load %vert_loc2_Input
+    %12:vec4<f32> = call %vert_inner, %10, %11
+    %13:f32 = swizzle %12, x
+    %14:f32 = swizzle %12, y
+    %15:f32 = negation %14
+    %16:f32 = swizzle %12, z
+    %17:f32 = swizzle %12, w
+    %18:f32 = mul 2.0f, %16
+    %19:f32 = sub %18, %17
+    %20:vec4<f32> = construct %13, %15, %19, %17
+    store %vert_position, %20
     store %vert___point_size, 1.0f
     ret
   }
@@ -994,8 +1001,7 @@ MyStruct = struct @align(4) {
 
 %frag1 = @fragment func():MyStruct {
   $B1: {
-    %2:MyStruct = construct 0.5f
-    ret %2
+    ret MyStruct(0.5f)
   }
 }
 )";
@@ -1012,15 +1018,14 @@ $B1: {  # root
 
 %frag1_inner = func():MyStruct {
   $B2: {
-    %3:MyStruct = construct 0.5f
-    ret %3
+    ret MyStruct(0.5f)
   }
 }
 %frag1 = @fragment func():void {
   $B3: {
-    %5:MyStruct = call %frag1_inner
-    %6:f32 = access %5, 0u
-    store %frag1_loc1_Output, %6
+    %4:MyStruct = call %frag1_inner
+    %5:f32 = access %4, 0u
+    store %frag1_loc1_Output, %5
     ret
   }
 }
@@ -1113,8 +1118,7 @@ Outputs = struct @align(4) {
 
 %foo = @fragment func():Outputs {
   $B1: {
-    %2:Outputs = construct 0.5f, 2.0f
-    ret %2
+    ret Outputs(0.5f, 2.0f)
   }
 }
 )";
@@ -1139,22 +1143,21 @@ $B1: {  # root
 
 %foo_inner = func():Outputs {
   $B2: {
-    %5:Outputs = construct 0.5f, 2.0f
-    ret %5
+    ret Outputs(0.5f, 2.0f)
   }
 }
 %foo = @fragment func():void {
   $B3: {
-    %7:Outputs = call %foo_inner
-    %8:f32 = access %7, 0u
-    store %foo_loc0_Output, %8
-    %9:f32 = access %7, 1u
-    %10:ptr<immediate, f32, read> = access %tint_immediate_data, 0u
-    %11:f32 = load %10
-    %12:ptr<immediate, f32, read> = access %tint_immediate_data, 1u
-    %13:f32 = load %12
-    %14:f32 = clamp %9, %11, %13
-    store %foo_frag_depth, %14
+    %6:Outputs = call %foo_inner
+    %7:f32 = access %6, 0u
+    store %foo_loc0_Output, %7
+    %8:f32 = access %6, 1u
+    %9:ptr<immediate, f32, read> = access %tint_immediate_data, 0u
+    %10:f32 = load %9
+    %11:ptr<immediate, f32, read> = access %tint_immediate_data, 1u
+    %12:f32 = load %11
+    %13:f32 = clamp %8, %10, %12
+    store %foo_frag_depth, %13
     ret
   }
 }
@@ -1162,15 +1165,16 @@ $B1: {  # root
 
     core::ir::transform::PrepareImmediateDataConfig immediate_data_config;
     ASSERT_EQ(
-        immediate_data_config.AddInternalImmediateData(4, mod.symbols.New("depth_min"), ty.f32()),
+        immediate_data_config.AddInternalImmediateData(core::InternalImmediate::kFragDepthMin, 4,
+                                                       mod.symbols.New("depth_min"), ty.f32()),
         Success);
     ASSERT_EQ(
-        immediate_data_config.AddInternalImmediateData(8, mod.symbols.New("depth_max"), ty.f32()),
+        immediate_data_config.AddInternalImmediateData(core::InternalImmediate::kFragDepthMax, 8,
+                                                       mod.symbols.New("depth_max"), ty.f32()),
         Success);
     auto immediate_data = PrepareImmediateData(mod, immediate_data_config);
     EXPECT_EQ(immediate_data, Success);
     ShaderIOConfig config{immediate_data.Get()};
-    config.depth_range_offsets = {4, 8};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());
@@ -1193,8 +1197,7 @@ TEST_F(GlslWriter_ShaderIOTest, BGRASwizzleSingleValue) {
     auto* src = R"(
 %vert = @vertex func(%val:vec4<f32> [@location(0)]):vec4<f32> [@invariant, @position] {
   $B1: {
-    %3:vec4<f32> = construct 0.5f
-    ret %3
+    ret vec4<f32>(0.5f)
   }
 }
 )";
@@ -1209,24 +1212,23 @@ $B1: {  # root
 
 %vert_inner = func(%val:vec4<f32>):vec4<f32> {
   $B2: {
-    %6:vec4<f32> = construct 0.5f
-    ret %6
+    ret vec4<f32>(0.5f)
   }
 }
 %vert = @vertex func():void {
   $B3: {
-    %8:vec4<f32> = load %vert_loc0_Input
-    %9:vec4<f32> = swizzle %8, zyxw
-    %10:vec4<f32> = call %vert_inner, %9
-    %11:f32 = swizzle %10, x
-    %12:f32 = swizzle %10, y
-    %13:f32 = negation %12
-    %14:f32 = swizzle %10, z
-    %15:f32 = swizzle %10, w
-    %16:f32 = mul 2.0f, %14
-    %17:f32 = sub %16, %15
-    %18:vec4<f32> = construct %11, %13, %17, %15
-    store %vert_position, %18
+    %7:vec4<f32> = load %vert_loc0_Input
+    %8:vec4<f32> = swizzle %7, zyxw
+    %9:vec4<f32> = call %vert_inner, %8
+    %10:f32 = swizzle %9, x
+    %11:f32 = swizzle %9, y
+    %12:f32 = negation %11
+    %13:f32 = swizzle %9, z
+    %14:f32 = swizzle %9, w
+    %15:f32 = mul 2.0f, %13
+    %16:f32 = sub %15, %14
+    %17:vec4<f32> = construct %10, %12, %16, %14
+    store %vert_position, %17
     store %vert___point_size, 1.0f
     ret
   }
@@ -1278,8 +1280,7 @@ TEST_F(GlslWriter_ShaderIOTest, BGRASwizzleMultipleValueMixedTypes) {
     auto* src = R"(
 %vert = @vertex func(%val1:f32 [@location(5)], %val2:vec2<f32> [@location(0)], %sentinel:vec4<f32> [@location(4)], %val3:vec3<f32> [@location(3)], %val4:vec4<f32> [@location(7)]):vec4<f32> [@invariant, @position] {
   $B1: {
-    %7:vec4<f32> = construct 0.5f
-    ret %7
+    ret vec4<f32>(0.5f)
   }
 }
 )";
@@ -1298,31 +1299,30 @@ $B1: {  # root
 
 %vert_inner = func(%val1:f32, %val2:vec2<f32>, %sentinel:vec4<f32>, %val3:vec3<f32>, %val4:vec4<f32>):vec4<f32> {
   $B2: {
-    %14:vec4<f32> = construct 0.5f
-    ret %14
+    ret vec4<f32>(0.5f)
   }
 }
 %vert = @vertex func():void {
   $B3: {
-    %16:vec4<f32> = load %vert_loc5_Input
-    %17:f32 = swizzle %16, z
-    %18:vec4<f32> = load %vert_loc0_Input
-    %19:vec2<f32> = swizzle %18, zy
-    %20:vec4<f32> = load %vert_loc4_Input
-    %21:vec4<f32> = load %vert_loc3_Input
-    %22:vec3<f32> = swizzle %21, zyx
-    %23:vec4<f32> = load %vert_loc7_Input
-    %24:vec4<f32> = swizzle %23, zyxw
-    %25:vec4<f32> = call %vert_inner, %17, %19, %20, %22, %24
-    %26:f32 = swizzle %25, x
-    %27:f32 = swizzle %25, y
-    %28:f32 = negation %27
-    %29:f32 = swizzle %25, z
-    %30:f32 = swizzle %25, w
-    %31:f32 = mul 2.0f, %29
-    %32:f32 = sub %31, %30
-    %33:vec4<f32> = construct %26, %28, %32, %30
-    store %vert_position, %33
+    %15:vec4<f32> = load %vert_loc5_Input
+    %16:f32 = swizzle %15, z
+    %17:vec4<f32> = load %vert_loc0_Input
+    %18:vec2<f32> = swizzle %17, zy
+    %19:vec4<f32> = load %vert_loc4_Input
+    %20:vec4<f32> = load %vert_loc3_Input
+    %21:vec3<f32> = swizzle %20, zyx
+    %22:vec4<f32> = load %vert_loc7_Input
+    %23:vec4<f32> = swizzle %22, zyxw
+    %24:vec4<f32> = call %vert_inner, %16, %18, %19, %21, %23
+    %25:f32 = swizzle %24, x
+    %26:f32 = swizzle %24, y
+    %27:f32 = negation %26
+    %28:f32 = swizzle %24, z
+    %29:f32 = swizzle %24, w
+    %30:f32 = mul 2.0f, %28
+    %31:f32 = sub %30, %29
+    %32:vec4<f32> = construct %25, %27, %31, %29
+    store %vert_position, %32
     store %vert___point_size, 1.0f
     ret
   }
@@ -1332,6 +1332,270 @@ $B1: {  # root
     core::ir::transform::ImmediateDataLayout immediate_data;
     ShaderIOConfig config{immediate_data};
     config.bgra_swizzle_locations = swizzled_locations;
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(GlslWriter_ShaderIOTest, WorkgroupIndex_ReuseExistingBuiltins) {
+    auto* workgroup_id = b.FunctionParam("wgid", ty.vec3u());
+    workgroup_id->SetBuiltin(core::BuiltinValue::kWorkgroupId);
+
+    auto* num_workgroups = b.FunctionParam("numwgs", ty.vec3u());
+    num_workgroups->SetBuiltin(core::BuiltinValue::kNumWorkgroups);
+
+    auto* workgroup_index = b.FunctionParam("wgindex", ty.u32());
+    workgroup_index->SetBuiltin(core::BuiltinValue::kWorkgroupIndex);
+
+    auto* ep = b.ComputeFunction("foo", 3_u, 2_u, 1_u);
+    ep->SetParams({workgroup_id, num_workgroups, workgroup_index});
+    b.Append(ep->Block(), [&] {
+        b.Let("x", b.Add(workgroup_index, 0_u));
+        b.Return(ep);
+    });
+
+    auto* src = R"(
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%wgid:vec3<u32> [@workgroup_id], %numwgs:vec3<u32> [@num_workgroups], %wgindex:u32 [@workgroup_index]):void {
+  $B1: {
+    %5:u32 = add %wgindex, 0u
+    %x:u32 = let %5
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %foo_workgroup_id:ptr<__in, vec3<u32>, read> = var undef @builtin(workgroup_id)
+  %foo_num_workgroups:ptr<__in, vec3<u32>, read> = var undef @builtin(num_workgroups)
+}
+
+%foo_inner = func(%wgid:vec3<u32>, %numwgs:vec3<u32>, %wgindex:u32):void {
+  $B2: {
+    %7:u32 = add %wgindex, 0u
+    %x:u32 = let %7
+    ret
+  }
+}
+%foo = @compute @workgroup_size(3u, 2u, 1u) func():void {
+  $B3: {
+    %10:vec3<u32> = load %foo_workgroup_id
+    %11:vec3<u32> = load %foo_num_workgroups
+    %12:vec3<u32> = load %foo_workgroup_id
+    %13:vec3<u32> = load %foo_num_workgroups
+    %14:u32 = access %13, 0u
+    %15:u32 = access %13, 1u
+    %16:u32 = mul %14, %15
+    %17:u32 = access %12, 2u
+    %18:u32 = mul %17, %16
+    %19:u32 = access %12, 1u
+    %20:u32 = mul %19, %14
+    %21:u32 = access %12, 0u
+    %22:u32 = add %21, %20
+    %23:u32 = add %22, %18
+    %24:void = call %foo_inner, %10, %11, %23
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(GlslWriter_ShaderIOTest, WorkgroupIndex_AddMissingBuiltins) {
+    auto* workgroup_index = b.FunctionParam("wgindex", ty.u32());
+    workgroup_index->SetBuiltin(core::BuiltinValue::kWorkgroupIndex);
+
+    auto* ep = b.ComputeFunction("foo", 3_u, 2_u, 1_u);
+    ep->SetParams({workgroup_index});
+    b.Append(ep->Block(), [&] {
+        b.Let("x", b.Add(workgroup_index, 0_u));
+        b.Return(ep);
+    });
+
+    auto* src = R"(
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%wgindex:u32 [@workgroup_index]):void {
+  $B1: {
+    %3:u32 = add %wgindex, 0u
+    %x:u32 = let %3
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %foo_workgroup_id:ptr<__in, vec3<u32>, read> = var undef @builtin(workgroup_id)
+  %foo_num_workgroups:ptr<__in, vec3<u32>, read> = var undef @builtin(num_workgroups)
+}
+
+%foo_inner = func(%wgindex:u32):void {
+  $B2: {
+    %5:u32 = add %wgindex, 0u
+    %x:u32 = let %5
+    ret
+  }
+}
+%foo = @compute @workgroup_size(3u, 2u, 1u) func():void {
+  $B3: {
+    %8:vec3<u32> = load %foo_workgroup_id
+    %9:vec3<u32> = load %foo_num_workgroups
+    %10:u32 = access %9, 0u
+    %11:u32 = access %9, 1u
+    %12:u32 = mul %10, %11
+    %13:u32 = access %8, 2u
+    %14:u32 = mul %13, %12
+    %15:u32 = access %8, 1u
+    %16:u32 = mul %15, %10
+    %17:u32 = access %8, 0u
+    %18:u32 = add %17, %16
+    %19:u32 = add %18, %14
+    %20:void = call %foo_inner, %19
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(GlslWriter_ShaderIOTest, GlobalInvocationIndex_ReuseExistingBuiltins) {
+    auto* num_workgroups = b.FunctionParam("numwgs", ty.vec3u());
+    num_workgroups->SetBuiltin(core::BuiltinValue::kNumWorkgroups);
+
+    auto* global_index = b.FunctionParam("gindex", ty.u32());
+    global_index->SetBuiltin(core::BuiltinValue::kGlobalInvocationIndex);
+
+    auto* ep = b.ComputeFunction("foo", 3_u, 2_u, 1_u);
+    ep->SetParams({num_workgroups, global_index});
+    b.Append(ep->Block(), [&] {
+        b.Let("x", b.Add(global_index, 0_u));
+        b.Return(ep);
+    });
+
+    auto* src = R"(
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%numwgs:vec3<u32> [@num_workgroups], %gindex:u32 [@global_invocation_index]):void {
+  $B1: {
+    %4:u32 = add %gindex, 0u
+    %x:u32 = let %4
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %foo_num_workgroups:ptr<__in, vec3<u32>, read> = var undef @builtin(num_workgroups)
+  %foo_global_invocation_id:ptr<__in, vec3<u32>, read> = var undef @builtin(global_invocation_id)
+}
+
+%foo_inner = func(%numwgs:vec3<u32>, %gindex:u32):void {
+  $B2: {
+    %6:u32 = add %gindex, 0u
+    %x:u32 = let %6
+    ret
+  }
+}
+%foo = @compute @workgroup_size(3u, 2u, 1u) func():void {
+  $B3: {
+    %9:vec3<u32> = load %foo_num_workgroups
+    %10:vec3<u32> = load %foo_num_workgroups
+    %11:vec3<u32> = load %foo_global_invocation_id
+    %12:u32 = access %11, 0u
+    %13:u32 = access %11, 1u
+    %14:u32 = access %11, 2u
+    %15:u32 = access %10, 0u
+    %16:u32 = access %10, 1u
+    %17:u32 = mul %15, 3u
+    %18:u32 = mul %16, 2u
+    %19:u32 = mul %17, %18
+    %20:u32 = mul %14, %19
+    %21:u32 = mul %13, %17
+    %22:u32 = add %12, %21
+    %23:u32 = add %22, %20
+    %24:void = call %foo_inner, %9, %23
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
+    Run(ShaderIO, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(GlslWriter_ShaderIOTest, GlobalInvocationIndex_AddMissingBuiltins) {
+    auto* global_index = b.FunctionParam("gindex", ty.u32());
+    global_index->SetBuiltin(core::BuiltinValue::kGlobalInvocationIndex);
+
+    auto* ep = b.ComputeFunction("foo", 3_u, 2_u, 1_u);
+    ep->SetParams({global_index});
+    b.Append(ep->Block(), [&] {
+        b.Let("x", b.Add(global_index, 0_u));
+        b.Return(ep);
+    });
+
+    auto* src = R"(
+%foo = @compute @workgroup_size(3u, 2u, 1u) func(%gindex:u32 [@global_invocation_index]):void {
+  $B1: {
+    %3:u32 = add %gindex, 0u
+    %x:u32 = let %3
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %foo_num_workgroups:ptr<__in, vec3<u32>, read> = var undef @builtin(num_workgroups)
+  %foo_global_invocation_id:ptr<__in, vec3<u32>, read> = var undef @builtin(global_invocation_id)
+}
+
+%foo_inner = func(%gindex:u32):void {
+  $B2: {
+    %5:u32 = add %gindex, 0u
+    %x:u32 = let %5
+    ret
+  }
+}
+%foo = @compute @workgroup_size(3u, 2u, 1u) func():void {
+  $B3: {
+    %8:vec3<u32> = load %foo_num_workgroups
+    %9:vec3<u32> = load %foo_global_invocation_id
+    %10:u32 = access %9, 0u
+    %11:u32 = access %9, 1u
+    %12:u32 = access %9, 2u
+    %13:u32 = access %8, 0u
+    %14:u32 = access %8, 1u
+    %15:u32 = mul %13, 3u
+    %16:u32 = mul %14, 2u
+    %17:u32 = mul %15, %16
+    %18:u32 = mul %12, %17
+    %19:u32 = mul %11, %15
+    %20:u32 = add %10, %19
+    %21:u32 = add %20, %18
+    %22:void = call %foo_inner, %21
+    ret
+  }
+}
+)";
+
+    core::ir::transform::ImmediateDataLayout immediate_data;
+    ShaderIOConfig config{immediate_data};
     Run(ShaderIO, config);
 
     EXPECT_EQ(expect, str());

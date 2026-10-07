@@ -25,27 +25,27 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/vulkan/SwapChainVk.h"
+#include "src/dawn/native/vulkan/SwapChainVk.h"
 
 #include <algorithm>
 #include <limits>
 #include <utility>
 
-#include "dawn/common/Compiler.h"
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/Instance.h"
-#include "dawn/native/Surface.h"
-#include "dawn/native/vulkan/BackendVk.h"
-#include "dawn/native/vulkan/DeviceVk.h"
-#include "dawn/native/vulkan/FencedDeleter.h"
-#include "dawn/native/vulkan/PhysicalDeviceVk.h"
-#include "dawn/native/vulkan/QueueVk.h"
-#include "dawn/native/vulkan/TextureVk.h"
-#include "dawn/native/vulkan/VulkanError.h"
+#include "src/dawn/common/Compiler.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/Instance.h"
+#include "src/dawn/native/Surface.h"
+#include "src/dawn/native/vulkan/BackendVk.h"
+#include "src/dawn/native/vulkan/DeviceVk.h"
+#include "src/dawn/native/vulkan/FencedDeleter.h"
+#include "src/dawn/native/vulkan/PhysicalDeviceVk.h"
+#include "src/dawn/native/vulkan/QueueVk.h"
+#include "src/dawn/native/vulkan/TextureVk.h"
+#include "src/dawn/native/vulkan/VulkanError.h"
 #include "vulkan/vulkan_core.h"
 
 #if defined(DAWN_USE_X11)
-#include "dawn/native/X11Functions.h"
+#include "src/dawn/native/X11Functions.h"
 #endif  // defined(DAWN_USE_X11)
 
 namespace dawn::native::vulkan {
@@ -194,6 +194,25 @@ MaybeError SwapChain::Initialize(SwapChainBase* previousSwapChain) {
     createInfo.clipped = VK_FALSE;
     createInfo.oldSwapchain = previousVkSwapChain;
 
+    // Create the swapchain images with VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT so they can be
+    // reinterpreted to the configuration's viewFormats. VK_KHR_swapchain_mutable_format requires
+    // the full list of formats to be provided, including the image format itself.
+    VkImageFormatListCreateInfo imageFormatListInfo;
+    std::vector<VkFormat> viewFormats;
+    if (!mConfig.wgpuViewFormats.empty()) {
+        DAWN_ASSERT(device->GetDeviceInfo().HasExt(DeviceExt::SwapchainMutableFormat));
+        createInfo.flags |= VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR;
+        viewFormats.push_back(mConfig.format);
+        for (wgpu::TextureFormat viewFormat : mConfig.wgpuViewFormats) {
+            viewFormats.push_back(VulkanImageFormat(device, viewFormat));
+        }
+        imageFormatListInfo.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+        imageFormatListInfo.pNext = nullptr;
+        imageFormatListInfo.viewFormatCount = static_cast<uint32_t>(viewFormats.size());
+        imageFormatListInfo.pViewFormats = viewFormats.data();
+        createInfo.pNext = &imageFormatListInfo;
+    }
+
     DAWN_TRY(CheckVkSuccess(
         device->fn.CreateSwapchainKHR(device->GetVkDevice(), &createInfo, nullptr, &*mSwapChain),
         "CreateSwapChain"));
@@ -271,11 +290,20 @@ ResultOrError<SwapChain::Config> SwapChain::ChooseConfig(
     VkImageUsageFlags targetUsages =
         VulkanImageUsage(GetDevice(), GetUsage(), GetDevice()->GetValidInternalFormat(GetFormat()));
     VkImageUsageFlags supportedUsages = surfaceInfo.capabilities.supportedUsageFlags;
-    if (!IsSubset(targetUsages, supportedUsages)) {
-        config.needsBlit = true;
-    } else {
+    // The swapchain images support the configuration's viewFormats only if they are created
+    // with VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT, which requires VK_KHR_swapchain_mutable_format.
+    // Otherwise the blit texture, a regular texture, is used to support them.
+    const bool viewFormatsSupported =
+        GetViewFormats().empty() ||
+        ToBackend(GetDevice())->GetDeviceInfo().HasExt(DeviceExt::SwapchainMutableFormat);
+    if (IsSubset(targetUsages, supportedUsages) && viewFormatsSupported) {
         config.usage = targetUsages;
         config.wgpuUsage = GetUsage();
+        // The swapchain will be created with VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR so the
+        // images can be reinterpreted to these formats.
+        config.wgpuViewFormats = GetViewFormats();
+    } else {
+        config.needsBlit = true;
     }
 
     // Only support BGRA8Unorm (and RGBA8Unorm on android) with SRGB color space for now.
@@ -291,37 +319,38 @@ ResultOrError<SwapChain::Config> SwapChain::ChooseConfig(
         }
     }
     if (!formatIsSupported) {
-        return DAWN_INTERNAL_ERROR(absl::StrFormat(
+        return DAWN_UNRECOVERABLE_ERROR(absl::StrFormat(
             "Vulkan SwapChain must support %s with sRGB colorspace.", config.wgpuFormat));
     }
 
-    // Only the identity transform with opaque alpha is supported for now.
+    // Only the identity transform is supported for now.
     DAWN_INVALID_IF(
         (surfaceInfo.capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) == 0,
         "Vulkan SwapChain must support the identity transform.");
 
     config.transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 
-    config.alphaMode = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-#if !DAWN_PLATFORM_IS(ANDROID)
-    DAWN_INVALID_IF(
-        (surfaceInfo.capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) == 0,
-        "Vulkan SwapChain must support opaque alpha.");
-#else
-    // TODO(dawn:286): investigate composite alpha for WebGPU native
-    VkCompositeAlphaFlagBitsKHR compositeAlphaFlags[4] = {
-        VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-        VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
-        VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
-        VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
-    };
-    for (uint32_t i = 0; i < 4; i++) {
-        if (surfaceInfo.capabilities.supportedCompositeAlpha & compositeAlphaFlags[i]) {
-            config.alphaMode = compositeAlphaFlags[i];
+    // Choose the Vulkan alpha mode by directly converting from the WebGPU enum. PhysicalDeviceVk
+    // only reports the alpha modes the surface supports, Surface.cpp resolves Auto and validates
+    // the rest, so the mode asked for here is always available.
+    switch (GetAlphaMode()) {
+        case wgpu::CompositeAlphaMode::Opaque:
+            config.alphaMode = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
             break;
-        }
+        case wgpu::CompositeAlphaMode::Premultiplied:
+            config.alphaMode = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+            break;
+        case wgpu::CompositeAlphaMode::Unpremultiplied:
+            config.alphaMode = VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR;
+            break;
+        case wgpu::CompositeAlphaMode::Inherit:
+            config.alphaMode = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+            break;
+        case wgpu::CompositeAlphaMode::Auto:
+        default:
+            DAWN_UNREACHABLE();
     }
-#endif  // #if !DAWN_PLATFORM_IS(ANDROID)
+    DAWN_CHECK((surfaceInfo.capabilities.supportedCompositeAlpha & config.alphaMode) != 0);
 
     // Choose the number of images for the swapchain= and clamp it to the min and max from the
     // surface capabilities. maxImageCount = 0 means there is no limit.
@@ -367,7 +396,7 @@ ResultOrError<SwapChain::Config> SwapChain::ChooseConfig(
         // TODO(crbug.com/dawn/269): If the swapchain image doesn't support TRANSFER_DST
         // then we'll need to have a second fallback that uses a blit shader :(
         if ((supportedUsages & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0) {
-            return DAWN_INTERNAL_ERROR(
+            return DAWN_UNRECOVERABLE_ERROR(
                 "SwapChain cannot fallback to a blit because of a missing "
                 "VK_IMAGE_USAGE_TRANSFER_DST_BIT");
         }
@@ -501,7 +530,13 @@ ResultOrError<SwapChainTextureInfo> SwapChain::GetCurrentTextureInternal(bool is
         case VK_SUBOPTIMAL_KHR:
             swapChainTextureInfo.status = wgpu::SurfaceGetCurrentTextureStatus::SuccessSuboptimal;
             break;
-
+        // The infinite timeout above makes VK_TIMEOUT and VK_NOT_READY spec-illegal here, but
+        // some Android drivers (Adreno, Mali) return them anyway when the compositor has stopped
+        // releasing swapchain buffers (backgrounding, screen-off, system UI transitions). A
+        // recreated swapchain gets a fresh set of buffers, so treat this like OUT_OF_DATE instead
+        // of letting it escalate to device loss.
+        case VK_TIMEOUT:
+        case VK_NOT_READY:
         case VK_ERROR_OUT_OF_DATE_KHR: {
             swapChainTextureInfo.status = wgpu::SurfaceGetCurrentTextureStatus::Outdated;
             // Prevent infinite recursive calls to GetCurrentTextureViewInternal when the
@@ -544,12 +579,13 @@ ResultOrError<SwapChainTextureInfo> SwapChain::GetCurrentTextureInternal(bool is
     }
     lastImage.lastAcquireDoneFence = std::move(acquireFence);
 
-    // Wait on the previous fence and destroy it.
+    // Wrap the swapchain texture.
     TextureDescriptor textureDesc;
     textureDesc.size.width = mConfig.extent.width;
     textureDesc.size.height = mConfig.extent.height;
     textureDesc.format = mConfig.wgpuFormat;
     textureDesc.usage = mConfig.wgpuUsage;
+    textureDesc.viewFormats = mConfig.wgpuViewFormats;
 
     mTexture = SwapChainTexture::Create(device, Unpack(&textureDesc), lastImage.image);
 
@@ -559,8 +595,9 @@ ResultOrError<SwapChainTextureInfo> SwapChain::GetCurrentTextureInternal(bool is
         return swapChainTextureInfo;
     }
 
-    // The blit texture always perfectly matches what the user requested for the swapchain.
-    // We need to add the Vulkan TRANSFER_SRC flag for the vkCmdBlitImage call.
+    // The blit texture always perfectly matches what the user requested for the swapchain,
+    // including the viewFormats which GetSwapChainBaseTextureDescriptor() carries over. We need
+    // to add the Vulkan TRANSFER_SRC flag for the vkCmdBlitImage call.
     TextureDescriptor desc = GetSwapChainBaseTextureDescriptor(this);
     DAWN_TRY_ASSIGN(mBlitTexture, InternalTexture::Create(device, Unpack(&desc),
                                                           VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
@@ -667,7 +704,7 @@ ResultOrError<VkSurfaceKHR> CreateVulkanSurface(InstanceBase* instance,
 
 #if defined(DAWN_USE_WAYLAND)
         case Surface::Type::WaylandSurface: {
-            if (info.HasExt(InstanceExt::XlibSurface)) {
+            if (info.HasExt(InstanceExt::WaylandSurface)) {
                 VkWaylandSurfaceCreateInfoKHR createInfo;
                 createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
                 createInfo.pNext = nullptr;
@@ -693,7 +730,7 @@ ResultOrError<VkSurfaceKHR> CreateVulkanSurface(InstanceBase* instance,
                 createInfo.pNext = nullptr;
                 createInfo.flags = 0;
                 createInfo.dpy = static_cast<Display*>(surface->GetXDisplay());
-                createInfo.window = surface->GetXWindow();
+                createInfo.window = checked_cast<uint32_t>(surface->GetXWindow());
 
                 VkSurfaceKHR vkSurface = VK_NULL_HANDLE;
                 DAWN_TRY(CheckVkSuccess(
@@ -716,7 +753,7 @@ ResultOrError<VkSurfaceKHR> CreateVulkanSurface(InstanceBase* instance,
                 // The XCB connection lives as long as the X11 display.
                 createInfo.connection =
                     x11->xGetXCBConnection(static_cast<Display*>(surface->GetXDisplay()));
-                createInfo.window = surface->GetXWindow();
+                createInfo.window = checked_cast<uint32_t>(surface->GetXWindow());
 
                 VkSurfaceKHR vkSurface = VK_NULL_HANDLE;
                 DAWN_TRY(CheckVkSuccess(
@@ -732,6 +769,8 @@ ResultOrError<VkSurfaceKHR> CreateVulkanSurface(InstanceBase* instance,
             break;
     }
 
+    // TODO(536639352): This will probably require special attention as we split the error types
+    // apart. Figure out if this should be Internal or Validation, or Unknown.
     return DAWN_VALIDATION_ERROR("Unsupported surface type (%s) for Vulkan.", surface->GetType());
 }
 

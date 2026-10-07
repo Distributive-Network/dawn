@@ -31,14 +31,15 @@
 #include <memory>
 #include <vector>
 
-#include "dawn/common/MutexProtected.h"
-#include "dawn/common/SerialQueue.h"
-#include "dawn/native/d3d/DeviceD3D.h"
-#include "dawn/native/d3d12/CommandRecordingContext.h"
-#include "dawn/native/d3d12/D3D12Info.h"
-#include "dawn/native/d3d12/Forward.h"
-#include "dawn/native/d3d12/ResourceAllocatorManagerD3D12.h"
-#include "dawn/native/d3d12/TextureD3D12.h"
+#include "src/dawn/common/MutexProtected.h"
+#include "src/dawn/common/SerialQueue.h"
+#include "src/dawn/native/d3d/DeviceD3D.h"
+#include "src/dawn/native/d3d12/CommandRecordingContext.h"
+#include "src/dawn/native/d3d12/D3D12Info.h"
+#include "src/dawn/native/d3d12/Forward.h"
+#include "src/dawn/native/d3d12/PlatformFunctionsD3D12.h"
+#include "src/dawn/native/d3d12/ResourceAllocatorManagerD3D12.h"
+#include "src/dawn/native/d3d12/TextureD3D12.h"
 
 namespace dawn::native::d3d12 {
 
@@ -53,6 +54,15 @@ class StagingDescriptorAllocator;
         HRESULT succeeded = hr;            \
         DAWN_ASSERT(SUCCEEDED(succeeded)); \
     } while (0)
+
+struct CommandSignature {
+    ComPtr<ID3D12CommandSignature> signature = nullptr;
+    // The ByteStride that the signature was created with.
+    uint32_t byteStride = 0;
+
+    explicit operator bool() const;
+    bool operator==(const CommandSignature& other) const;
+};
 
 // Definition of backend types
 class Device final : public d3d::Device {
@@ -75,9 +85,13 @@ class Device final : public d3d::Device {
     ComPtr<ID3D11On12Device> GetOrCreateD3D11On12Device();
     ComPtr<ID3D12CommandQueue> GetD3D12CommandQueue() const;
 
-    ComPtr<ID3D12CommandSignature> GetDispatchIndirectSignature() const;
-    ComPtr<ID3D12CommandSignature> GetDrawIndirectSignature() const;
-    ComPtr<ID3D12CommandSignature> GetDrawIndexedIndirectSignature() const;
+    ResultOrError<CommandSignature> CreateCommandSignature(
+        const D3D12_COMMAND_SIGNATURE_DESC& desc,
+        ID3D12RootSignature* rootSignature) const;
+
+    const CommandSignature& GetDispatchIndirectSignature() const;
+    const CommandSignature& GetDrawIndirectSignature() const;
+    const CommandSignature& GetDrawIndexedIndirectSignature() const;
 
     MutexProtected<ResidencyManager>& GetResidencyManager() const;
 
@@ -119,10 +133,13 @@ class Device final : public d3d::Device {
 
     void DeallocateMemory(ResourceHeapAllocation& allocation);
 
-    MutexProtected<ShaderVisibleDescriptorAllocator>& GetViewShaderVisibleDescriptorAllocator()
-        const;
-    MutexProtected<ShaderVisibleDescriptorAllocator>& GetSamplerShaderVisibleDescriptorAllocator()
-        const;
+    // Returns the shader-visible view (SRV) allocator. Not MutexProtected as it is only accessed by
+    // a single thread, during command recording.
+    ShaderVisibleDescriptorAllocator* GetViewShaderVisibleDescriptorAllocator() const;
+
+    // Returns the shader-visible view (SRV) allocator. Not MutexProtected as it is only accessed by
+    // a single thread, during command recording.
+    ShaderVisibleDescriptorAllocator* GetSamplerShaderVisibleDescriptorAllocator() const;
 
     // Returns nullptr when descriptor count is zero.
     MutexProtected<StagingDescriptorAllocator>* GetViewStagingDescriptorAllocator(
@@ -160,6 +177,8 @@ class Device final : public d3d::Device {
         const RenderPipelineBase* renderPipelineBase) const override;
 
     uint64_t GetBufferCopyOffsetAlignmentForDepthStencil() const override;
+
+    AllocatorMemoryInfo GetAllocatorMemoryInfo() const override;
 
     // Dawn APIs
     void SetLabelImpl() override;
@@ -213,11 +232,11 @@ class Device final : public d3d::Device {
     void InitializeRenderPipelineAsyncImpl(Ref<CreateRenderPipelineAsyncEvent> event) override;
 
     ResultOrError<Ref<SharedBufferMemoryBase>> ImportSharedBufferMemoryImpl(
-        const SharedBufferMemoryDescriptor* descriptor) override;
+        UnpackedPtr<SharedBufferMemoryDescriptor> unpacked) override;
     ResultOrError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
-        const SharedTextureMemoryDescriptor* descriptor) override;
+        UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) override;
     ResultOrError<Ref<SharedFenceBase>> ImportSharedFenceImpl(
-        const SharedFenceDescriptor* descriptor) override;
+        UnpackedPtr<SharedFenceDescriptor> unpacked) override;
 
     void DestroyImpl(DestroyReason reason) override;
 
@@ -238,9 +257,9 @@ class Device final : public d3d::Device {
     // 11on12 device corresponding to queue's mCommandQueue.
     ComPtr<ID3D11On12Device> mD3d11On12Device;
 
-    ComPtr<ID3D12CommandSignature> mDispatchIndirectSignature;
-    ComPtr<ID3D12CommandSignature> mDrawIndirectSignature;
-    ComPtr<ID3D12CommandSignature> mDrawIndexedIndirectSignature;
+    CommandSignature mDispatchIndirectSignature;
+    CommandSignature mDrawIndirectSignature;
+    CommandSignature mDrawIndexedIndirectSignature;
 
     MutexProtected<SerialQueue<ExecutionSerial, ComPtr<IUnknown>>> mUsedComObjectRefs;
 
@@ -272,11 +291,9 @@ class Device final : public d3d::Device {
 
     std::unique_ptr<MutexProtected<StagingDescriptorAllocator>> mDepthStencilViewAllocator;
 
-    std::unique_ptr<MutexProtected<ShaderVisibleDescriptorAllocator>>
-        mViewShaderVisibleDescriptorAllocator;
+    std::unique_ptr<ShaderVisibleDescriptorAllocator> mViewShaderVisibleDescriptorAllocator;
 
-    std::unique_ptr<MutexProtected<ShaderVisibleDescriptorAllocator>>
-        mSamplerShaderVisibleDescriptorAllocator;
+    std::unique_ptr<ShaderVisibleDescriptorAllocator> mSamplerShaderVisibleDescriptorAllocator;
 
     // Sampler cache needs to be destroyed before the CPU sampler allocator to ensure the final
     // release is called.

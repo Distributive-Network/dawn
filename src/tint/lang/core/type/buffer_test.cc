@@ -25,9 +25,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "src/tint/lang/core/type/helper_test.h"
-
 #include "src/tint/lang/core/type/buffer.h"
+
+#include "src/tint/lang/core/type/helper_test.h"
 #include "src/tint/lang/core/type/manager.h"
 
 namespace tint::core::type {
@@ -41,6 +41,7 @@ TEST_F(BufferTest, Creation_Unsized) {
         auto* b = ty.unsized_buffer();
         EXPECT_EQ(b->Size(), 0u);
         EXPECT_EQ(b->FriendlyName(), "buffer");
+        EXPECT_EQ(b->IdentifierName(), "buffer");
     }
     {
         core::type::Manager mgr;
@@ -56,6 +57,7 @@ TEST_F(BufferTest, Creation_Sized) {
         auto* b = ty.buffer(16);
         EXPECT_EQ(b->Size(), 16u);
         EXPECT_EQ(b->FriendlyName(), "buffer<16>");
+        EXPECT_EQ(b->IdentifierName(), "buffer_16");
     }
     {
         core::type::Manager mgr;

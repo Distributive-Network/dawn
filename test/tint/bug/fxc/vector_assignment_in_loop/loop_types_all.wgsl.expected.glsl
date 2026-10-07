@@ -34,10 +34,8 @@ void main() {
       v3b[i] = true;
       v4b[i] = true;
       {
-        uint v = uint(i);
-        i = int((v + uint(1)));
+        i = int((uint(i) + 1u));
       }
-      continue;
     }
   }
 }

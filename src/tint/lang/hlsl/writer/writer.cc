@@ -27,27 +27,40 @@
 
 #include "src/tint/lang/hlsl/writer/writer.h"
 
+#include <optional>
+#include <utility>
+
+#include "src/tint/lang/core/ir/analysis/subgroup_matrix.h"
 #include "src/tint/lang/core/ir/core_builtin_call.h"
 #include "src/tint/lang/core/ir/function.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/referenced_module_vars.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/ir/var.h"
 #include "src/tint/lang/core/type/binding_array.h"
+#include "src/tint/lang/core/type/i8.h"
 #include "src/tint/lang/core/type/input_attachment.h"
 #include "src/tint/lang/core/type/pointer.h"
+#include "src/tint/lang/core/type/struct.h"
+#include "src/tint/lang/core/type/subgroup_matrix.h"
 #include "src/tint/lang/core/type/texel_buffer.h"
+#include "src/tint/lang/core/type/u16.h"
+#include "src/tint/lang/core/type/u8.h"
 #include "src/tint/lang/hlsl/writer/common/option_helpers.h"
 #include "src/tint/lang/hlsl/writer/printer/printer.h"
 #include "src/tint/lang/hlsl/writer/raise/raise.h"
+#include "src/tint/utils/internal_limits.h"
 
 namespace tint::hlsl::writer {
+
+namespace {
 
 Result<SuccessType> CanGenerate(const core::ir::Module& ir, const Options& options) {
     // Check for unsupported types.
     for (auto* ty : ir.Types()) {
-        if (ty->Is<core::type::SubgroupMatrix>()) {
-            return Failure("subgroup matrices are not supported by the HLSL backend");
+        if (ty->Is<core::type::SubgroupMatrix>() &&
+            options.compiler != Options::Compiler::kDXC_2021) {
+            return Failure("subgroup matrices support requires DXC with HLSL 2021");
         }
         if (ty->Is<core::type::TexelBuffer>()) {
             // TODO(crbug/382544164): Prototype texel buffer feature
@@ -59,9 +72,15 @@ Result<SuccessType> CanGenerate(const core::ir::Module& ir, const Options& optio
                     return Failure("runtime binding array not supported by the HLSL FXC backend");
                 }
             }
+            if (ty->Is<core::type::U16>()) {
+                return Failure("16-bit integers are not supported by the HLSL FXC backend");
+            }
         }
-        if (ty->Is<core::type::Buffer>()) {
-            return Failure("buffers are not supported by the HLSL backend");
+        if (auto* str = ty->As<core::type::Struct>()) {
+            auto res = str->PaddingWithinLimit();
+            if (res != Success) {
+                return res.Failure();
+            }
         }
     }
 
@@ -71,12 +90,38 @@ Result<SuccessType> CanGenerate(const core::ir::Module& ir, const Options& optio
             continue;
         }
 
-        if (call->Func() == core::BuiltinFn::kGetResource ||
-            call->Func() == core::BuiltinFn::kHasResource) {
-            return Failure("resource tables not supported by the HLSL backend");
+        if ((call->Func() == core::BuiltinFn::kGetResource ||
+             call->Func() == core::BuiltinFn::kHasResource) &&
+            options.compiler == Options::Compiler::kFXC) {
+            return Failure(
+                "resource tables not supported by the HLSL backend for compiling with FXC");
         }
         if (call->Func() == core::BuiltinFn::kPrint) {
             return Failure("print is not supported by the HLSL backend");
+        }
+        if ((call->Func() == core::BuiltinFn::kAtomicStoreMax ||
+             call->Func() == core::BuiltinFn::kAtomicStoreMin) &&
+            options.compiler == Options::Compiler::kFXC) {
+            return Failure("64-bit atomic operations are not supported by the HLSL FXC backend");
+        }
+        // TODO(crbug.com/512455144): 8-bit components need additional work to support.
+        if (call->Func() == core::BuiltinFn::kSubgroupMatrixLoad ||
+            call->Func() == core::BuiltinFn::kSubgroupMatrixStore) {
+            auto* ptr_ty = call->Args()[0]->Type()->As<core::type::Pointer>();
+            if (ptr_ty && ptr_ty->AddressSpace() == core::AddressSpace::kWorkgroup) {
+                const core::type::Type* sm_ty = nullptr;
+                if (call->Func() == core::BuiltinFn::kSubgroupMatrixLoad) {
+                    sm_ty = call->Result(0)->Type();
+                } else {
+                    sm_ty = call->Args()[2]->Type();
+                }
+                auto* elem_ty = sm_ty->As<core::type::SubgroupMatrix>()->Type();
+                if (elem_ty->IsAnyOf<core::type::I8, core::type::U8>()) {
+                    return Failure(
+                        "8-bit subgroup matrix load and store from workgroup memory are not "
+                        "supported by the HLSL backend");
+                }
+            }
         }
     }
 
@@ -164,16 +209,26 @@ Result<SuccessType> CanGenerate(const core::ir::Module& ir, const Options& optio
         TINT_CHECK_RESULT(check_io_attributes(ep_func->ReturnAttributes()));
     }
 
-    TINT_CHECK_RESULT(ValidateBindingOptions(options));
+    TINT_CHECK_RESULT(ValidateBindingOptions(ir, options));
 
     return Success;
 }
 
-Result<Output> Generate(core::ir::Module& ir, const Options& options) {
-    // Raise the core-dialect to HLSL-dialect
-    TINT_CHECK_RESULT(Raise(ir, options));
+}  // namespace
 
-    return Print(ir, options);
+Result<Output> Generate(core::ir::Module& ir, const Options& options) {
+    TINT_CHECK_RESULT(CanGenerate(ir, options));
+
+    auto subgroup_matrix_info = core::ir::analysis::GatherSubgroupMatrixInfo(ir);
+
+    // Raise the core-dialect to HLSL-dialect
+    TINT_CHECK_RESULT_UNWRAP(raise_result, Raise(ir, options));
+
+    TINT_CHECK_RESULT_UNWRAP(output, Print(ir, options));
+    output.subgroup_matrix_info = std::move(subgroup_matrix_info);
+    output.workgroup_storage_size_before_split_workgroup_atomics =
+        raise_result.workgroup_storage_size_before_split_workgroup_atomics;
+    return output;
 }
 
 }  // namespace tint::hlsl::writer

@@ -28,9 +28,9 @@
 #ifndef SRC_DAWN_NATIVE_D3D12_SHARED_TEXTURE_MEMORY_D3D12_H_
 #define SRC_DAWN_NATIVE_D3D12_SHARED_TEXTURE_MEMORY_D3D12_H_
 
-#include "dawn/native/Error.h"
-#include "dawn/native/d3d/SharedTextureMemoryD3D.h"
-#include "dawn/native/d3d12/d3d12_platform.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/d3d/SharedTextureMemoryD3D.h"
+#include "src/dawn/native/d3d12/d3d12_platform.h"
 
 namespace dawn::native {
 namespace d3d {
@@ -75,8 +75,8 @@ class SharedTextureMemory final : public d3d::SharedTextureMemory {
     ResultOrError<Ref<TextureBase>> CreateTextureImpl(
         const UnpackedPtr<TextureDescriptor>& descriptor) override;
 
-    MaybeError BeginAccessImpl(TextureBase* texture,
-                               const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
+    MaybeValError BeginAccessImpl(TextureBase* texture,
+                                  const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
 
     ResultOrError<FenceAndSignalValue> EndAccessImpl(TextureBase* texture,
                                                      ExecutionSerial lastUsageSerial,

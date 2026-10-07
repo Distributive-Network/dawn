@@ -28,7 +28,7 @@
 #include "src/tint/lang/core/ir/transform/value_to_let.h"
 
 #include "src/tint/lang/core/ir/builder.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
 using namespace tint::core::number_suffixes;  // NOLINT
@@ -135,6 +135,12 @@ struct State {
                     pending_access = Instruction::Access::kLoad;
                 }
                 inst = MaybePutInLet(inst, accesses);
+            } else if (inst->Results().Length() == 1 && inst->Result()->NumUsages() > 1) {
+                // Avoid inlining non-trivial expressions with no side effects when they are used
+                // multiple times.
+                if (!inst->IsAnyOf<Access, Let, Load, Swizzle, Var>()) {
+                    inst = PutInLet(inst->Result());
+                }
             }
         }
     }
@@ -230,7 +236,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> ValueToLet(Module& ir, const ValueToLetConfig& cfg) {
-    TINT_CHECK_RESULT(ValidateAndDumpIfNeeded(ir, "core.ValueToLet", kValueToLetCapabilities));
+    AssertValid(ir, "before core.ValueToLet");
 
     State{ir, cfg}.Process();
 

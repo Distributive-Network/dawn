@@ -14,11 +14,10 @@ void main_inner(uint tint_local_index) {
       {
         v = (v_1 + 1u);
       }
-      continue;
     }
   }
   barrier();
-  W[0u] = 42;
+  W[0] = 42;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {

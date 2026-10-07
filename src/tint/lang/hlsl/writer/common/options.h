@@ -36,10 +36,11 @@
 
 #include "src/tint/api/common/binding_point.h"
 #include "src/tint/api/common/bindings.h"
+#include "src/tint/api/common/resource_table_config.h"
 #include "src/tint/api/common/substitute_overrides_config.h"
 #include "src/tint/lang/core/enums.h"
 #include "src/tint/utils/math/hash.h"
-#include "src/tint/utils/reflection.h"
+#include "src/tint/utils/reflection/reflection.h"
 
 namespace tint::hlsl::writer {
 
@@ -47,45 +48,30 @@ namespace tint::hlsl::writer {
 /// D3D11_PS_INPUT_REGISTER_COUNT == D3D12_PS_INPUT_REGISTER_COUNT
 constexpr uint32_t kMaxInterStageLocations = 30;
 
-/// Options used to specify a mapping of binding points to indices into a UBO
-/// from which to load buffer sizes, or to load them from immediate blocks.
-/// TODO(crbug.com/366291600): Remove ubo_binding after switch to immediates.
-struct ArrayLengthFromUniformOptions {
-    /// The HLSL binding point to use to generate a uniform buffer from which to read buffer sizes.
-    BindingPoint ubo_binding;
+/// Options used to load buffer sizes from immediate data.
+struct ArrayLengthFromImmediateOptions {
     /// The offset in immediate block for buffer sizes.
     std::optional<uint32_t> buffer_sizes_offset{};
     /// The mapping from the storage buffer binding points in WGSL binding-point space to the index
-    /// into the uniform buffer where the length of the buffer is stored.
+    /// into the immediate data where the length of the buffer is stored.
     std::unordered_map<BindingPoint, uint32_t> bindpoint_to_size_index;
 
     /// Reflect the fields of this class so that it can be used by tint::ForeachField()
-    TINT_REFLECT(ArrayLengthFromUniformOptions,
-                 ubo_binding,
-                 buffer_sizes_offset,
-                 bindpoint_to_size_index);
-    TINT_REFLECT_EQUALS(ArrayLengthFromUniformOptions);
+    TINT_REFLECT(ArrayLengthFromImmediateOptions, buffer_sizes_offset, bindpoint_to_size_index);
+    bool operator==(const ArrayLengthFromImmediateOptions&) const = default;
 };
 
-/// Options used to specify a mapping of binding points to indices into a UBO
-/// from which to load buffer offsets, or to load them from immediate blocks.
-/// TODO(crbug.com/366291600): Remove ubo_binding after switch to immediates.
-struct ArrayOffsetFromUniformOptions {
-    /// The HLSL binding point to use to generate a uniform buffer from which to read buffer
-    /// offsets.
-    BindingPoint ubo_binding;
+/// Options used to load buffer offsets from immediate data.
+struct ArrayOffsetFromImmediateOptions {
     /// The offset in immediate block for buffer offsets.
     std::optional<uint32_t> buffer_offsets_offset{};
     /// The mapping from the storage buffer binding points in WGSL binding-point space to the index
-    /// into the uniform buffer where the offset into the buffer is stored.
+    /// into the immediate data where the offset into the buffer is stored.
     std::unordered_map<BindingPoint, uint32_t> bindpoint_to_offset_index;
 
     /// Reflect the fields of this class so that it can be used by tint::ForeachField()
-    TINT_REFLECT(ArrayOffsetFromUniformOptions,
-                 ubo_binding,
-                 buffer_offsets_offset,
-                 bindpoint_to_offset_index);
-    TINT_REFLECT_EQUALS(ArrayOffsetFromUniformOptions);
+    TINT_REFLECT(ArrayOffsetFromImmediateOptions, buffer_offsets_offset, bindpoint_to_offset_index);
+    bool operator==(const ArrayOffsetFromImmediateOptions&) const = default;
 };
 
 /// Data for a single pixel local attachment
@@ -99,14 +85,14 @@ struct PixelLocalAttachment {
     };
 
     // Pixel local storage attachment index
-    uint32_t index = uint32_t(-1);
+    uint32_t index = ~uint32_t{0};
 
     // Pixel local storage attachment format
     TexelFormat format = TexelFormat::kUndefined;
 
     /// Reflect the fields of this class so that it can be used by tint::ForeachField()
     TINT_REFLECT(PixelLocalAttachment, index, format);
-    TINT_REFLECT_EQUALS(PixelLocalAttachment);
+    bool operator==(const PixelLocalAttachment&) const = default;
 };
 
 /// Data used to specify pixel local mappings
@@ -119,7 +105,7 @@ struct PixelLocalOptions {
 
     /// Reflect the fields of this class so that it can be used by tint::ForeachField()
     TINT_REFLECT(PixelLocalOptions, attachments, group_index);
-    TINT_REFLECT_EQUALS(PixelLocalOptions);
+    bool operator==(const PixelLocalOptions&) const = default;
 };
 
 /// Configuration options used for generating HLSL.
@@ -127,7 +113,8 @@ struct Options {
     /// The downstream compiler to be used
     enum class Compiler : uint8_t {
         kFXC,
-        kDXC,
+        kDXC_2018,  // DXC with HLSL 2018. Will be removed when 2021 is always used.
+        kDXC_2021,  // DXC with HLSL 2021.
     };
 
     /// The set of options to work around driver issues
@@ -146,11 +133,23 @@ struct Options {
         /// Set to `true` to generate polyfill for `subgroupBroadcast(f16)`
         bool polyfill_subgroup_broadcast_f16 = false;
 
+        /// Set to `true` to decompose workgroup accesses via DecomposeAccess.
+        bool d3d12_decompose_workgroup_access = false;
+
+        /// Set to `true` to collapse redundant subgroup min and max operations
+        bool collapse_subgroup_min_max = false;
+
+        /// Set to `true` to polyfill f16 `ceil` and `floor` builtins.
+        bool polyfill_f16_ceil_floor = false;
+
         TINT_REFLECT(Workarounds,
                      scalarize_max_min_clamp,
                      polyfill_reflect_vec2_f32,
-                     polyfill_subgroup_broadcast_f16);
-        TINT_REFLECT_EQUALS(Workarounds);
+                     polyfill_subgroup_broadcast_f16,
+                     d3d12_decompose_workgroup_access,
+                     collapse_subgroup_min_max,
+                     polyfill_f16_ceil_floor);
+        bool operator==(const Workarounds&) const = default;
     };
 
     /// The set of options for things which are only available in certain shader models
@@ -168,7 +167,7 @@ struct Options {
         bool polyfill_pack_unpack_4x8 = false;
 
         TINT_REFLECT(Extensions, polyfill_dot_4x8_packed, polyfill_pack_unpack_4x8);
-        TINT_REFLECT_EQUALS(Extensions);
+        bool operator==(const Extensions&) const = default;
     };
 
     /// Constructor
@@ -217,22 +216,17 @@ struct Options {
     Extensions extensions{};
 
     /// The downstream compiler which will be used
-    Compiler compiler = Compiler::kDXC;
+    Compiler compiler = Compiler::kDXC_2021;
 
-    /// Options used to specify a mapping of binding points to indices into a UBO
-    /// from which to load buffer sizes.
-    ArrayLengthFromUniformOptions array_length_from_uniform = {};
+    /// Options used to load buffer sizes from immediate data.
+    ArrayLengthFromImmediateOptions array_length_from_immediate = {};
 
-    /// Options used to specify a mapping of binding points to indices into a UBO
-    /// from which to load buffer offsets.
-    ArrayOffsetFromUniformOptions array_offset_from_uniform = {};
+    /// Options used to load buffer offsets from immediate data.
+    ArrayOffsetFromImmediateOptions array_offset_from_immediate = {};
 
     /// Interstage locations actually used as inputs in the next stage of the pipeline.
     /// This is potentially used for truncating unused interstage outputs at current shader stage.
     std::bitset<kMaxInterStageLocations> interstage_locations;
-
-    /// The binding point to use for information passed via root constants.
-    std::optional<BindingPoint> root_constant_binding_point;
 
     /// Immediate binding point info
     std::optional<BindingPoint> immediate_binding_point;
@@ -252,8 +246,14 @@ struct Options {
     /// The binding points that will be ignored by the rebustness transform.
     std::vector<BindingPoint> ignored_by_robustness_transform;
 
+    /// Vertex shader locations that use the snorm10-10-10-2 format (which is emulated on D3D).
+    std::vector<uint32_t> snorm10_10_10_2_locations = {};
+
     /// Pixel local configuration
     PixelLocalOptions pixel_local;
+
+    /// Resource table information
+    std::optional<ResourceTableConfig> resource_table;
 
     // Configuration for substitute overrides
     SubstituteOverridesConfig substitute_overrides_config = {};
@@ -271,20 +271,41 @@ struct Options {
                  workarounds,
                  extensions,
                  compiler,
-                 array_length_from_uniform,
-                 array_offset_from_uniform,
+                 array_length_from_immediate,
+                 array_offset_from_immediate,
                  interstage_locations,
-                 root_constant_binding_point,
                  immediate_binding_point,
                  first_index_offset,
                  first_instance_offset,
                  num_workgroups_start_offset,
                  bindings,
                  ignored_by_robustness_transform,
+                 snorm10_10_10_2_locations,
                  pixel_local,
+                 resource_table,
                  substitute_overrides_config);
-    TINT_REFLECT_EQUALS(Options);
+    bool operator==(const Options&) const = default;
 };
+
+/// @param out the stream to write to
+/// @param compiler the compiler
+/// @returns @p out so calls can be chained
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
+auto& operator<<(STREAM& out, Options::Compiler compiler) {
+    switch (compiler) {
+        case Options::Compiler::kFXC:
+            out << "FXC";
+            break;
+        case Options::Compiler::kDXC_2018:
+            out << "DXC 2018";
+            break;
+        case Options::Compiler::kDXC_2021:
+            out << "DXC 2021";
+            break;
+    }
+    return out;
+}
 
 }  // namespace tint::hlsl::writer
 
@@ -292,7 +313,7 @@ namespace tint {
 
 /// Reflect valid value ranges for the PixelLocalAttachment::TexelFormat enum.
 TINT_REFLECT_ENUM_RANGE(hlsl::writer::PixelLocalAttachment::TexelFormat, kR32Sint, kR32Float);
-TINT_REFLECT_ENUM_RANGE(hlsl::writer::Options::Compiler, kFXC, kDXC);
+TINT_REFLECT_ENUM_RANGE(hlsl::writer::Options::Compiler, kFXC, kDXC_2021);
 
 }  // namespace tint
 

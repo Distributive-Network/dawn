@@ -25,34 +25,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "src/tint/lang/wgsl/resolver/resolver.h"
-
 #include "gmock/gmock.h"
-#include "src/tint/lang/core/type/helper_test.h"
-#include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
-#include "src/tint/lang/wgsl/ast/assignment_statement.h"
-#include "src/tint/lang/wgsl/ast/break_statement.h"
 #include "src/tint/lang/wgsl/ast/builtin_texture_helper_test.h"
-#include "src/tint/lang/wgsl/ast/call_statement.h"
-#include "src/tint/lang/wgsl/ast/continue_statement.h"
-#include "src/tint/lang/wgsl/ast/if_statement.h"
-#include "src/tint/lang/wgsl/ast/loop_statement.h"
-#include "src/tint/lang/wgsl/ast/return_statement.h"
 #include "src/tint/lang/wgsl/ast/stage_attribute.h"
-#include "src/tint/lang/wgsl/ast/switch_statement.h"
-#include "src/tint/lang/wgsl/ast/unary_op_expression.h"
-#include "src/tint/lang/wgsl/ast/variable_decl_statement.h"
+#include "src/tint/lang/wgsl/resolver/resolver.h"
 #include "src/tint/lang/wgsl/resolver/resolver_helper_test.h"
 #include "src/tint/lang/wgsl/sem/call.h"
-#include "src/tint/lang/wgsl/sem/function.h"
 #include "src/tint/lang/wgsl/sem/member_accessor_expression.h"
 #include "src/tint/lang/wgsl/sem/statement.h"
 #include "src/tint/lang/wgsl/sem/variable.h"
-#include "src/tint/utils/text/string.h"
 #include "src/tint/utils/text/string_stream.h"
 
-using ::testing::ElementsAre;
 using ::testing::HasSubstr;
 
 namespace tint::resolver {
@@ -70,7 +54,7 @@ struct BuiltinData {
     wgsl::BuiltinFn builtin;
 };
 
-inline std::ostream& operator<<(std::ostream& out, BuiltinData data) {
+[[maybe_unused]] inline std::ostream& operator<<(std::ostream& out, BuiltinData data) {
     out << data.name;
     return out;
 }
@@ -275,6 +259,26 @@ TEST_F(ResolverBuiltinArrayTest, ArrayLength_Vector) {
     EXPECT_TRUE(TypeOf(call)->Is<core::type::U32>());
 }
 
+TEST_F(ResolverBuiltinArrayTest, ArrayLength_Buffer_Workgroup) {
+    EXPECT_SUCCESS(R"(
+fn bar(p : ptr<workgroup, buffer>) -> u32 {
+  return arrayLength(bufferView<array<u32>>(p, 0));
+}
+fn foo(p : ptr<workgroup, buffer<128>>) -> u32 {
+  return arrayLength(bufferArrayView<array<u32>>(p, 0, 128));
+})");
+}
+
+TEST_F(ResolverBuiltinArrayTest, ArrayLength_Buffer_Uniform) {
+    EXPECT_SUCCESS(R"(
+fn bar(p : ptr<uniform, buffer>) -> u32 {
+  return arrayLength(bufferView<array<u32>>(p, 0));
+}
+fn foo(p : ptr<uniform, buffer<128>>) -> u32 {
+  return arrayLength(bufferArrayView<array<u32>>(p, 0, 128));
+})");
+}
+
 TEST_F(ResolverBuiltinArrayTest, ArrayLength_Error_ArraySized) {
     GlobalVar("arr", ty.array<i32, 4>(), core::AddressSpace::kPrivate);
     auto* call = Call("arrayLength", AddressOf("arr"));
@@ -285,11 +289,14 @@ TEST_F(ResolverBuiltinArrayTest, ArrayLength_Error_ArraySized) {
     EXPECT_EQ(r()->error(),
               R"(error: no matching call to 'arrayLength(ptr<private, array<i32, 4>, read_write>)'
 
-2 candidate functions:
- • 'arrayLength(ptr<storage, array<T>, R>  ✗ ) -> u32' where:
-      ✗  'R' is 'read'
+3 candidate functions:
  • 'arrayLength(ptr<storage, array<T>, W>  ✗ ) -> u32' where:
       ✗  'W' is 'write' or 'read_write'
+ • 'arrayLength(ptr<workgroup, array<T>, W>  ✗ ) -> u32' where:
+      ✗  'W' is 'write' or 'read_write'
+ • 'arrayLength(ptr<AS, array<T>, R>  ✗ ) -> u32' where:
+      ✗  'AS' is 'uniform' or 'storage'
+      ✗  'R' is 'read'
 )");
 }
 
@@ -2196,7 +2203,7 @@ class ResolverBuiltinTest_TextureOperation : public ResolverTestWithParam<Textur
     ast::Type GetCoordsType(core::type::TextureDimension dim, ast::Type scalar) {
         switch (dim) {
             case core::type::TextureDimension::k1d:
-                return ty(scalar);
+                return scalar;
             case core::type::TextureDimension::k2d:
             case core::type::TextureDimension::k2dArray:
                 return ty.vec2(scalar);
@@ -2268,6 +2275,39 @@ TEST_P(ResolverBuiltinTest_SampledTextureOperation, TextureLoadSampled) {
         EXPECT_TRUE(TypeOf(expr)->As<core::type::Vector>()->Type()->Is<core::type::U32>());
     }
     EXPECT_EQ(TypeOf(expr)->As<core::type::Vector>()->Width(), 4u);
+}
+
+TEST_F(ResolverBuiltinTest, TextureBuiltinsMultisampled2DArray) {
+    Require(wgsl::LanguageFeature::kMultisampledArrayTextures);
+    GlobalVar("texture", ty.multisampled_texture(core::type::TextureDimension::k2dArray, ty.f32()),
+              Binding(0_a), Group(0_a));
+
+    auto* dimensions = Call("textureDimensions", "texture");
+    auto* numLayers = Call("textureNumLayers", "texture");
+    auto* numSamples = Call("textureNumSamples", "texture");
+    auto* load = Call("textureLoad", "texture", Call<vec2<i32>>(1_i, 2_i), 3_i, 4_i);
+
+    WrapInFunction(Decl(Let("dimensions", dimensions)),  //
+                   Decl(Let("num_layers", numLayers)), Decl(Let("num_samples", numSamples)),
+                   Decl(Let("load", load)));
+
+    EXPECT_TRUE(r()->Resolve()) << r()->error();
+
+    ASSERT_NE(TypeOf(dimensions), nullptr);
+    ASSERT_TRUE(TypeOf(dimensions)->Is<core::type::Vector>());
+    EXPECT_TRUE(TypeOf(dimensions)->As<core::type::Vector>()->Type()->Is<core::type::U32>());
+    EXPECT_EQ(TypeOf(dimensions)->As<core::type::Vector>()->Width(), 2u);
+
+    ASSERT_NE(TypeOf(numLayers), nullptr);
+    EXPECT_TRUE(TypeOf(numLayers)->Is<core::type::U32>());
+
+    ASSERT_NE(TypeOf(numSamples), nullptr);
+    EXPECT_TRUE(TypeOf(numSamples)->Is<core::type::U32>());
+
+    ASSERT_NE(TypeOf(load), nullptr);
+    ASSERT_TRUE(TypeOf(load)->Is<core::type::Vector>());
+    EXPECT_TRUE(TypeOf(load)->As<core::type::Vector>()->Type()->Is<core::type::F32>());
+    EXPECT_EQ(TypeOf(load)->As<core::type::Vector>()->Width(), 4u);
 }
 
 INSTANTIATE_TEST_SUITE_P(ResolverTest,

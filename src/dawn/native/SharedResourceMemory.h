@@ -29,14 +29,14 @@
 #define SRC_DAWN_NATIVE_SHAREDRESOURCEMEMORY_H_
 
 #include "absl/container/inlined_vector.h"
-#include "dawn/common/WeakRef.h"
-#include "dawn/common/WeakRefSupport.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/Forward.h"
-#include "dawn/native/IntegerTypes.h"
-#include "dawn/native/ObjectBase.h"
-#include "dawn/native/SharedFence.h"
-#include "dawn/native/dawn_platform.h"
+#include "src/dawn/common/WeakRef.h"
+#include "src/dawn/common/WeakRefSupport.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/Forward.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/ObjectBase.h"
+#include "src/dawn/native/SharedFence.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace dawn::native {
 
@@ -62,7 +62,7 @@ class SharedResource : public ApiObjectBase {
     virtual bool HasAccess() const = 0;
     virtual bool IsDestroyed() const = 0;
     virtual void SetInitialized(bool initialized) = 0;
-    virtual bool IsInitialized() const = 0;
+    virtual bool IsResourceInitialized() const = 0;
 
   protected:
     // The shared contents the resource was created from. May be null.
@@ -108,7 +108,7 @@ class SharedResourceMemory : public ApiObjectBase, public WeakRefSupport<SharedR
     virtual Ref<SharedResourceMemoryContents> CreateContents();
 
     // Validate that the resource was created from this SharedResourceMemory.
-    MaybeError ValidateResourceCreatedFromSelf(SharedResource* resource);
+    MaybeValError ValidateResourceCreatedFromSelf(SharedResource* resource);
 
     template <typename Resource, typename BeginAccessDescriptor>
     MaybeError BeginAccess(Resource* resource, const BeginAccessDescriptor* rawDescriptor);
@@ -124,10 +124,10 @@ class SharedResourceMemory : public ApiObjectBase, public WeakRefSupport<SharedR
     // BeginAccessImpl validates the operation is valid on the backend, and performs any
     // backend specific operations. It does NOT need to acquire begin fences; that is done in the
     // frontend in BeginAccess.
-    virtual MaybeError BeginAccessImpl(
+    virtual MaybeValError BeginAccessImpl(
         TextureBase* texture,
         const UnpackedPtr<SharedTextureMemoryBeginAccessDescriptor>& descriptor);
-    virtual MaybeError BeginAccessImpl(
+    virtual MaybeValError BeginAccessImpl(
         BufferBase* buffer,
         const UnpackedPtr<SharedBufferMemoryBeginAccessDescriptor>& descriptor);
     // EndAccessImpl validates the operation is valid on the backend, and returns the end fence.

@@ -25,6 +25,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include "src/dawn/utils/WireHelper.h"
+
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -35,16 +37,19 @@
 #include <string>
 #include <system_error>
 
-#include "dawn/common/Assert.h"
-#include "dawn/common/Log.h"
-#include "dawn/common/SystemUtils.h"
 #include "dawn/dawn_proc.h"
 #include "dawn/native/DawnNative.h"
-#include "dawn/utils/TerribleCommandBuffer.h"
-#include "dawn/utils/WireHelper.h"
 #include "dawn/wire/WireClient.h"
 #include "dawn/wire/WireServer.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/SystemUtils.h"
+#include "src/dawn/utils/TerribleCommandBuffer.h"
+#include "src/dawn/wire/InlineSharedMemoryManager.h"
+#include "src/dawn/wire/client/ClientInlineMemoryTransferService.h"
+#include "src/dawn/wire/server/ServerInlineMemoryTransferService.h"
+#include "src/utils/assert.h"
+#include "src/utils/log.h"
+#include "src/utils/numeric.h"
 
 namespace dawn::utils {
 
@@ -86,11 +91,13 @@ class WireServerTraceLayer : public dawn::wire::CommandHandler {
         mFile.write(reinterpret_cast<const char*>(&injectedErrorIndex), sizeof(injectedErrorIndex));
     }
 
-    const volatile char* HandleCommands(const volatile char* commands, size_t size) override {
+    bool HandleCommands(std::span<const volatile std::byte> commands) override {
         if (mFile.is_open()) {
-            mFile.write(const_cast<const char*>(commands), size);
+            mFile.write(
+                reinterpret_cast<const char*>(const_cast<const std::byte*>(commands.data())),
+                sign_cast(commands.size()));
         }
-        return mHandler->HandleCommands(commands, size);
+        return mHandler->HandleCommands(commands);
     }
 
   private:
@@ -109,6 +116,8 @@ class WireHelperDirect : public WireHelper {
         return wgpu::Instance(backendInstance);
     }
 
+    WGPUDevice GetBackendDevice(const wgpu::Device& device) override { return device.Get(); }
+
     void BeginWireTrace(const char* name) override {}
 
     bool FlushClient() override { return true; }
@@ -120,14 +129,25 @@ class WireHelperDirect : public WireHelper {
 
 class WireHelperProxy : public WireHelper {
   public:
-    explicit WireHelperProxy(const char* wireTraceDir, const DawnProcTable& procs) {
+    explicit WireHelperProxy(const char* wireTraceDir,
+                             const DawnProcTable& procs,
+                             bool enableSharedMemoryInWire) {
         mC2sBuf = std::make_unique<dawn::utils::TerribleCommandBuffer>();
         mS2cBuf = std::make_unique<dawn::utils::TerribleCommandBuffer>();
+
+        if (enableSharedMemoryInWire) {
+            mSharedMemoryManager = dawn::wire::CreateInlineSharedMemoryManager();
+        }
+        mClientMemoryTransferService =
+            dawn::wire::client::CreateInlineMemoryTransferService(mSharedMemoryManager);
+        mServerMemoryTransferService =
+            dawn::wire::server::CreateInlineMemoryTransferService(mSharedMemoryManager);
 
         dawn::wire::WireServerDescriptor serverDesc = {};
         serverDesc.procs = &procs;
         serverDesc.serializer = mS2cBuf.get();
         serverDesc.useSpontaneousCallbacks = true;
+        serverDesc.memoryTransferService = mServerMemoryTransferService.get();
 
         mWireServer.reset(new dawn::wire::WireServer(serverDesc));
         mC2sBuf->SetHandler(mWireServer.get());
@@ -139,6 +159,7 @@ class WireHelperProxy : public WireHelper {
 
         dawn::wire::WireClientDescriptor clientDesc = {};
         clientDesc.serializer = mC2sBuf.get();
+        clientDesc.memoryTransferService = mClientMemoryTransferService.get();
 
         mWireClient.reset(new dawn::wire::WireClient(clientDesc));
         mS2cBuf->SetHandler(mWireClient.get());
@@ -160,6 +181,11 @@ class WireHelperProxy : public WireHelper {
         return wgpu::Instance::Acquire(reserved.instance);
     }
 
+    WGPUDevice GetBackendDevice(const wgpu::Device& device) override {
+        auto handle = mWireClient->GetWireHandle(device.Get());
+        return mWireServer->GetDevice(handle.id, handle.generation);
+    }
+
     void BeginWireTrace(const char* name) override {
         if (mWireServerTraceLayer) {
             return mWireServerTraceLayer->BeginWireTrace(name);
@@ -173,6 +199,9 @@ class WireHelperProxy : public WireHelper {
     bool IsIdle() override { return mC2sBuf->Empty() && mS2cBuf->Empty(); }
 
   private:
+    std::shared_ptr<dawn::wire::InlineSharedMemoryManager> mSharedMemoryManager;
+    std::unique_ptr<dawn::wire::client::MemoryTransferService> mClientMemoryTransferService;
+    std::unique_ptr<dawn::wire::server::MemoryTransferService> mServerMemoryTransferService;
     std::unique_ptr<dawn::utils::TerribleCommandBuffer> mC2sBuf;
     std::unique_ptr<dawn::utils::TerribleCommandBuffer> mS2cBuf;
     std::unique_ptr<dawn::wire::WireServer> mWireServer;
@@ -217,9 +246,11 @@ void WireHelper::WaitUntilIdle(dawn::native::Instance* serverInstance,
 
 std::unique_ptr<WireHelper> CreateWireHelper(const DawnProcTable& procs,
                                              bool useWire,
-                                             const char* wireTraceDir) {
+                                             const char* wireTraceDir,
+                                             bool enableSharedMemoryInWire) {
     if (useWire) {
-        return std::unique_ptr<WireHelper>(new WireHelperProxy(wireTraceDir, procs));
+        return std::unique_ptr<WireHelper>(
+            new WireHelperProxy(wireTraceDir, procs, enableSharedMemoryInWire));
     } else {
         return std::unique_ptr<WireHelper>(new WireHelperDirect(procs));
     }

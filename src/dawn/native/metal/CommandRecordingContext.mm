@@ -25,13 +25,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/metal/CommandRecordingContext.h"
+#include "src/dawn/native/metal/CommandRecordingContext.h"
 
-#include "dawn/common/Assert.h"
-#include "dawn/native/Device.h"
-#include "dawn/native/metal/DeviceMTL.h"
-#include "dawn/native/metal/Forward.h"
-#include "dawn/native/metal/QueueMTL.h"
+#include "src/dawn/native/Device.h"
+#include "src/dawn/native/metal/DeviceMTL.h"
+#include "src/dawn/native/metal/Forward.h"
+#include "src/dawn/native/metal/QueueMTL.h"
+#include "src/utils/assert.h"
 
 namespace dawn::native::metal {
 
@@ -68,7 +68,7 @@ MaybeError CommandRecordingContext::PrepareNextCommandBuffer(id<MTLCommandQueue>
 
         mCommands = [queue commandBuffer];
         if (mCommands == nil) {
-            return DAWN_INTERNAL_ERROR("Failed to allocate an MTLCommandBuffer");
+            return DAWN_UNRECOVERABLE_ERROR("Failed to allocate an MTLCommandBuffer");
         }
 
         return {};
@@ -131,7 +131,7 @@ MaybeError CommandRecordingContext::EncodeSharedEventWorkaround() {
         id<MTLDevice> mtlDevice = ToBackend(mQueue->GetDevice())->GetMTLDevice();
         mSerializeWorkaround.sharedEvent.Acquire([mtlDevice newSharedEvent]);
         if (mSerializeWorkaround.sharedEvent == nil) {
-            return DAWN_INTERNAL_ERROR(
+            return DAWN_UNRECOVERABLE_ERROR(
                 "Failed to create internal MTLSharedEvent for splitting command buffers.");
         }
     }

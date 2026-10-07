@@ -37,12 +37,14 @@
 #include "src/tint/lang/core/type/i32.h"
 #include "src/tint/lang/core/type/i8.h"
 #include "src/tint/lang/core/type/matrix.h"
+#include "src/tint/lang/core/type/memory_view.h"
 #include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/core/type/reference.h"
 #include "src/tint/lang/core/type/sampler.h"
 #include "src/tint/lang/core/type/struct.h"
 #include "src/tint/lang/core/type/texel_buffer.h"
 #include "src/tint/lang/core/type/texture.h"
+#include "src/tint/lang/core/type/u16.h"
 #include "src/tint/lang/core/type/u32.h"
 #include "src/tint/lang/core/type/u64.h"
 #include "src/tint/lang/core/type/u8.h"
@@ -61,9 +63,13 @@ Type::Type(size_t hash, core::type::Flags flags) : Base(hash), flags_(flags) {
 
 Type::~Type() = default;
 
+std::string Type::IdentifierName() const {
+    return FriendlyName();
+}
+
 const Type* Type::UnwrapPtr() const {
     auto* type = this;
-    while (auto* ptr = type->As<Pointer>()) {
+    if (auto* ptr = type->As<Pointer>()) {
         type = ptr->StoreType();
     }
     return type;
@@ -83,6 +89,13 @@ const Type* Type::UnwrapPtrOrRef() const {
         return type;
     }
     return UnwrapRef();
+}
+
+const Type* Type::UnwrapMemoryView() const {
+    if (auto* mv = As<MemoryView>()) {
+        return mv->StoreType();
+    }
+    return this;
 }
 
 uint32_t Type::Size() const {
@@ -114,7 +127,7 @@ bool Type::IsFloatScalarOrVector() const {
 }
 
 bool Type::IsIntegerScalar() const {
-    return IsAnyOf<U32, I32, U64, U8, I8>();
+    return IsAnyOf<U32, I32, U64, U8, I8, U16>();
 }
 
 bool Type::IsIntegerVector() const {
@@ -126,7 +139,7 @@ bool Type::IsSignedIntegerScalar() const {
 }
 
 bool Type::IsUnsignedIntegerScalar() const {
-    return IsAnyOf<U32, U64, U8>();
+    return IsAnyOf<U32, U64, U8, U16>();
 }
 
 bool Type::IsSignedIntegerVector() const {

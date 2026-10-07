@@ -25,7 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/PhysicalDeviceGL.h"
+#include "src/dawn/native/opengl/PhysicalDeviceGL.h"
 
 #include <algorithm>
 #include <memory>
@@ -33,15 +33,16 @@
 #include <string_view>
 #include <utility>
 
-#include "dawn/common/GPUInfo.h"
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/Instance.h"
-#include "dawn/native/opengl/ContextEGL.h"
-#include "dawn/native/opengl/DeviceGL.h"
-#include "dawn/native/opengl/DisplayEGL.h"
-#include "dawn/native/opengl/SwapChainEGL.h"
-#include "dawn/native/opengl/UtilsGL.h"
 #include "dawn/platform/DawnPlatform.h"
+#include "src/dawn/common/GPUInfo.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/Instance.h"
+#include "src/dawn/native/opengl/ContextEGL.h"
+#include "src/dawn/native/opengl/DeviceGL.h"
+#include "src/dawn/native/opengl/DisplayEGL.h"
+#include "src/dawn/native/opengl/SwapChainEGL.h"
+#include "src/dawn/native/opengl/UtilsGL.h"
+#include "src/utils/compiler.h"
 
 namespace dawn::native::opengl {
 
@@ -57,13 +58,14 @@ const Vendor kVendors[] = {{"ATI", gpu_info::kVendorID_AMD},
                            {"Imagination", gpu_info::kVendorID_ImgTec},
                            {"Intel", gpu_info::kVendorID_Intel},
                            {"NVIDIA", gpu_info::kVendorID_Nvidia},
-                           {"Qualcomm", gpu_info::kVendorID_QualcommPCI}};
+                           {"Qualcomm", gpu_info::kVendorID_QualcommPCI},
+                           {"Samsung", gpu_info::kVendorID_Samsung}};
 
 uint32_t GetVendorIdFromVendors(const char* vendor) {
     uint32_t vendorId = 0;
     for (const auto& it : kVendors) {
         // Matching vendor name with vendor string
-        if (strstr(vendor, it.vendorName) != nullptr) {
+        if (DAWN_UNSAFE_TODO(strstr(vendor, it.vendorName)) != nullptr) {
             vendorId = it.vendorId;
             break;
         }
@@ -150,13 +152,16 @@ bool PhysicalDevice::SupportsExternalImages() const {
 }
 
 MaybeError PhysicalDevice::InitializeImpl() {
-    DAWN_TRY(mFunctions.Initialize(mDisplay->egl.GetProcAddress));
+    DAWN_TRY(mFunctions.Initialize(mDisplay->egl->GetProcAddress));
 
     // In some cases (like like of EGL_KHR_create_context) we don't know before this point that we
     // got a GL context that supports the required version. Check it now.
     switch (GetBackendType()) {
         case wgpu::BackendType::OpenGLES:
             DAWN_INVALID_IF(!mFunctions.IsAtLeastGLES(3, 1), "OpenGL ES 3.1 is required.");
+            DAWN_INVALID_IF(!mFunctions.IsAtLeastGLES(3, 2) &&
+                                !mFunctions.IsGLExtensionSupported("GL_EXT_color_buffer_float"),
+                            "GL_EXT_color_buffer_float is required for OpenGL ES 3.1.");
             break;
         case wgpu::BackendType::OpenGL:
             DAWN_INVALID_IF(!mFunctions.IsAtLeastGL(4, 4), "Desktop OpenGL 4.4 is required.");
@@ -251,18 +256,18 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
         EnableFeature(Feature::TextureCompressionETC2);
     }
 
-    if (mDisplay->egl.HasExt(EGLExt::DisplayTextureShareGroup)) {
+    if (mDisplay->egl->HasExt(EGLExt::DisplayTextureShareGroup)) {
         EnableFeature(dawn::native::Feature::ANGLETextureSharing);
     }
 
-    if (mDisplay->egl.HasExt(EGLExt::ImageNativeBuffer) &&
-        mDisplay->egl.HasExt(EGLExt::GetNativeClientBuffer)) {
+    if (mDisplay->egl->HasExt(EGLExt::ImageNativeBuffer) &&
+        mDisplay->egl->HasExt(EGLExt::GetNativeClientBuffer)) {
         EnableFeature(dawn::native::Feature::SharedTextureMemoryAHardwareBuffer);
     }
 
-    if (mDisplay->egl.HasExt(EGLExt::WaitSync) &&
+    if (mDisplay->egl->HasExt(EGLExt::WaitSync) &&
         mFunctions.IsGLExtensionSupported("GL_OES_EGL_sync")) {
-        if (mDisplay->egl.HasExt(EGLExt::NativeFenceSync)) {
+        if (mDisplay->egl->HasExt(EGLExt::NativeFenceSync)) {
             EnableFeature(dawn::native::Feature::SharedFenceSyncFD);
         }
         EnableFeature(dawn::native::Feature::SharedFenceEGLSync);
@@ -278,7 +283,9 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
     }
 
     // ShaderF16
-    if (mFunctions.IsGLExtensionSupported("GL_AMD_gpu_shader_half_float")) {
+    // Int16 required to support buffer_view conversions
+    if (mFunctions.IsGLExtensionSupported("GL_AMD_gpu_shader_half_float") &&
+        mFunctions.IsGLExtensionSupported("GL_AMD_gpu_shader_int16")) {
         EnableFeature(Feature::ShaderF16);
     }
 
@@ -291,6 +298,8 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
     // Unorm16TextureFormats
     if (mFunctions.IsGLExtensionSupported("GL_EXT_texture_norm16")) {
         EnableFeature(Feature::Unorm16TextureFormats);
+        EnableFeature(Feature::Unorm16Filterable);
+        EnableFeature(Feature::Unorm16FormatsForExternalTexture);
     }
 
     // Float32Blendable
@@ -301,6 +310,11 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
     // TextureComponentSwizzle
     if (SupportTextureComponentSwizzle()) {
         EnableFeature(Feature::TextureComponentSwizzle);
+    }
+
+    EnableFeature(Feature::TransientAttachments);
+    if (mFunctions.IsGLExtensionSupported("GL_EXT_multisampled_render_to_texture")) {
+        EnableFeature(Feature::MSAARenderToSingleSampled);
     }
 }
 
@@ -406,15 +420,12 @@ MaybeError PhysicalDevice::InitializeSupportedLimitsImpl(CombinedLimits* limits)
     DAWN_TRY_ASSIGN(v[1], GetIndexed(gl, GL_MAX_COMPUTE_WORK_GROUP_COUNT, 1));
     DAWN_TRY_ASSIGN(v[2], GetIndexed(gl, GL_MAX_COMPUTE_WORK_GROUP_COUNT, 2));
     limits->v1.maxComputeWorkgroupsPerDimension = std::min({v[0], v[1], v[2]});
+    limits->v1.maxImmediateSize = kMaxImmediateDataBytes;
     return {};
 }
 
 void PhysicalDevice::SetupBackendAdapterToggles(dawn::platform::Platform* platform,
-                                                TogglesState* adapterToggles) const {
-    adapterToggles->Default(
-        Toggle::DecomposeUniformBuffers,
-        platform->IsFeatureEnabled(platform::Features::kWebGPUDecomposeUniformBuffers));
-}
+                                                TogglesState* adapterToggles) const {}
 
 void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platform,
                                                TogglesState* deviceToggles) const {
@@ -437,11 +448,8 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
     bool supportsStencilWriteTexture =
         gl.GetVersion().IsDesktop() || gl.IsGLExtensionSupported("GL_OES_texture_stencil8");
 
-    bool isFloat32Renderable = gl.GetVersion().IsDesktop() || gl.IsAtLeastGLES(3, 2) ||
-                               gl.IsGLExtensionSupported("GL_EXT_color_buffer_float");
-    bool isFloat16Renderable =
-        isFloat32Renderable || gl.IsGLExtensionSupported("GL_EXT_color_buffer_half_float");
-    bool isRG11B10UfloatRenderable = isFloat32Renderable;
+    DAWN_CHECK(gl.GetVersion().IsDesktop() || gl.IsAtLeastGLES(3, 2) ||
+               gl.IsGLExtensionSupported("GL_EXT_color_buffer_float"));
 
     // TODO(crbug.com/dawn/343): Investigate emulation.
     deviceToggles->Default(Toggle::DisableIndexedDrawBuffers, !supportsIndexedDrawBuffers);
@@ -468,18 +476,20 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
     // For OpenGL ES, use compute shader blit to emulate bgra8unorm texture to buffer copies.
     deviceToggles->Default(Toggle::UseBlitForBGRA8UnormTextureToBufferCopy, !supportsBGRARead);
 
-    // For OpenGL ES, use compute shader blit to emulate rgb9e5ufloat texture to buffer copies.
+    // For OpenGL ES, use compute shader blit to emulate rgb9e5ufloat texture to buffer copies if
+    // not color-renderable.
     deviceToggles->Default(Toggle::UseBlitForRGB9E5UfloatTextureCopy, gl.GetVersion().IsES());
 
-    // Use compute shader blit to emulate rg11b10ufloat texture to buffer copies if not color
-    // renderable.
-    deviceToggles->Default(Toggle::UseBlitForRG11B10UfloatTextureCopy, !isRG11B10UfloatRenderable);
-
-    // Use compute shader blit to emulate float16 texture to buffer copies if not color renderable.
-    deviceToggles->Default(Toggle::UseBlitForFloat16TextureCopy, !isFloat16Renderable);
-
-    // Use compute shader blit to emulate float32 texture to buffer copies if not color renderable.
-    deviceToggles->Default(Toggle::UseBlitForFloat32TextureCopy, !isFloat32Renderable);
+    // For OpenGL ES, use compute shader blit to emulate texture to buffer copies to work around
+    // glReadPixels not guaranteed support for certain format/type combinations.
+    if (gl.GetVersion().IsES()) {
+        deviceToggles->Default(Toggle::UseBlitForRG11B10UfloatTextureCopy, true);
+        deviceToggles->Default(Toggle::UseBlitForNonRGBAUnormTextureToBufferCopy, true);
+        deviceToggles->Default(Toggle::UseBlitForNonRGBAFloatTextureToBufferCopy, true);
+        deviceToggles->Default(Toggle::UseBlitForFloat16TextureCopy, true);
+        deviceToggles->Default(Toggle::UseBlitForUintTextureToBufferCopy, true);
+        deviceToggles->Default(Toggle::UseBlitForSintTextureToBufferCopy, true);
+    }
 
     // Use a blit to emulate stencil-only buffer-to-texture copies.
     deviceToggles->Default(Toggle::UseBlitForBufferToStencilTextureCopy, true);
@@ -500,7 +510,7 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
     // (crbug.com/42240914): Nividia GLES driver returns wrong value for .length() on
     // SSBO dynamic array.
     deviceToggles->Default(
-        Toggle::GLUseArrayLengthFromUniform,
+        Toggle::GLUseArrayLengthFromImmediate,
         mVendorId == gpu_info::kVendorID_ImgTec || mVendorId == gpu_info::kVendorID_Nvidia);
 
     // Enable the integer range analysis for shader robustness by default if the corresponding
@@ -516,8 +526,8 @@ ResultOrError<Ref<DeviceBase>> PhysicalDevice::CreateDeviceImpl(
     const TogglesState& deviceToggles,
     Ref<DeviceBase::DeviceLostEvent>&& lostEvent) {
     bool useANGLETextureSharing = false;
-    for (size_t i = 0; i < descriptor->requiredFeatureCount; ++i) {
-        if (descriptor->requiredFeatures[i] == wgpu::FeatureName::ANGLETextureSharing) {
+    for (wgpu::FeatureName feature : descriptor->requiredFeatures) {
+        if (feature == wgpu::FeatureName::ANGLETextureSharing) {
             useANGLETextureSharing = true;
         }
     }
@@ -528,7 +538,8 @@ ResultOrError<Ref<DeviceBase>> PhysicalDevice::CreateDeviceImpl(
     // Use the pre-1.5 extension enum instead.
     bool disableEGL15Robustness = mVendorId == gpu_info::kVendorID_ImgTec;
     bool forceES31AndMinExtensions = deviceToggles.IsEnabled(Toggle::GLForceES31AndNoExtensions);
-    bool bindContextOnlyDuringUse = deviceToggles.IsEnabled(Toggle::GLAllowContextOnMultiThreads);
+    bool bindContextOnlyDuringUse = deviceToggles.IsEnabled(Toggle::GLAllowContextOnMultiThreads) ||
+                                    deviceToggles.IsEnabled(Toggle::GLDefer);
 
     std::unique_ptr<ContextEGL> context;
     DAWN_TRY_ASSIGN(context, ContextEGL::Create(mDisplay, GetBackendType(), useRobustness,

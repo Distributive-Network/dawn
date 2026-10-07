@@ -25,6 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include "gtest/gtest.h"
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/ir/function.h"
 #include "src/tint/lang/core/number.h"
@@ -38,8 +39,6 @@
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
 #include "src/tint/lang/hlsl/writer/helper_test.h"
-
-#include "gtest/gtest.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
 using namespace tint::core::number_suffixes;  // NOLINT
@@ -58,12 +57,13 @@ TEST_F(HlslWriterTest, BuiltinSelectScalar) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   int x = int(1);
   int y = int(2);
-  int w = ((true) ? (y) : (x));
+  int w = select(true, y, x);
 }
 
 )");
@@ -81,18 +81,19 @@ TEST_F(HlslWriterTest, BuiltinSelectVector) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   int2 x = int2(int(1), int(2));
   int2 y = int2(int(3), int(4));
-  int2 w = ((bool2(true, false)) ? (y) : (x));
+  int2 w = select(bool2(true, false), y, x);
 }
 
 )");
 }
 
-TEST_F(HlslWriterTest, BuiltinTrunc) {
+TEST_F(HlslWriterTest, BuiltinTruncFxc) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* val = b.Var("v", b.Zero(ty.f32()));
@@ -104,7 +105,10 @@ TEST_F(HlslWriterTest, BuiltinTrunc) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    Options opts;
+    opts.compiler = Options::Compiler::kFXC;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float v = 0.0f;
@@ -115,7 +119,32 @@ void main() {
 )");
 }
 
-TEST_F(HlslWriterTest, BuiltinTruncVec) {
+TEST_F(HlslWriterTest, BuiltinTruncDxc) {
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    b.Append(func->Block(), [&] {
+        auto* val = b.Var("v", b.Zero(ty.f32()));
+
+        auto* v = b.Load(val);
+        auto* t = b.Call(ty.f32(), core::BuiltinFn::kTrunc, v);
+
+        b.Let("val", t);
+        b.Return(func);
+    });
+
+    Options opts;
+    opts.compiler = Options::Compiler::kDXC_2021;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
+    EXPECT_EQ(output_.hlsl, R"(
+void main() {
+  float v = 0.0f;
+  float val = trunc(v);
+}
+
+)");
+}
+
+TEST_F(HlslWriterTest, BuiltinTruncVecFxc) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* val = b.Var("v", b.Splat(ty.vec3f(), 2_f));
@@ -127,7 +156,10 @@ TEST_F(HlslWriterTest, BuiltinTruncVec) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    Options opts;
+    opts.compiler = Options::Compiler::kFXC;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float3 v = (2.0f).xxx;
@@ -138,7 +170,7 @@ void main() {
 )");
 }
 
-TEST_F(HlslWriterTest, BuiltinTruncF16) {
+TEST_F(HlslWriterTest, BuiltinTruncF16Fxc) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* val = b.Var("v", b.Zero(ty.f16()));
@@ -150,7 +182,10 @@ TEST_F(HlslWriterTest, BuiltinTruncF16) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    Options opts;
+    opts.compiler = Options::Compiler::kFXC;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float16_t v = float16_t(0.0h);
@@ -179,12 +214,13 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicStore) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
-  v.InterlockedExchange(int(16u), int(123), v_1);
+  v.InterlockedExchange(16u, int(123), v_1);
 }
 
 )");
@@ -201,12 +237,13 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicStoreDirect) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
-  v.InterlockedExchange(int(0u), int(123), v_1);
+  v.InterlockedExchange(0u, int(123), v_1);
 }
 
 )");
@@ -230,12 +267,13 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicLoad) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
-  v.InterlockedOr(int(16u), int(0), v_1);
+  v.InterlockedOr(16u, int(0), v_1);
   int x = v_1;
 }
 
@@ -253,12 +291,13 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicLoadDirect) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
-  v.InterlockedOr(int(0u), int(0), v_1);
+  v.InterlockedOr(0u, int(0), v_1);
   int x = v_1;
 }
 
@@ -283,12 +322,13 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicSub) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
-  v.InterlockedAdd(int(16u), asint((asuint(int(0)) - asuint(int(123)))), v_1);
+  v.InterlockedAdd(16u, int(-123), v_1);
   int x = v_1;
 }
 
@@ -306,12 +346,13 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicSubDirect) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
-  v.InterlockedAdd(int(0u), asint((asuint(int(0)) - asuint(int(123)))), v_1);
+  v.InterlockedAdd(0u, int(-123), v_1);
   int x = v_1;
 }
 
@@ -338,7 +379,8 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicCompareExchangeWeak) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(struct atomic_compare_exchange_result_i32 {
   int old_value;
   bool exchanged;
@@ -348,7 +390,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicCompareExchangeWeak) {
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
-  v.InterlockedCompareExchange(int(16u), int(123), int(345), v_1);
+  v.InterlockedCompareExchange(16u, int(123), int(345), v_1);
   int v_2 = v_1;
   atomic_compare_exchange_result_i32 x = {v_2, (v_2 == int(123))};
 }
@@ -368,7 +410,8 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicCompareExchangeWeakDirect) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(struct atomic_compare_exchange_result_i32 {
   int old_value;
   bool exchanged;
@@ -378,7 +421,7 @@ TEST_F(HlslWriterTest, BuiltinStorageAtomicCompareExchangeWeakDirect) {
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
-  v.InterlockedCompareExchange(int(0u), int(123), int(345), v_1);
+  v.InterlockedCompareExchange(0u, int(123), int(345), v_1);
   int v_2 = v_1;
   atomic_compare_exchange_result_i32 x = {v_2, (v_2 == int(123))};
 }
@@ -415,13 +458,14 @@ TEST_P(HlslBuiltinAtomic, IndirectAccess) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
   v.)" + std::string(param.interlock) +
-                                R"((int(16u), int(123), v_1);
+                                R"((16u, int(123), v_1);
   int x = v_1;
 }
 
@@ -440,13 +484,14 @@ TEST_P(HlslBuiltinAtomic, DirectAccess) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
   int v_1 = int(0);
   v.)" + std::string(param.interlock) +
-                                R"((int(0u), int(123), v_1);
+                                R"((0u, int(123), v_1);
   int x = v_1;
 }
 
@@ -481,7 +526,8 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicStore) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(struct SB {
   float4 padding;
   int a;
@@ -532,7 +578,8 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicLoad) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(struct SB {
   float4 padding;
   int a;
@@ -586,7 +633,8 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicSub) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(struct SB {
   float4 padding;
   int a;
@@ -609,10 +657,10 @@ void main_inner(uint tint_local_index) {
   }
   GroupMemoryBarrierWithGroupSync();
   int v_3 = int(0);
-  InterlockedAdd(v.a, (int(0) - int(123)), v_3);
+  InterlockedAdd(v.a, int(-123), v_3);
   int x = v_3;
   uint v_4 = 0u;
-  InterlockedAdd(v.b, (0u - 123u), v_4);
+  InterlockedAdd(v.b, 4294967173u, v_4);
   uint x_1 = v_4;
 }
 
@@ -643,7 +691,8 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupAtomicCompareExchangeWeak) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(struct SB {
   float4 padding;
   int a;
@@ -697,7 +746,8 @@ TEST_P(HlslBuiltinWorkgroupAtomic, Access) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(struct main_inputs {
   uint tint_local_index : SV_GroupIndex;
 };
@@ -738,14 +788,17 @@ INSTANTIATE_TEST_SUITE_P(HlslWriterTest,
 TEST_F(HlslWriterTest, BuiltinSignScalar) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("x", b.Call(ty.f16(), core::BuiltinFn::kSign, 1_h));
+        auto* a = b.Let("a", 1_h);
+        b.Let("x", b.Call(ty.f16(), core::BuiltinFn::kSign, a));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
-  float16_t x = float16_t(sign(float16_t(1.0h)));
+  float16_t a = float16_t(1.0h);
+  float16_t x = float16_t(sign(a));
 }
 
 )");
@@ -754,15 +807,17 @@ void main() {
 TEST_F(HlslWriterTest, BuiltinSignVector) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("x",
-              b.Call(ty.vec3f(), core::BuiltinFn::kSign, b.Composite(ty.vec3f(), 1_f, 2_f, 3_f)));
+        auto* a = b.Let("a", b.Composite(ty.vec3f(), 1_f, 2_f, 3_f));
+        b.Let("x", b.Call(ty.vec3f(), core::BuiltinFn::kSign, a));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
-  float3 x = float3(sign(float3(1.0f, 2.0f, 3.0f)));
+  float3 a = float3(1.0f, 2.0f, 3.0f);
+  float3 x = float3(sign(a));
 }
 
 )");
@@ -775,7 +830,8 @@ TEST_F(HlslWriterTest, BuiltinStorageBarrier) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 [numthreads(1, 1, 1)]
 void main() {
@@ -792,7 +848,8 @@ TEST_F(HlslWriterTest, BuiltinTextureBarrier) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 [numthreads(1, 1, 1)]
 void main() {
@@ -809,7 +866,8 @@ TEST_F(HlslWriterTest, BuiltinWorkgroupBarrier) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 [numthreads(1, 1, 1)]
 void main() {
@@ -840,7 +898,8 @@ TEST_F(HlslWriterTest, BuiltinTextureNumLevels1D) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture1D<float4> x : register(t0);
 void foo(Texture1D<float4> t) {
@@ -878,7 +937,8 @@ TEST_F(HlslWriterTest, BuiltinTextureNumLevels2D) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> x : register(t0);
 void foo(Texture2D<float4> t) {
@@ -916,7 +976,8 @@ TEST_F(HlslWriterTest, BuiltinTextureNumLevels3D) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> x : register(t0);
 void foo(Texture3D<float4> t) {
@@ -954,7 +1015,8 @@ TEST_F(HlslWriterTest, BuiltinTextureDimension1D) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture1D<float4> x : register(t0);
 void foo(Texture1D<float4> t) {
@@ -992,7 +1054,8 @@ TEST_F(HlslWriterTest, BuiltinTextureDimension2D) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> x : register(t0);
 void foo(Texture2D<float4> t) {
@@ -1030,12 +1093,13 @@ TEST_F(HlslWriterTest, BuiltinTextureDimension2dLOD) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> x : register(t0);
 void foo(Texture2D<float4> t) {
   uint3 v = (0u).xxx;
-  t.GetDimensions(uint(int(1)), v.x, v.y, v.z);
+  t.GetDimensions(1u, v.x, v.y, v.z);
   uint2 d = v.xy;
 }
 
@@ -1068,7 +1132,8 @@ TEST_F(HlslWriterTest, BuiltinTextureDimension3D) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> x : register(t0);
 void foo(Texture3D<float4> t) {
@@ -1106,7 +1171,8 @@ TEST_F(HlslWriterTest, BuiltinTextureLayers2dArray) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> x : register(t0);
 void foo(Texture2DArray<float4> t) {
@@ -1144,7 +1210,8 @@ TEST_F(HlslWriterTest, BuiltinTextureNumLayersCubeArray) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray<float4> x : register(t0);
 void foo(TextureCubeArray<float4> t) {
@@ -1183,7 +1250,8 @@ TEST_F(HlslWriterTest, BuiltinTextureNumSamples) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DMS<float4> x : register(t0);
 void foo(Texture2DMS<float4> t) {
@@ -1217,12 +1285,12 @@ TEST_F(HlslWriterTest, BuiltinTextureLoad_1DF32) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture1D<float4> v : register(t0);
 void main() {
-  int v_1 = int(1u);
-  float4 x = v.Load(int2(v_1, int(3u)));
+  float4 x = v.Load(int2(int(1), int(3)));
 }
 
 )");
@@ -1245,12 +1313,12 @@ TEST_F(HlslWriterTest, BuiltinTextureLoad_2DLevelI32) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<int4> v : register(t0);
 void main() {
-  int2 v_1 = int2(uint2(1u, 2u));
-  int4 x = v.Load(int3(v_1, int(3u)));
+  int4 x = v.Load(int3(int(1), int(2), int(3)));
 }
 
 )");
@@ -1273,11 +1341,12 @@ TEST_F(HlslWriterTest, BuiltinTextureLoad_3DLevelU32) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 void main() {
-  float4 x = v.Load(int4(int3(int(1), int(2), int(3)), int(4u)));
+  float4 x = v.Load(int4(int(1), int(2), int(3), int(4)));
 }
 
 )");
@@ -1300,7 +1369,8 @@ TEST_F(HlslWriterTest, BuiltinTextureLoad_Multisampled2DI32) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DMS<int4> v : register(t0);
 void main() {
@@ -1326,12 +1396,12 @@ TEST_F(HlslWriterTest, BuiltinTextureLoad_Depth2DLevelF32) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 void main() {
-  int2 v_1 = int2(int(1), int(2));
-  float x = v.Load(int3(v_1, int(3u))).x;
+  float x = v.Load(int3(int(1), int(2), int(3))).x;
 }
 
 )");
@@ -1355,11 +1425,12 @@ TEST_F(HlslWriterTest, BuiltinTextureLoad_Depth2DArrayLevelF32) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 void main() {
-  float x = v.Load(int4(int2(int(1), int(2)), int(3u), int(4))).x;
+  float x = v.Load(int4(int(1), int(2), int(3), int(4))).x;
 }
 
 )");
@@ -1382,11 +1453,12 @@ TEST_F(HlslWriterTest, BuiltinTextureLoad_DepthMultisampledF32) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DMS<float4> v : register(t0);
 void main() {
-  float x = v.Load(int2(int(1), int(2)), int(3u)).x;
+  float x = v.Load(int2(int(1), int(2)), int(3)).x;
 }
 
 )");
@@ -1407,7 +1479,8 @@ TEST_F(HlslWriterTest, BuiltinTextureStore1D) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWTexture1D<float4> v : register(u0);
 void main() {
@@ -1432,7 +1505,8 @@ TEST_F(HlslWriterTest, BuiltinTextureStore3D) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWTexture3D<float4> v : register(u0);
 void main() {
@@ -1457,11 +1531,12 @@ TEST_F(HlslWriterTest, BuiltinTextureStoreArray) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 RWTexture2DArray<float4> v : register(u0);
 void main() {
-  v[int3(int2(int(1), int(2)), int(3u))] = float4(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f);
+  v[int3(int(1), int(2), int(3))] = float4(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f);
 }
 
 )");
@@ -1493,7 +1568,8 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_Depth2d) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
@@ -1531,7 +1607,8 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_Depth2dOffset) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
@@ -1569,13 +1646,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_DepthCubeArray) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 2.5f);
-  float4 x = v.GatherCmp(v_1, float4(v_2, float(6u)), 3.0f);
+  float4 x = v.GatherCmp(v_1, float4(1.0f, 2.0f, 2.5f, 6.0f), 3.0f);
 }
 
 )");
@@ -1609,13 +1686,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGatherCompare_Depth2dArrayOffset) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.GatherCmp(v_1, float3(v_2, float(int(6))), 3.0f, int2(int(4), int(5)));
+  float4 x = v.GatherCmp(v_1, float3(1.0f, 2.0f, 6.0f), 3.0f, int2(int(4), int(5)));
 }
 
 )");
@@ -1646,7 +1723,8 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_Alpha) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<int4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -1682,7 +1760,8 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_RedOffset) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<int4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -1719,13 +1798,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_GreenArray) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<int4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  int4 x = v.GatherGreen(v_1, float3(v_2, float(1u)));
+  int4 x = v.GatherGreen(v_1, float3(1.0f, 2.0f, 1.0f));
 }
 
 )");
@@ -1759,13 +1838,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_BlueArrayOffset) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<int4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  int4 x = v.GatherBlue(v_1, float3(v_2, float(int(1))), int2(int(1), int(2)));
+  int4 x = v.GatherBlue(v_1, float3(1.0f, 2.0f, 1.0f), int2(int(1), int(2)));
 }
 
 )");
@@ -1795,7 +1874,8 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_Depth) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
@@ -1830,7 +1910,8 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_DepthOffset) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
@@ -1865,13 +1946,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_DepthArray) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.Gather(v_1, float3(v_2, float(int(4))));
+  float4 x = v.Gather(v_1, float3(1.0f, 2.0f, 4.0f));
 }
 
 )");
@@ -1903,13 +1984,13 @@ TEST_F(HlslWriterTest, BuiltinTextureGather_DepthArrayOffset) {
     Options opts;
     opts.entry_point_name = "main";
     opts.disable_robustness = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.Gather(v_1, float3(v_2, float(4u)), int2(int(4), int(5)));
+  float4 x = v.Gather(v_1, float3(1.0f, 2.0f, 4.0f), int2(int(4), int(5)));
 }
 
 )");
@@ -1923,7 +2004,8 @@ TEST_F(HlslWriterTest, BuiltinQuantizeToF16) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float2 x = (0.0f).xx;
@@ -1941,7 +2023,8 @@ TEST_F(HlslWriterTest, BuiltinPack2x16Float) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float2 u = (2.0f).xx;
@@ -1960,7 +2043,8 @@ TEST_F(HlslWriterTest, BuiltinUnpack2x16Float) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
@@ -1979,7 +2063,8 @@ TEST_F(HlslWriterTest, BuiltinPack2x16Snorm) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float2 u = (2.0f).xx;
@@ -1998,7 +2083,8 @@ TEST_F(HlslWriterTest, BuiltinUnpack2x16Snorm) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
@@ -2017,7 +2103,8 @@ TEST_F(HlslWriterTest, BuiltinPack2x16Unorm) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float2 u = (2.0f).xx;
@@ -2036,7 +2123,8 @@ TEST_F(HlslWriterTest, BuiltinUnpack2x16Unorm) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
@@ -2055,7 +2143,8 @@ TEST_F(HlslWriterTest, BuiltinPack4x8Snorm) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float4 u = (2.0f).xxxx;
@@ -2074,7 +2163,8 @@ TEST_F(HlslWriterTest, BuiltinUnpack4x8Snorm) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
@@ -2093,7 +2183,8 @@ TEST_F(HlslWriterTest, BuiltinPack4x8Unorm) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float4 u = (2.0f).xxxx;
@@ -2112,7 +2203,8 @@ TEST_F(HlslWriterTest, BuiltinUnpack4x8Unorm) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
@@ -2134,14 +2226,12 @@ TEST_F(HlslWriterTest, BuiltinPack4xI8CorePolyfill) {
     Options opts{};
     opts.entry_point_name = "main";
     opts.extensions.polyfill_pack_unpack_4x8 = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   int4 u = (int(2)).xxxx;
-  int4 v = u;
-  uint4 v_1 = uint4(0u, 8u, 16u, 24u);
-  uint4 v_2 = ((asuint(v) & uint4((255u).xxxx)) << v_1);
-  uint a = dot(v_2, uint4((1u).xxxx));
+  uint a = dot(((asuint(u) & (255u).xxxx) << uint4(0u, 8u, 16u, 24u)), (1u).xxxx);
 }
 
 )");
@@ -2158,14 +2248,12 @@ TEST_F(HlslWriterTest, BuiltinUnpack4xI8CorePolyfill) {
     Options opts{};
     opts.entry_point_name = "main";
     opts.extensions.polyfill_pack_unpack_4x8 = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
-  uint v = u;
-  uint4 v_1 = uint4(24u, 16u, 8u, 0u);
-  int4 v_2 = asint((uint4((v).xxxx) << v_1));
-  int4 a = (v_2 >> uint4((24u).xxxx));
+  int4 a = (asint((uint4((u).xxxx) << uint4(24u, 16u, 8u, 0u))) >> (24u).xxxx);
 }
 
 )");
@@ -2179,7 +2267,8 @@ TEST_F(HlslWriterTest, BuiltinPack4xI8) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   int4 u = (int(2)).xxxx;
@@ -2197,7 +2286,8 @@ TEST_F(HlslWriterTest, BuiltinUnpack4xI8) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
@@ -2218,14 +2308,12 @@ TEST_F(HlslWriterTest, BuiltinPack4xU8CorePolyfill) {
     Options opts{};
     opts.entry_point_name = "main";
     opts.extensions.polyfill_pack_unpack_4x8 = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint4 u = (2u).xxxx;
-  uint4 v = u;
-  uint4 v_1 = uint4(0u, 8u, 16u, 24u);
-  uint4 v_2 = ((v & uint4((255u).xxxx)) << v_1);
-  uint a = dot(v_2, uint4((1u).xxxx));
+  uint a = dot(((u & (255u).xxxx) << uint4(0u, 8u, 16u, 24u)), (1u).xxxx);
 }
 
 )");
@@ -2242,14 +2330,12 @@ TEST_F(HlslWriterTest, BuiltinUnpack4xU8CorePolyfill) {
     Options opts{};
     opts.entry_point_name = "main";
     opts.extensions.polyfill_pack_unpack_4x8 = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
-  uint v = u;
-  uint4 v_1 = uint4(0u, 8u, 16u, 24u);
-  uint4 v_2 = (uint4((v).xxxx) >> v_1);
-  uint4 a = (v_2 & uint4((255u).xxxx));
+  uint4 a = ((uint4((u).xxxx) >> uint4(0u, 8u, 16u, 24u)) & (255u).xxxx);
 }
 
 )");
@@ -2263,7 +2349,8 @@ TEST_F(HlslWriterTest, BuiltinPack4xU8) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint4 u = (2u).xxxx;
@@ -2281,7 +2368,8 @@ TEST_F(HlslWriterTest, BuiltinUnpack4xU8) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
@@ -2302,17 +2390,12 @@ TEST_F(HlslWriterTest, BuiltinDot4U8PackedPolyfill) {
     Options opts{};
     opts.entry_point_name = "main";
     opts.extensions.polyfill_dot_4x8_packed = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
-  uint v = u;
-  uint4 v_1 = uint4(0u, 8u, 16u, 24u);
-  uint4 v_2 = (uint4((v).xxxx) >> v_1);
-  uint4 v_3 = (v_2 & uint4((255u).xxxx));
-  uint4 v_4 = uint4(0u, 8u, 16u, 24u);
-  uint4 v_5 = (uint4((3u).xxxx) >> v_4);
-  uint a = dot(v_3, (v_5 & uint4((255u).xxxx)));
+  uint a = dot(((uint4((u).xxxx) >> uint4(0u, 8u, 16u, 24u)) & (255u).xxxx), uint4(3u, 0u, 0u, 0u));
 }
 
 )");
@@ -2326,7 +2409,8 @@ TEST_F(HlslWriterTest, BuiltinDot4U8Packed) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
@@ -2345,15 +2429,12 @@ TEST_F(HlslWriterTest, BuiltinPack4xU8ClampPolyfill) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint4 u = (2u).xxxx;
-  uint4 v = u;
-  uint4 v_1 = uint4(0u, 8u, 16u, 24u);
-  uint4 v_2 = uint4((0u).xxxx);
-  uint4 v_3 = (clamp(v, v_2, uint4((255u).xxxx)) << v_1);
-  uint a = dot(v_3, uint4((1u).xxxx));
+  uint a = dot((clamp(u, (0u).xxxx, (255u).xxxx) << uint4(0u, 8u, 16u, 24u)), (1u).xxxx);
 }
 
 )");
@@ -2370,16 +2451,12 @@ TEST_F(HlslWriterTest, BuiltinPack4xI8ClampPolyfill) {
     Options opts{};
     opts.entry_point_name = "main";
     opts.extensions.polyfill_pack_unpack_4x8 = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   int4 u = (int(2)).xxxx;
-  int4 v = u;
-  uint4 v_1 = uint4(0u, 8u, 16u, 24u);
-  int4 v_2 = int4((int(-128)).xxxx);
-  uint4 v_3 = asuint(clamp(v, v_2, int4((int(127)).xxxx)));
-  uint4 v_4 = ((v_3 & uint4((255u).xxxx)) << v_1);
-  uint a = dot(v_4, uint4((1u).xxxx));
+  uint a = dot(((asuint(clamp(u, (int(-128)).xxxx, (int(127)).xxxx)) & (255u).xxxx) << uint4(0u, 8u, 16u, 24u)), (1u).xxxx);
 }
 
 )");
@@ -2393,7 +2470,8 @@ TEST_F(HlslWriterTest, BuiltinPack4xI8Clamp) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   int4 u = (int(2)).xxxx;
@@ -2407,24 +2485,25 @@ TEST_F(HlslWriterTest, BuiltinDot4I8PackedPolyfill) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
-        b.Let("a", b.Call(ty.i32(), core::BuiltinFn::kDot4I8Packed, b.Load(u), u32(3_u)));
+        auto* v = b.Var("v", 3_u);
+        auto* ld_u = b.Load(u);
+        auto* ld_v = b.Load(v);
+        b.Let("a", b.Call(ty.i32(), core::BuiltinFn::kDot4I8Packed, ld_u, ld_v));
         b.Return(func);
     });
 
     Options opts{};
     opts.entry_point_name = "main";
     opts.extensions.polyfill_dot_4x8_packed = true;
-    ASSERT_TRUE(Generate(opts)) << err_ << output_.hlsl;
+    auto result = Generate(opts);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
-  uint v = u;
-  uint4 v_1 = uint4(24u, 16u, 8u, 0u);
-  int4 v_2 = asint((uint4((v).xxxx) << v_1));
-  int4 v_3 = (v_2 >> uint4((24u).xxxx));
-  uint4 v_4 = uint4(24u, 16u, 8u, 0u);
-  int4 v_5 = asint((uint4((3u).xxxx) << v_4));
-  int a = dot(v_3, (v_5 >> uint4((24u).xxxx)));
+  uint v = 3u;
+  uint v_1 = v;
+  int4 v_2 = (asint((uint4((u).xxxx) << uint4(24u, 16u, 8u, 0u))) >> (24u).xxxx);
+  int a = dot(v_2, (asint((uint4((v_1).xxxx) << uint4(24u, 16u, 8u, 0u))) >> (24u).xxxx));
 }
 
 )");
@@ -2438,7 +2517,8 @@ TEST_F(HlslWriterTest, BuiltinDot4I8Packed) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   uint u = 2u;
@@ -2457,7 +2537,8 @@ TEST_F(HlslWriterTest, BuiltinAsinh) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float u = 0.25f;
@@ -2476,7 +2557,8 @@ TEST_F(HlslWriterTest, BuiltinAcosh) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float16_t u = float16_t(1.25h);
@@ -2495,7 +2577,8 @@ TEST_F(HlslWriterTest, BuiltinAtanh) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float u = 0.25f;
@@ -2514,7 +2597,8 @@ TEST_F(HlslWriterTest, BuiltinSubgroupBallot) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 [numthreads(1, 1, 1)]
 void main() {
@@ -2546,7 +2630,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_1d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture1D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -2579,7 +2664,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -2613,7 +2699,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -2647,13 +2734,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.Sample(v_1, float3(v_2, float(4u)));
+  float4 x = v.Sample(v_1, float3(1.0f, 2.0f, 4.0f));
 }
 
 )");
@@ -2684,13 +2771,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_2d_Array_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.Sample(v_1, float3(v_2, float(4u)), int2(int(4), int(5)));
+  float4 x = v.Sample(v_1, float3(1.0f, 2.0f, 4.0f), int2(int(4), int(5)));
 }
 
 )");
@@ -2718,7 +2805,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_3d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -2752,7 +2840,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_3d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -2785,7 +2874,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Cube) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -2819,13 +2909,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Cube_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 x = v.Sample(v_1, float4(v_2, float(4u)));
+  float4 x = v.Sample(v_1, float4(1.0f, 2.0f, 3.0f, 4.0f));
 }
 
 )");
@@ -2849,16 +2939,19 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float4 x = v.SampleBias(v_1, float2(1.0f, 2.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  float4 x = v.SampleBias(v_1, float2(1.0f, 2.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -2883,17 +2976,20 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d_Offset) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
+        auto* bias = b.Let("b", 3_f);
         b.Let("x",
-              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f, offset));
+              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias, offset));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float4 x = v.SampleBias(v_1, float2(1.0f, 2.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f), int2(int(4), int(5)));
+  float b = 3.0f;
+  float4 x = v.SampleBias(v_1, float2(1.0f, 2.0f), clamp(b, -16.0f, 15.9899997711181640625f), int2(int(4), int(5)));
 }
 
 )");
@@ -2918,18 +3014,20 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d_Array) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x",
-              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx,
+                                     bias));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.SampleBias(v_1, float3(v_2, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 4.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -2955,18 +3053,20 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_2d_Array_Offset) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
+        auto* bias = b.Let("b", 3_f);
         b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx,
-                                     3_f, offset));
+                                     bias, offset));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.SampleBias(v_1, float3(v_2, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f), int2(int(4), int(5)));
+  float b = 3.0f;
+  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 4.0f), clamp(b, -16.0f, 15.9899997711181640625f), int2(int(4), int(5)));
 }
 
 )");
@@ -2990,16 +3090,19 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_3d) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 3.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -3024,17 +3127,20 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_3d_Offset) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
+        auto* bias = b.Let("b", 3_f);
         b.Let("x",
-              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f, offset));
+              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias, offset));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f), int3(int(4), int(5), int(6)));
+  float b = 3.0f;
+  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 3.0f), clamp(b, -16.0f, 15.9899997711181640625f), int3(int(4), int(5), int(6)));
 }
 
 )");
@@ -3058,16 +3164,19 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_Cube) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  float4 x = v.SampleBias(v_1, float3(1.0f, 2.0f, 3.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -3092,18 +3201,20 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleBias_Cube_Array) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x",
-              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx,
+                                     bias));
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 x = v.SampleBias(v_1, float4(v_2, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  float4 x = v.SampleBias(v_1, float4(1.0f, 2.0f, 3.0f, 4.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 
 )");
@@ -3130,7 +3241,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
@@ -3163,7 +3275,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
@@ -3197,13 +3310,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float x = v.SampleCmp(v_1, float3(v_2, float(4u)), 3.0f);
+  float x = v.SampleCmp(v_1, float3(1.0f, 2.0f, 4.0f), 3.0f);
 }
 
 )");
@@ -3233,13 +3346,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_2d_Array_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float x = v.SampleCmp(v_1, float3(v_2, float(4u)), 3.0f, int2(int(4), int(5)));
+  float x = v.SampleCmp(v_1, float3(1.0f, 2.0f, 4.0f), 3.0f, int2(int(4), int(5)));
 }
 
 )");
@@ -3266,7 +3379,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_Cube) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube v : register(t0);
 SamplerComparisonState v_1 : register(s1);
@@ -3300,13 +3414,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompare_Cube_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float x = v.SampleCmp(v_1, float4(v_2, float(4u)), 3.0f);
+  float x = v.SampleCmp(v_1, float4(1.0f, 2.0f, 3.0f, 4.0f), 3.0f);
 }
 
 )");
@@ -3333,7 +3447,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
@@ -3367,7 +3482,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerComparisonState v_1 : register(s1);
@@ -3401,13 +3517,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float x = v.SampleCmpLevelZero(v_1, float3(v_2, float(4u)), 3.0f);
+  float x = v.SampleCmpLevelZero(v_1, float3(1.0f, 2.0f, 4.0f), 3.0f);
 }
 
 )");
@@ -3437,13 +3553,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_2d_Array_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float x = v.SampleCmpLevelZero(v_1, float3(v_2, float(4u)), 3.0f, int2(int(4), int(5)));
+  float x = v.SampleCmpLevelZero(v_1, float3(1.0f, 2.0f, 4.0f), 3.0f, int2(int(4), int(5)));
 }
 
 )");
@@ -3470,7 +3586,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_Cube) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube v : register(t0);
 SamplerComparisonState v_1 : register(s1);
@@ -3504,13 +3621,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleCompareLevel_Cube_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerComparisonState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float x = v.SampleCmpLevelZero(v_1, float4(v_2, float(4u)), 3.0f);
+  float x = v.SampleCmpLevelZero(v_1, float4(1.0f, 2.0f, 3.0f, 4.0f), 3.0f);
 }
 
 )");
@@ -3540,14 +3657,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float2 v_3 = float2(3.0f, 4.0f);
-  float4 x = v.SampleGrad(v_1, v_2, v_3, float2(5.0f, 6.0f));
+  float4 x = v.SampleGrad(v_1, float2(1.0f, 2.0f), float2(3.0f, 4.0f), float2(5.0f, 6.0f));
 }
 
 )");
@@ -3579,14 +3695,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float2 v_3 = float2(3.0f, 4.0f);
-  float4 x = v.SampleGrad(v_1, v_2, v_3, float2(5.0f, 6.0f), int2(int(4), int(5)));
+  float4 x = v.SampleGrad(v_1, float2(1.0f, 2.0f), float2(3.0f, 4.0f), float2(5.0f, 6.0f), int2(int(4), int(5)));
 }
 
 )");
@@ -3618,15 +3733,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float2 v_3 = float2(3.0f, 4.0f);
-  float2 v_4 = float2(5.0f, 6.0f);
-  float4 x = v.SampleGrad(v_1, float3(v_2, float(4u)), v_3, v_4);
+  float4 x = v.SampleGrad(v_1, float3(1.0f, 2.0f, 4.0f), float2(3.0f, 4.0f), float2(5.0f, 6.0f));
 }
 
 )");
@@ -3659,15 +3772,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_2d_Array_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float2 v_3 = float2(3.0f, 4.0f);
-  float2 v_4 = float2(5.0f, 6.0f);
-  float4 x = v.SampleGrad(v_1, float3(v_2, float(4u)), v_3, v_4, int2(int(4), int(5)));
+  float4 x = v.SampleGrad(v_1, float3(1.0f, 2.0f, 4.0f), float2(3.0f, 4.0f), float2(5.0f, 6.0f), int2(int(4), int(5)));
 }
 
 )");
@@ -3697,14 +3808,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_3d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float3 v_3 = float3(3.0f, 4.0f, 5.0f);
-  float4 x = v.SampleGrad(v_1, v_2, v_3, float3(6.0f, 7.0f, 8.0f));
+  float4 x = v.SampleGrad(v_1, float3(1.0f, 2.0f, 3.0f), float3(3.0f, 4.0f, 5.0f), float3(6.0f, 7.0f, 8.0f));
 }
 
 )");
@@ -3736,14 +3846,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_3d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float3 v_3 = float3(3.0f, 4.0f, 5.0f);
-  float4 x = v.SampleGrad(v_1, v_2, v_3, float3(6.0f, 7.0f, 8.0f), int3(int(4), int(5), int(6)));
+  float4 x = v.SampleGrad(v_1, float3(1.0f, 2.0f, 3.0f), float3(3.0f, 4.0f, 5.0f), float3(6.0f, 7.0f, 8.0f), int3(int(4), int(5), int(6)));
 }
 
 )");
@@ -3773,14 +3882,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_Cube) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float3 v_3 = float3(3.0f, 4.0f, 5.0f);
-  float4 x = v.SampleGrad(v_1, v_2, v_3, float3(6.0f, 7.0f, 8.0f));
+  float4 x = v.SampleGrad(v_1, float3(1.0f, 2.0f, 3.0f), float3(3.0f, 4.0f, 5.0f), float3(6.0f, 7.0f, 8.0f));
 }
 
 )");
@@ -3812,15 +3920,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleGrad_Cube_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float3 v_3 = float3(3.0f, 4.0f, 5.0f);
-  float3 v_4 = float3(6.0f, 7.0f, 8.0f);
-  float4 x = v.SampleGrad(v_1, float4(v_2, float(4u)), v_3, v_4);
+  float4 x = v.SampleGrad(v_1, float4(1.0f, 2.0f, 3.0f, 4.0f), float3(3.0f, 4.0f, 5.0f), float3(6.0f, 7.0f, 8.0f));
 }
 
 )");
@@ -3847,7 +3953,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
@@ -3880,7 +3987,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
@@ -3913,13 +4021,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float x = v.Sample(v_1, float3(v_2, float(4u))).x;
+  float x = v.Sample(v_1, float3(1.0f, 2.0f, 4.0f)).x;
 }
 
 )");
@@ -3948,13 +4056,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_Depth2d_Array_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float x = v.Sample(v_1, float3(v_2, float(4u)), int2(int(4), int(5))).x;
+  float x = v.Sample(v_1, float3(1.0f, 2.0f, 4.0f), int2(int(4), int(5))).x;
 }
 
 )");
@@ -3982,13 +4090,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSample_DepthCube_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float x = v.Sample(v_1, float4(v_2, float(4u))).x;
+  float x = v.Sample(v_1, float4(1.0f, 2.0f, 3.0f, 4.0f)).x;
 }
 
 )");
@@ -4016,7 +4124,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -4051,7 +4160,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -4086,13 +4196,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.SampleLevel(v_1, float3(v_2, float(4u)), 3.0f);
+  float4 x = v.SampleLevel(v_1, float3(1.0f, 2.0f, 4.0f), 3.0f);
 }
 
 )");
@@ -4123,13 +4233,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_2d_Array_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float4 x = v.SampleLevel(v_1, float3(v_2, float(4u)), 3.0f, int2(int(4), int(5)));
+  float4 x = v.SampleLevel(v_1, float3(1.0f, 2.0f, 4.0f), 3.0f, int2(int(4), int(5)));
 }
 
 )");
@@ -4157,7 +4267,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_3d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -4192,7 +4303,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_3d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture3D<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -4225,7 +4337,8 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Cube) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCube<float4> v : register(t0);
 SamplerState v_1 : register(s1);
@@ -4260,13 +4373,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Cube_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray<float4> v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 x = v.SampleLevel(v_1, float4(v_2, float(4u)), 3.0f);
+  float4 x = v.SampleLevel(v_1, float4(1.0f, 2.0f, 3.0f, 4.0f), 3.0f);
 }
 
 )");
@@ -4293,13 +4406,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float x = v.SampleLevel(v_1, v_2, float(int(3))).x;
+  float x = v.SampleLevel(v_1, float2(1.0f, 2.0f), 3.0f).x;
 }
 
 )");
@@ -4327,13 +4440,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2D v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float x = v.SampleLevel(v_1, v_2, float(int(3)), int2(int(4), int(5))).x;
+  float x = v.SampleLevel(v_1, float2(1.0f, 2.0f), 3.0f, int2(int(4), int(5))).x;
 }
 
 )");
@@ -4361,14 +4474,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float3 v_3 = float3(v_2, float(4u));
-  float x = v.SampleLevel(v_1, v_3, float(3u)).x;
+  float x = v.SampleLevel(v_1, float3(1.0f, 2.0f, 4.0f), 3.0f).x;
 }
 
 )");
@@ -4398,14 +4510,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_Depth2d_Array_Offset) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 Texture2DArray v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float2 v_2 = float2(1.0f, 2.0f);
-  float3 v_3 = float3(v_2, float(4u));
-  float x = v.SampleLevel(v_1, v_3, float(int(3)), int2(int(4), int(5))).x;
+  float x = v.SampleLevel(v_1, float3(1.0f, 2.0f, 4.0f), 3.0f, int2(int(4), int(5))).x;
 }
 
 )");
@@ -4433,14 +4544,13 @@ TEST_F(HlslWriterTest, BuiltinTextureSampleLevel_DepthCube_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.hlsl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 TextureCubeArray v : register(t0);
 SamplerState v_1 : register(s1);
 void main() {
-  float3 v_2 = float3(1.0f, 2.0f, 3.0f);
-  float4 v_3 = float4(v_2, float(4u));
-  float x = v.SampleLevel(v_1, v_3, float(3u)).x;
+  float x = v.SampleLevel(v_1, float4(1.0f, 2.0f, 3.0f, 4.0f), 3.0f).x;
 }
 
 )");
@@ -4461,7 +4571,8 @@ TEST_F(HlslWriterTest, BuiltinReflect_Vec2f32_NoPolyfill) {
     tint::hlsl::writer::Options options;
     options.entry_point_name = "main";
     options.workarounds.polyfill_reflect_vec2_f32 = false;
-    ASSERT_TRUE(Generate(options)) << err_ << output_.hlsl;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float2 x = (1.0f).xx;
@@ -4492,7 +4603,8 @@ TEST_F(HlslWriterTest, BuiltinReflect_Vec2f32_Polyfill) {
     tint::hlsl::writer::Options options;
     options.entry_point_name = "main";
     options.workarounds.polyfill_reflect_vec2_f32 = true;
-    ASSERT_TRUE(Generate(options)) << err_ << output_.hlsl;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
     EXPECT_EQ(output_.hlsl, R"(
 void main() {
   float2 x = (1.0f).xx;

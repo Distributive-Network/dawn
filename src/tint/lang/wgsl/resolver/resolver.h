@@ -59,7 +59,6 @@
 namespace tint::ast {
 class IndexAccessorExpression;
 class BinaryExpression;
-class BitcastExpression;
 class CallExpression;
 class CallStatement;
 class CaseStatement;
@@ -83,7 +82,6 @@ class ForLoopStatement;
 class IfStatement;
 class LoopStatement;
 class Statement;
-class StructMember;
 class SwitchStatement;
 class ValueConstructor;
 class ValueConversion;
@@ -172,6 +170,9 @@ class Resolver {
     /// @returns a new u8, if the subgroup matrix extension is enabled, otherwise nullptr
     const core::type::U8* U8(const ast::Identifier* ident);
 
+    /// @returns nullptr since u16 is not enabled in WGSL.
+    const core::type::U16* U16(const ast::Identifier* ident);
+
     /// @returns a vector with the element type @p el of width @p n resolved from the identifier @p
     /// ident.
     const core::type::Vector* Vec(const ast::Identifier* ident,
@@ -210,6 +211,9 @@ class Resolver {
 
     /// @returns a pointer resolved from the templated identifier @p ident.
     const core::type::Pointer* Ptr(const ast::Identifier* ident);
+
+    /// @returns a sampler resolved from the templated identifier @p ident
+    const core::type::Sampler* Sampler(const ast::Identifier* ident);
 
     /// @returns a sampled texture resolved from the templated identifier @p ident with the
     /// dimensions @p dim.
@@ -259,13 +263,6 @@ class Resolver {
     sem::BuiltinEnumExpression<core::AddressSpace>* AddressSpaceExpression(
         const ast::Expression* expr);
 
-    /// @returns the call of Expression() cast to a
-    /// sem::BuiltinEnumExpression<core::type::TexelFormat>. If the sem::Expression is not a
-    /// sem::BuiltinEnumExpression<core::type::TexelFormat>, then an error diagnostic is raised and
-    /// nullptr is returned.
-    sem::BuiltinEnumExpression<core::TexelFormat>* TexelFormatExpression(
-        const ast::Expression* expr);
-
     /// @returns the call of Expression() cast to a sem::BuiltinEnumExpression<core::Access>*.
     /// If the sem::Expression is not a sem::BuiltinEnumExpression<core::Access>*, then an error
     /// diagnostic is raised and nullptr is returned.
@@ -310,9 +307,22 @@ class Resolver {
     /// perform alias analysis.
     void RegisterLoad(const sem::ValueExpression* expr);
 
+    /// Register a bufferView or bufferArrayView call to track size compatibility.
+    void RegisterBufferView(const sem::Call* call, wgsl::BuiltinFn fn);
+
+    /// Register a subgroupMatrixLoad or subgroupMatrixStore to call binding size.
+    void RegisterSubgroupMatrixAccess(const sem::Call* call, wgsl::BuiltinFn fn);
+
     /// Perform pointer alias analysis for `call`.
     /// @returns true is the call arguments are free from aliasing issues, false otherwise.
     bool AliasAnalysis(const sem::Call* call);
+
+    /// Perform an analysis of buffer sizes for `call`.
+    /// @returns true if the call arguments are all appropriately sized.
+    bool CheckBufferViews(const sem::Call* call);
+
+    /// Propagate subgroup matrix required sizes to global variables.
+    void PropagateSubgroupMatrixAccesses(const sem::Call* call);
 
     /// If `expr` is of a reference type, then Load will create and return a sem::Load node wrapping
     /// `expr`. If `expr` is not of a reference type, then Load will just return `expr`.
@@ -334,18 +344,11 @@ class Resolver {
     const sem::ValueExpression* Materialize(const sem::ValueExpression* expr,
                                             const core::type::Type* target_type = nullptr);
 
-    /// For each argument in `args`:
-    /// * Calls Materialize() passing the argument and the corresponding parameter type.
-    /// * Calls Load() passing the argument, iff the corresponding parameter type is not a
-    ///   reference type.
+    /// Call Materialize on each argument for the corresponding parameter type.
     /// @returns true on success, false on failure.
     template <size_t N>
-    bool MaybeMaterializeAndLoadArguments(Vector<const sem::ValueExpression*, N>& args,
-                                          const sem::CallTarget* target);
-
-    /// @returns true if an argument of an abstract numeric type, passed to a parameter of type
-    /// `parameter_ty` should be materialized.
-    bool ShouldMaterializeArgument(const core::type::Type* parameter_ty) const;
+    bool MaybeMaterializeArguments(Vector<const sem::ValueExpression*, N>& args,
+                                   const sem::CallTarget* target);
 
     /// Converts `c` to `target_ty`
     /// @returns true on success, false on failure.
@@ -560,7 +563,7 @@ class Resolver {
     /// Records the address space usage for the given type, and any transient
     /// dependencies of the type. Validates that the type can be used for the
     /// given address space, erroring if it cannot.
-    /// @param sc the address space to apply to the type and transitent types
+    /// @param sc the address space to apply to the type and transient types
     /// @param ty the type to apply the address space on
     /// @param usage the Source of the root variable declaration that uses the
     /// given type and address space. Used for generating sensible error
@@ -577,10 +580,6 @@ class Resolver {
     /// Allocate constant IDs for pipeline-overridable constants.
     /// @returns true on success, false on error
     bool AllocateOverridableConstantIds();
-
-    /// Set the shadowing information on variable declarations.
-    /// @note this method must only be called after all semantic nodes are built.
-    void SetShadows();
 
     /// StatementScope() does the following:
     /// * Creates the AST -> SEM mapping.
@@ -617,13 +616,14 @@ class Resolver {
     void ErrorInvalidAttribute(const ast::Attribute* attr, StyledText use);
 
     /// @returns a new error message added to the program's diagnostics
+    diag::Diagnostic& AddError(const ast::Node* node) const;
     diag::Diagnostic& AddError(const Source& source) const;
 
     /// @returns a new warning message added to the program's diagnostics
-    diag::Diagnostic& AddWarning(const Source& source) const;
+    diag::Diagnostic& AddWarning(const ast::Node* node) const;
 
     /// @returns a new note message added to the program's diagnostics
-    diag::Diagnostic& AddNote(const Source& source) const;
+    diag::Diagnostic& AddNote(const ast::Node* node) const;
 
     /// @returns the core::type::Type for the builtin type @p builtin_ty with the identifier @p
     /// ident
@@ -633,6 +633,10 @@ class Resolver {
     /// @returns the nesting depth of @ty as defined in
     /// https://gpuweb.github.io/gpuweb/wgsl/#composite-types
     size_t NestDepth(const core::type::Type* ty) const;
+
+    /// @returns The offset of the runtime array pointed to by `pointer` that is used with a
+    /// subgroup matrix load/store.
+    uint64_t FindSubgroupMatrixStructOffset(const sem::ValueExpression* pointer) const;
 
     // ArrayConstructorSig represents a unique array constructor signature.
     // It is a tuple of the array type, number of arguments provided and earliest evaluation stage.
@@ -672,6 +676,15 @@ class Resolver {
         Hashset<const sem::Variable*, 4> parameter_reads;
     };
 
+    // BufferViewInfo tracks info for invalid buffer sizes.
+    struct BufferViewInfo {
+        /// The minimum type size. This is propagated out through the inspector.
+        uint64_t min_type_size = 0;
+        /// The total view size used for validation.
+        uint64_t total_size = 0;
+        const ast::Node* node = nullptr;
+    };
+
     ProgramBuilder& b;
     diag::List& diagnostics_;
     core::constant::Eval const_eval_;
@@ -691,12 +704,13 @@ class Resolver {
     Hashmap<ArrayConstructorSig, sem::CallTarget*, 8> array_ctors_;
     Hashmap<StructConstructorSig, sem::CallTarget*, 8> struct_ctors_;
     Hashmap<SubgroupMatrixConstructorSig, sem::CallTarget*, 8> subgroup_matrix_ctors_;
+    Hashmap<const sem::Variable*, BufferViewInfo, 8> buffer_view_sizes_;
+    Hashmap<const sem::Variable*, uint64_t, 8> subgroup_matrix_sizes_;
     sem::Function* current_function_ = nullptr;
     sem::Statement* current_statement_ = nullptr;
     sem::CompoundStatement* current_compound_statement_ = nullptr;
     Vector<std::function<void(const sem::GlobalVariable*)>, 4> on_transitively_reference_global_;
     uint32_t current_scoping_depth_ = 0;
-    Hashset<TypeAndAddressSpace, 8> valid_type_storage_layouts_;
     Hashmap<const ast::Expression*, const ast::BinaryExpression*, 8> logical_binary_lhs_to_parent_;
     Hashset<const ast::Expression*, 8> not_evaluated_;
     Hashmap<const core::type::Type*, size_t, 8> nest_depth_;

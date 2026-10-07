@@ -12,95 +12,92 @@ cbuffer cbuffer_a : register(b0) {
 };
 static int counter = int(0);
 int i() {
-  counter = asint((asuint(counter) + asuint(int(1))));
+  counter = asint((asuint(counter) + 1u));
   return counter;
 }
 
 vector<float16_t, 2> tint_bitcast_to_f16(uint src) {
   uint v = src;
-  float t_low = f16tof32((v & 65535u));
-  float t_high = f16tof32(((v >> 16u) & 65535u));
-  float16_t v_1 = float16_t(t_low);
-  return vector<float16_t, 2>(v_1, float16_t(t_high));
+  vector<uint16_t, 2> v16 = vector<uint16_t, 2>(((uint2(v, v) >> uint2(0u, 16u)) & (65535u).xx));
+  return asfloat16(v16);
 }
 
-matrix<float16_t, 3, 2> v_2(uint start_byte_offset) {
-  vector<float16_t, 2> v_3 = tint_bitcast_to_f16(a[(start_byte_offset / 16u)][((start_byte_offset & 15u) >> 2u)]);
-  vector<float16_t, 2> v_4 = tint_bitcast_to_f16(a[((4u + start_byte_offset) / 16u)][(((4u + start_byte_offset) & 15u) >> 2u)]);
-  return matrix<float16_t, 3, 2>(v_3, v_4, tint_bitcast_to_f16(a[((8u + start_byte_offset) / 16u)][(((8u + start_byte_offset) & 15u) >> 2u)]));
+matrix<float16_t, 3, 2> v_1(uint start_byte_offset) {
+  vector<float16_t, 2> v_2 = tint_bitcast_to_f16(a[(start_byte_offset / 16u)][((start_byte_offset & 15u) >> 2u)]);
+  uint v_3 = (4u + start_byte_offset);
+  vector<float16_t, 2> v_4 = tint_bitcast_to_f16(a[(v_3 / 16u)][((v_3 & 15u) >> 2u)]);
+  uint v_5 = (8u + start_byte_offset);
+  return matrix<float16_t, 3, 2>(v_2, v_4, tint_bitcast_to_f16(a[(v_5 / 16u)][((v_5 & 15u) >> 2u)]));
 }
 
-Inner v_5(uint start_byte_offset) {
-  Inner v_6 = {v_2(start_byte_offset)};
-  return v_6;
+Inner v_6(uint start_byte_offset) {
+  Inner v_7 = {v_1(start_byte_offset)};
+  return v_7;
 }
 
 typedef Inner ary_ret[4];
-ary_ret v_7(uint start_byte_offset) {
+ary_ret v_8(uint start_byte_offset) {
   Inner a_2[4] = (Inner[4])0;
   {
-    uint v_8 = 0u;
-    v_8 = 0u;
+    uint v_9 = 0u;
+    v_9 = 0u;
     while(true) {
-      uint v_9 = v_8;
-      if ((v_9 >= 4u)) {
+      uint v_10 = v_9;
+      if ((v_10 >= 4u)) {
         break;
       }
-      Inner v_10 = v_5((start_byte_offset + (v_9 * 64u)));
-      a_2[v_9] = v_10;
+      Inner v_11 = v_6((start_byte_offset + (v_10 * 64u)));
+      a_2[v_10] = v_11;
       {
-        v_8 = (v_9 + 1u);
+        v_9 = (v_10 + 1u);
       }
-      continue;
     }
   }
-  Inner v_11[4] = a_2;
-  return v_11;
+  Inner v_12[4] = a_2;
+  return v_12;
 }
 
-Outer v_12(uint start_byte_offset) {
-  Inner v_13[4] = v_7(start_byte_offset);
-  Outer v_14 = {v_13};
-  return v_14;
+Outer v_13(uint start_byte_offset) {
+  Inner v_14[4] = v_8(start_byte_offset);
+  Outer v_15 = {v_14};
+  return v_15;
 }
 
 typedef Outer ary_ret_1[4];
-ary_ret_1 v_15(uint start_byte_offset) {
+ary_ret_1 v_16(uint start_byte_offset) {
   Outer a_1[4] = (Outer[4])0;
   {
-    uint v_16 = 0u;
-    v_16 = 0u;
+    uint v_17 = 0u;
+    v_17 = 0u;
     while(true) {
-      uint v_17 = v_16;
-      if ((v_17 >= 4u)) {
+      uint v_18 = v_17;
+      if ((v_18 >= 4u)) {
         break;
       }
-      Outer v_18 = v_12((start_byte_offset + (v_17 * 256u)));
-      a_1[v_17] = v_18;
+      Outer v_19 = v_13((start_byte_offset + (v_18 * 256u)));
+      a_1[v_18] = v_19;
       {
-        v_16 = (v_17 + 1u);
+        v_17 = (v_18 + 1u);
       }
-      continue;
     }
   }
-  Outer v_19[4] = a_1;
-  return v_19;
+  Outer v_20[4] = a_1;
+  return v_20;
 }
 
 [numthreads(1, 1, 1)]
 void f() {
-  uint v_20 = (256u * min(uint(i()), 3u));
-  uint v_21 = (64u * min(uint(i()), 3u));
-  uint v_22 = (4u * min(uint(i()), 2u));
-  Outer l_a[4] = v_15(0u);
-  Outer l_a_i = v_12(v_20);
-  Inner l_a_i_a[4] = v_7(v_20);
-  Inner l_a_i_a_i = v_5((v_20 + v_21));
-  matrix<float16_t, 3, 2> l_a_i_a_i_m = v_2((v_20 + v_21));
-  vector<float16_t, 2> l_a_i_a_i_m_i = tint_bitcast_to_f16(a[(((v_20 + v_21) + v_22) / 16u)][((((v_20 + v_21) + v_22) & 15u) >> 2u)]);
-  uint v_23 = (((v_20 + v_21) + v_22) + (min(uint(i()), 1u) * 2u));
-  uint v_24 = a[(v_23 / 16u)][((v_23 & 15u) >> 2u)];
-  uint v_25 = ((((v_23 % 4u) == 0u)) ? (0u) : (1u));
-  float16_t l_a_i_a_i_m_i_i = tint_bitcast_to_f16(v_24)[v_25];
+  uint v_21 = (min(uint(i()), 3u) * 256u);
+  uint v_22 = (min(uint(i()), 3u) * 64u);
+  uint v_23 = (min(uint(i()), 2u) * 4u);
+  Outer l_a[4] = v_16(0u);
+  Outer l_a_i = v_13(v_21);
+  Inner l_a_i_a[4] = v_8(v_21);
+  Inner l_a_i_a_i = v_6((v_21 + v_22));
+  matrix<float16_t, 3, 2> l_a_i_a_i_m = v_1((v_21 + v_22));
+  uint v_24 = ((v_21 + v_22) + v_23);
+  vector<float16_t, 2> l_a_i_a_i_m_i = tint_bitcast_to_f16(a[(v_24 / 16u)][((v_24 & 15u) >> 2u)]);
+  uint v_25 = (((v_21 + v_22) + v_23) + (min(uint(i()), 1u) * 2u));
+  float16_t l_a_i_a_i_m_i_i = tint_bitcast_to_f16(a[(v_25 / 16u)][((v_25 & 15u) >> 2u)])[select(((v_25 % 4u) == 0u), 0u, 1u)];
 }
 

@@ -27,11 +27,11 @@
 
 #include "src/tint/lang/msl/ir/member_builtin_call.h"
 
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
-
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/ir/ir_helper_test.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/number.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/sampler.h"
@@ -65,9 +65,25 @@ TEST_F(IR_MslMemberBuiltinCallTest, Clone) {
     EXPECT_TRUE(new_b->Object()->Type()->Is<core::type::SampledTexture>());
 
     auto args = new_b->Args();
-    ASSERT_EQ(2u, args.Length());
+    ASSERT_EQ(2u, args.size());
     EXPECT_TRUE(args[0]->Type()->Is<core::type::Sampler>());
     EXPECT_TRUE(args[1]->Type()->Is<core::type::Vector>());
+}
+
+TEST_F(IR_MslMemberBuiltinCallTest, CloneWithExplicitParams) {
+    auto* t = b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()));
+    auto* s = b.FunctionParam("s", ty.sampler());
+    auto* coords = b.FunctionParam("coords", ty.vec2f());
+    auto* builtin =
+        b.MemberCall<MemberBuiltinCall>(mod.Types().void_(), BuiltinFn::kSample, t, s, coords);
+    builtin->SetExplicitTemplateParams(Vector<core::ir::TemplateParameter, 1>{mod.Types().i32()});
+
+    auto* new_b = clone_ctx.Clone(builtin);
+    EXPECT_NE(builtin->Result(), new_b->Result());
+    EXPECT_EQ(mod.Types().void_(), new_b->Result()->Type());
+
+    EXPECT_EQ(BuiltinFn::kSample, new_b->Func());
+    EXPECT_THAT(new_b->ExplicitTemplateParams(), testing::ElementsAre(mod.Types().i32()));
 }
 
 TEST_F(IR_MslMemberBuiltinCallTest, DoesNotMatchNonMemberFunction) {
@@ -161,7 +177,7 @@ TEST_F(IR_MslMemberBuiltinCallTest, TooFewArgs) {
     EXPECT_EQ(res.Failure().reason,
               R"(:3:17 error: get_width: no matching call to 'get_width(texture_2d<f32>)'
 
-16 candidate functions:
+17 candidate functions:
  • 'get_width(texture: texture_depth_multisampled_2d  ✗ ) -> u32'
  • 'get_width(texture: texture_storage_1d<F, A>  ✗ ) -> u32'
  • 'get_width(texture: texture_1d<T>  ✗ ) -> u32' where:
@@ -169,6 +185,8 @@ TEST_F(IR_MslMemberBuiltinCallTest, TooFewArgs) {
  • 'get_width(texture: texture_2d<T>  ✓ , u32  ✗ ) -> u32' where:
       ✓  'T' is 'f32', 'i32' or 'u32'
  • 'get_width(texture: texture_multisampled_2d<T>  ✗ ) -> u32' where:
+      ✗  'T' is 'f32', 'i32' or 'u32'
+ • 'get_width(texture: texture_multisampled_2d_array<T>  ✗ ) -> u32' where:
       ✗  'T' is 'f32', 'i32' or 'u32'
  • 'get_width(texture: texture_depth_2d  ✗ , u32  ✗ ) -> u32'
  • 'get_width(texture: texture_depth_2d_array  ✗ , u32  ✗ ) -> u32'
@@ -218,7 +236,7 @@ TEST_F(IR_MslMemberBuiltinCallTest, TooManyArgs) {
         res.Failure().reason,
         R"(:3:17 error: get_width: no matching call to 'get_width(texture_2d<f32>, u32, u32, u32)'
 
-16 candidate functions:
+17 candidate functions:
  • 'get_width(texture: texture_2d<T>  ✓ , u32  ✓ ) -> u32' where:
       ✗  overload expects 2 arguments, call passed 4 arguments
       ✓  'T' is 'f32', 'i32' or 'u32'
@@ -242,6 +260,8 @@ TEST_F(IR_MslMemberBuiltinCallTest, TooManyArgs) {
  • 'get_width(texture: texture_1d<T>  ✗ ) -> u32' where:
       ✗  'T' is 'f32', 'i32' or 'u32'
  • 'get_width(texture: texture_multisampled_2d<T>  ✗ ) -> u32' where:
+      ✗  'T' is 'f32', 'i32' or 'u32'
+ • 'get_width(texture: texture_multisampled_2d_array<T>  ✗ ) -> u32' where:
       ✗  'T' is 'f32', 'i32' or 'u32'
 
     %3:u32 = %t.get_width 0u, 1u, 2u

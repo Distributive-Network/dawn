@@ -29,15 +29,14 @@
 
 #include <limits>
 #include <string>
-#include <tuple>
 #include <utility>
 
 #include "src/tint/lang/core/constant/splat.h"
 #include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/ir/access.h"
+#include "src/tint/lang/core/ir/array_count.h"
 #include "src/tint/lang/core/ir/binary.h"
-#include "src/tint/lang/core/ir/bitcast.h"
 #include "src/tint/lang/core/ir/block.h"
 #include "src/tint/lang/core/ir/break_if.h"
 #include "src/tint/lang/core/ir/call.h"
@@ -69,7 +68,7 @@
 #include "src/tint/lang/core/ir/unary.h"
 #include "src/tint/lang/core/ir/unreachable.h"
 #include "src/tint/lang/core/ir/user_call.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/ir/var.h"
 #include "src/tint/lang/core/type/atomic.h"
 #include "src/tint/lang/core/type/binding_array.h"
@@ -81,22 +80,19 @@
 #include "src/tint/lang/core/type/reference.h"
 #include "src/tint/lang/core/type/sampler.h"
 #include "src/tint/lang/core/type/storage_texture.h"
-#include "src/tint/lang/core/type/texture.h"
 #include "src/tint/lang/core/type/type.h"
 #include "src/tint/lang/wgsl/ast/type.h"
 #include "src/tint/lang/wgsl/ir/builtin_call.h"
-#include "src/tint/lang/wgsl/ir/unary.h"
 #include "src/tint/lang/wgsl/program/program_builder.h"
 #include "src/tint/lang/wgsl/reserved_words.h"
 #include "src/tint/lang/wgsl/resolver/resolve.h"
 #include "src/tint/utils/containers/hashmap.h"
-#include "src/tint/utils/containers/predicates.h"
-#include "src/tint/utils/containers/reverse.h"
 #include "src/tint/utils/containers/transform.h"
 #include "src/tint/utils/containers/vector.h"
 #include "src/tint/utils/macros/scoped_assignment.h"
 #include "src/tint/utils/math/math.h"
 #include "src/tint/utils/rtti/switch.h"
+#include "src/utils/compiler.h"
 
 using namespace tint::core::fluent_types;  // NOLINT
 
@@ -105,17 +101,10 @@ namespace {
 
 class State {
   public:
-    explicit State(const core::ir::Module& m) : mod(m) {}
+    explicit State(core::ir::Module& m) : mod(m) {}
 
     Program Run(const Options& options) {
-        core::ir::Capabilities caps{
-            core::ir::Capability::kAllowMultipleEntryPoints,
-            core::ir::Capability::kAllowOverrides,
-            core::ir::Capability::kAllowPhonyInstructions,
-            core::ir::Capability::kAllowRefTypes,
-        };
-        if (auto res = core::ir::ValidateAndDumpIfNeeded(mod, "wgsl.to_program", caps);
-            res != Success) {
+        if (auto res = Validate(mod, "before wgsl.to_program"); res != Success) {
             // IR module failed validation.
             b.Diagnostics().AddError(Source{}) << res.Failure();
             return Program{resolver::Resolve(b)};
@@ -138,12 +127,19 @@ class State {
         if (options.allow_non_uniform_derivatives) {
             // Suppress errors regarding non-uniform derivative operations if requested, by adding a
             // diagnostic directive to the module.
-            b.DiagnosticDirective(wgsl::DiagnosticSeverity::kOff, "derivative_uniformity");
+            b.DiagnosticDirective(wgsl::DiagnosticSeverity::kOff,
+                                  b.DiagnosticRuleName("derivative_uniformity"));
         }
         if (options.allow_non_uniform_subgroup_operations) {
             // Suppress errors regarding non-uniform subgroups operations if requested, by adding a
             // diagnostic directive to the module.
-            b.DiagnosticDirective(wgsl::DiagnosticSeverity::kOff, "subgroup_uniformity");
+            b.DiagnosticDirective(wgsl::DiagnosticSeverity::kOff,
+                                  b.DiagnosticRuleName("subgroup_uniformity"));
+        }
+        if (options.disable_unreachable_code_warning) {
+            // Suppress warnings regarding unreachable code
+            b.DiagnosticDirective(wgsl::DiagnosticSeverity::kOff,
+                                  b.DiagnosticRuleName("chromium", "unreachable_code"));
         }
 
         return Program{resolver::Resolve(b, options.allowed_features)};
@@ -151,7 +147,7 @@ class State {
 
   private:
     /// The source IR module
-    const core::ir::Module& mod;
+    core::ir::Module& mod;
 
     /// The target ProgramBuilder
     ProgramBuilder b;
@@ -202,10 +198,7 @@ class State {
                 [&](const core::ir::Override* override_) { Override(override_); },  //
                 [&](const core::ir::Binary* binary) { Binary(binary); },            //
                 [&](const core::ir::Unary* unary) { Unary(unary); },                //
-                [&](const core::ir::Bitcast* c) {
-                    auto ty = Type(c->Result()->Type());
-                    Bind(c->Result(), b.Bitcast(ty, Expr(c->Args()[0])));
-                },
+                [&](const wgsl::ir::BuiltinCall* c) { Call(c); },                   //
                 TINT_ICE_ON_NO_MATCH);
         }
     }
@@ -245,8 +238,14 @@ class State {
                     case core::BuiltinValue::kGlobalInvocationId:
                         attrs.Push(b.Builtin(core::BuiltinValue::kGlobalInvocationId));
                         break;
+                    case core::BuiltinValue::kGlobalInvocationIndex:
+                        attrs.Push(b.Builtin(core::BuiltinValue::kGlobalInvocationIndex));
+                        break;
                     case core::BuiltinValue::kWorkgroupId:
                         attrs.Push(b.Builtin(core::BuiltinValue::kWorkgroupId));
+                        break;
+                    case core::BuiltinValue::kWorkgroupIndex:
+                        attrs.Push(b.Builtin(core::BuiltinValue::kWorkgroupIndex));
                         break;
                     case core::BuiltinValue::kNumWorkgroups:
                         attrs.Push(b.Builtin(core::BuiltinValue::kNumWorkgroups));
@@ -272,6 +271,10 @@ class State {
                     case core::BuiltinValue::kPrimitiveIndex:
                         Enable(wgsl::Extension::kPrimitiveIndex);
                         attrs.Push(b.Builtin(core::BuiltinValue::kPrimitiveIndex));
+                        break;
+                    case core::BuiltinValue::kViewIndex:
+                        Enable(wgsl::Extension::kViewInstancing);
+                        attrs.Push(b.Builtin(core::BuiltinValue::kViewIndex));
                         break;
                     default:
                         TINT_IR_UNIMPLEMENTED(mod) << builtin.value();
@@ -586,7 +589,7 @@ class State {
     void BreakIf(const core::ir::BreakIf* i) { Append(b.BreakIf(Expr(i->Condition()))); }
 
     void Return(const core::ir::Return* ret) {
-        if (ret->Args().IsEmpty()) {
+        if (ret->Args().empty()) {
             // Return has no arguments.
             // If this block is nested withing some control flow, then we must
             // emit a 'return' statement, otherwise we've just naturally reached
@@ -598,11 +601,11 @@ class State {
         }
 
         // Return has arguments - this is the return value.
-        if (ret->Args().Length() != 1) {
-            TINT_IR_ICE(mod) << "expected 1 value for return, got " << ret->Args().Length();
+        if (ret->Args().size() != 1) {
+            TINT_IR_ICE(mod) << "expected 1 value for return, got " << ret->Args().size();
         }
 
-        Append(b.Return(Expr(ret->Args().Front())));
+        Append(b.Return(Expr(ret->Args().front())));
     }
 
     void Var(const core::ir::Var* var) {
@@ -671,7 +674,7 @@ class State {
     void Let(const core::ir::Let* let) {
         auto* result = let->Result();
         Symbol name = NameFor(result);
-        Append(b.Decl(b.Let(name, Expr(let->Value()))));
+        Append(b.Decl(b.Let(name, ast::Type{}, Expr(let->Value()))));
         Bind(result, name);
     }
 
@@ -740,8 +743,16 @@ class State {
                 const ast::CallExpression* expr = nullptr;
                 if (!c->ExplicitTemplateParams().IsEmpty()) {
                     Vector<const ast::Expression*, 4> tmpl_args;
-                    for (auto* e : c->ExplicitTemplateParams()) {
-                        tmpl_args.Push(Type(e).expr);
+                    for (auto& e : c->ExplicitTemplateParams()) {
+                        if (std::holds_alternative<const core::type::Type*>(e)) {
+                            tmpl_args.Push(Type(std::get<const core::type::Type*>(e)).expr);
+                        } else if (std::holds_alternative<core::Majorness>(e)) {
+                            StringStream str;
+                            str << std::get<core::Majorness>(e);
+                            tmpl_args.Push(b.Expr(str.str()));
+                        } else {
+                            TINT_UNREACHABLE() << "Unhandled template parameter kind";
+                        }
                     }
                     expr = b.Call(b.Ident(c->Func(), std::move(tmpl_args)), std::move(args));
                 } else {
@@ -761,10 +772,6 @@ class State {
             [&](const core::ir::Convert* c) {
                 auto ty = Type(c->Result()->Type());
                 Bind(c->Result(), b.Call(ty, std::move(args)));
-            },
-            [&](const core::ir::Bitcast* c) {
-                auto ty = Type(c->Result()->Type());
-                Bind(c->Result(), b.Bitcast(ty, args[0]));
             },
             [&](const core::ir::Discard*) { Append(b.Discard()); },  //
             TINT_ICE_ON_NO_MATCH);
@@ -859,8 +866,11 @@ class State {
             }
             components.Push(xyzw[i]);
         }
-        auto* swizzle =
-            b.MemberAccessor(vec, std::string_view(components.begin(), components.Length()));
+        // SAFETY: `components` contains at most 4 elements populated from the valid `xyzw` array
+        // based on the swizzle indices, which is bounds-safe for this view.
+        auto* swizzle = b.MemberAccessor(
+            vec,
+            DAWN_UNSAFE_BUFFERS(std::string_view(components.AsSpan().data(), components.Length())));
         Bind(s->Result(), swizzle);
     }
 
@@ -1034,14 +1044,16 @@ class State {
                 }
 
                 auto el = Type(a->ElemType());
-                if (a->Count()->Is<core::type::RuntimeArrayCount>()) {
-                    return b.ty.array(el);
-                }
-                auto count = a->ConstantCount();
-                if (!count) {
-                    TINT_IR_ICE(mod) << core::type::Array::kErrExpectedConstantCount;
-                }
-                return b.ty.array(el, u32(count.value()));
+                return tint::Switch(
+                    a->Count(),
+                    [&](const core::type::RuntimeArrayCount*) { return b.ty.array(el); },
+                    [&](const core::type::ConstantArrayCount* count) {
+                        return b.ty.array(el, u32(count->value));
+                    },
+                    [&](const core::ir::type::ValueArrayCount* count) {
+                        return b.ty.array(el, Expr(count->value));
+                    },
+                    TINT_ICE_ON_NO_MATCH);
             },
             [&](const core::type::Struct* s) { return Struct(s); },
             [&](const core::type::Atomic* a) { return b.ty.atomic(Type(a->Type())); },
@@ -1059,10 +1071,6 @@ class State {
                 return b.ty.sampled_texture(t->Dim(), el);
             },
             [&](const core::type::StorageTexture* t) {
-                if (RequiresChromiumInternalGraphite(t)) {
-                    Enable(wgsl::Extension::kChromiumInternalGraphite);
-                }
-
                 return b.ty.storage_texture(t->Dim(), t->TexelFormat(), t->Access());
             },
             [&](const core::type::Sampler* s) { return b.ty.sampler(s->Kind()); },
@@ -1202,7 +1210,7 @@ class State {
             return name;
         });
 
-        return b.ty(n);
+        return b.ty.AsType(n);
     }
 
     bool ContainsBuiltinStruct(const core::type::Type* ty) {
@@ -1291,7 +1299,7 @@ class State {
     /// creates a phony assignment with @p expr.
     void Bind(const core::ir::Value* value, const ast::Expression* expr) {
         TINT_IR_ASSERT(mod, value);
-        if (value->IsUsed()) {
+        if (value->IsUsed() || current_function_ == nullptr) {
             if (!bindings_.Add(value, ValueBinding{.ast_expr = expr})) {
                 TINT_IR_ICE(mod) << "Bind(" << value->TypeInfo().name
                                  << ") called twice for same value";
@@ -1411,17 +1419,11 @@ class State {
                 return false;
         }
     }
-
-    /// @returns true if the storage texture type requires the kChromiumInternalGraphite extension
-    /// to be enabled.
-    bool RequiresChromiumInternalGraphite(const core::type::StorageTexture* tex) {
-        return tex->TexelFormat() == core::TexelFormat::kR8Unorm;
-    }
 };
 
 }  // namespace
 
-Program IRToProgram(const core::ir::Module& i, const Options& options) {
+Program IRToProgram(core::ir::Module& i, const Options& options) {
     return State{i}.Run(options);
 }
 

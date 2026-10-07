@@ -25,7 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/tests/AdapterTestConfig.h"
+#include "src/dawn/tests/AdapterTestConfig.h"
 
 #include <webgpu/webgpu_cpp.h>
 
@@ -34,7 +34,7 @@
 #include <string>
 #include <vector>
 
-#include "dawn/common/Assert.h"
+#include "src/utils/assert.h"
 
 BackendTestConfig::BackendTestConfig(wgpu::BackendType backendType,
                                      std::initializer_list<const char*> forceEnabledWorkarounds,
@@ -89,6 +89,12 @@ BackendTestConfig VulkanBackend(std::initializer_list<const char*> forceEnabledW
                                 std::initializer_list<const char*> forceDisabledWorkarounds) {
     return BackendTestConfig(wgpu::BackendType::Vulkan, forceEnabledWorkarounds,
                              forceDisabledWorkarounds);
+}
+
+BackendTestConfig BackendTestConfig::EnableSharedMemoryInWire() const {
+    BackendTestConfig copy = *this;
+    copy.enableSharedMemoryInWire = true;
+    return copy;
 }
 
 TestAdapterProperties::TestAdapterProperties(const wgpu::AdapterInfo& info,
@@ -153,7 +159,8 @@ AdapterTestParam::AdapterTestParam(const BackendTestConfig& config,
                                    const TestAdapterProperties& adapterProperties)
     : adapterProperties(adapterProperties),
       forceEnabledWorkarounds(config.forceEnabledWorkarounds),
-      forceDisabledWorkarounds(config.forceDisabledWorkarounds) {}
+      forceDisabledWorkarounds(config.forceDisabledWorkarounds),
+      enableSharedMemoryInWire(config.enableSharedMemoryInWire) {}
 
 std::ostream& operator<<(std::ostream& os, const AdapterTestParam& param) {
     os << param.adapterProperties.ParamName() << " " << param.adapterProperties.name;
@@ -171,6 +178,9 @@ std::ostream& operator<<(std::ostream& os, const AdapterTestParam& param) {
     }
     for (const char* forceDisabledWorkaround : param.forceDisabledWorkarounds) {
         os << "; d:" << forceDisabledWorkaround;
+    }
+    if (param.enableSharedMemoryInWire) {
+        os << "; sharedMemoryInWire";
     }
     return os;
 }

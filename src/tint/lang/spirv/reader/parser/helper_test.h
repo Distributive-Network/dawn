@@ -35,7 +35,7 @@
 #include "gtest/gtest.h"
 #include "src/tint/lang/core/ir/disassembler.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/spirv/reader/common/helper_test.h"
 #include "src/tint/lang/spirv/reader/parser/parser.h"
 
@@ -68,19 +68,10 @@ class SpirvParserTestHelperBase : public BASE {
         TINT_CHECK_RESULT_UNWRAP(binary, Assemble(spirv_asm, spv_version));
 
         // Parse the SPIR-V to produce an IR module.
-        TINT_CHECK_RESULT_UNWRAP(parsed, Parse(Slice(binary.data(), binary.size()), options));
+        TINT_CHECK_RESULT_UNWRAP(parsed, Parse(binary, options));
 
-        // Validate the IR module against the capabilities supported by the SPIR-V dialect.
-        TINT_CHECK_RESULT(
-            ValidateAndDumpIfNeeded(parsed, "spirv.test",
-                                    core::ir::Capabilities{
-                                        core::ir::Capability::kAllowMultipleEntryPoints,
-                                        core::ir::Capability::kAllowOverrides,
-                                        core::ir::Capability::kAllowPhonyInstructions,
-                                        core::ir::Capability::kAllowVectorElementPointer,
-                                        core::ir::Capability::kAllowNonCoreTypes,
-                                        core::ir::Capability::kAllowStructMatrixDecorations,
-                                    }));
+        // Validate the IR module.
+        core::ir::AssertValid(parsed, "after spirv.test");
 
         // Return the disassembled IR module.
         return core::ir::Disassembler(parsed).Plain();

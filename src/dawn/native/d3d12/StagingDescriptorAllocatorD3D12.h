@@ -30,11 +30,11 @@
 
 #include <vector>
 
-#include "dawn/common/SerialQueue.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/IntegerTypes.h"
-#include "dawn/native/d3d12/CPUDescriptorHeapAllocationD3D12.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/SerialQueue.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/d3d12/CPUDescriptorHeapAllocationD3D12.h"
 
 // |StagingDescriptorAllocator| allocates a fixed-size block of descriptors from a CPU
 // descriptor heap pool.
@@ -90,7 +90,7 @@ class StagingDescriptorAllocator {
     const uint32_t mBlockSize = 0;      // Size of the block of descriptors (in bytes).
     const uint32_t mHeapSize = 0;       // Size of the heap (in number of descriptors).
 
-    D3D12_DESCRIPTOR_HEAP_TYPE mHeapType;
+    D3D12_DESCRIPTOR_HEAP_TYPE mHeapType{};
 
     SerialQueue<ExecutionSerial, CPUDescriptorHeapAllocation> mAllocationsToDelete;
 };

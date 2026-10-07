@@ -34,12 +34,12 @@
 #include <string>
 #include <type_traits>
 
-#include "dawn/common/Ref.h"
-#include "dawn/native/CallbackTaskManager.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/EventManager.h"
-#include "dawn/native/Pipeline.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/Ref.h"
+#include "src/dawn/native/CallbackTaskManager.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/EventManager.h"
+#include "src/dawn/native/Pipeline.h"
 
 namespace dawn::native {
 
@@ -56,20 +56,15 @@ class CreatePipelineAsyncEvent final : public EventManager::TrackedEvent {
   public:
     using CallbackType = decltype(std::declval<CreatePipelineAsyncCallbackInfo>().callback);
 
-    // Create an event backed by the given wait list event (for async pipeline creation goes through
-    // the backend).
+    // Create an async event pipeline creation. If cached is true, this is ready at creation.
     CreatePipelineAsyncEvent(DeviceBase* device,
                              const CreatePipelineAsyncCallbackInfo& callbackInfo,
                              Ref<PipelineType> pipeline,
-                             Ref<WaitListEvent> event);
-    // Create an event that's ready at creation (for cached results)
-    CreatePipelineAsyncEvent(DeviceBase* device,
-                             const CreatePipelineAsyncCallbackInfo& callbackInfo,
-                             Ref<PipelineType> pipeline);
+                             bool readyAtCreation);
     // Create an event that's ready at creation (for errors)
     CreatePipelineAsyncEvent(DeviceBase* device,
                              const CreatePipelineAsyncCallbackInfo& callbackInfo,
-                             std::unique_ptr<ErrorData> error,
+                             std::unique_ptr<UnrecoverableError> error,
                              StringView label);
 
     ~CreatePipelineAsyncEvent() override;
@@ -97,7 +92,7 @@ class CreatePipelineAsyncEvent final : public EventManager::TrackedEvent {
     // For some errors (e.g. device lost) we still need to resolve and return a pipeline with
     // Pipeline::MakeError. So we need to hold the pipeline and the error separately.
     Ref<PipelineType> mPipeline;
-    std::unique_ptr<ErrorData> mError;
+    std::unique_ptr<UnrecoverableError> mError;
     // Used to keep ShaderModuleBase::mTintProgram alive until pipeline initialization is done.
     PipelineBase::ScopedUseShaderPrograms mScopedUseShaderPrograms;
 };

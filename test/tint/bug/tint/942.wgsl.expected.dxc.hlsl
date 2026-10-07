@@ -16,7 +16,7 @@ cbuffer cbuffer_flip : register(b3, space1) {
 };
 groupshared float3 tile[4][256];
 uint tint_div_u32(uint lhs, uint rhs) {
-  return (lhs / (((rhs == 0u)) ? (1u) : (rhs)));
+  return (lhs / select((rhs == 0u), 1u, rhs));
 }
 
 void main_inner(uint3 WorkGroupID, uint3 LocalInvocationID, uint tint_local_index) {
@@ -32,13 +32,12 @@ void main_inner(uint3 WorkGroupID, uint3 LocalInvocationID, uint tint_local_inde
       {
         v = (v_1 + 64u);
       }
-      continue;
     }
   }
   GroupMemoryBarrierWithGroupSync();
   uint filterOffset = tint_div_u32((params[0u].x - 1u), 2u);
   uint3 v_2 = (0u).xxx;
-  inputTex.GetDimensions(uint(int(0)), v_2.x, v_2.y, v_2.z);
+  inputTex.GetDimensions(0u, v_2.x, v_2.y, v_2.z);
   uint2 dims = v_2.xy;
   uint2 v_3 = ((WorkGroupID.xy * uint2(params[0u].y, 4u)) + (LocalInvocationID.xy * uint2(4u, 1u)));
   uint2 baseIndex = (v_3 - uint2(filterOffset, 0u));
@@ -67,13 +66,11 @@ void main_inner(uint3 WorkGroupID, uint3 LocalInvocationID, uint tint_local_inde
           {
             c = (c + 1u);
           }
-          continue;
         }
       }
       {
         r = (r + 1u);
       }
-      continue;
     }
   }
   GroupMemoryBarrierWithGroupSync();
@@ -134,7 +131,6 @@ void main_inner(uint3 WorkGroupID, uint3 LocalInvocationID, uint tint_local_inde
                   tint_loop_idx.y = (tint_loop_idx.y - tint_carry);
                   f = (f + 1u);
                 }
-                continue;
               }
             }
             uint2 v_13 = writeIndex;
@@ -143,13 +139,11 @@ void main_inner(uint3 WorkGroupID, uint3 LocalInvocationID, uint tint_local_inde
           {
             c = (c + 1u);
           }
-          continue;
         }
       }
       {
         r = (r + 1u);
       }
-      continue;
     }
   }
 }

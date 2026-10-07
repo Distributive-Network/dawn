@@ -29,18 +29,17 @@ void main() {
       if (all(equal(tint_loop_idx, uvec2(0u)))) {
         break;
       }
-      if ((v.inner[0u] == 0u)) {
+      if ((v.inner[0] == 0u)) {
         break;
       }
       int s = f();
-      v.inner[0u] = 0u;
+      v.inner[0] = 0u;
       {
         uint tint_low_inc_1 = (tint_loop_idx.x - 1u);
         tint_loop_idx.x = tint_low_inc_1;
         uint tint_carry_1 = uint((tint_low_inc_1 == 4294967295u));
         tint_loop_idx.y = (tint_loop_idx.y - tint_carry_1);
       }
-      continue;
     }
   }
 }

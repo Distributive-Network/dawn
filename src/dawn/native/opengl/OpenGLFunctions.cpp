@@ -25,7 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/OpenGLFunctions.h"
+#include "src/dawn/native/opengl/OpenGLFunctions.h"
 
 #include <cctype>
 
@@ -37,13 +37,13 @@ MaybeError OpenGLFunctions::Initialize(GLGetProcProc getProc) {
 #if defined(DAWN_ENABLE_BACKEND_OPENGLES)
         DAWN_TRY(LoadOpenGLESProcs(getProc, mVersion.GetMajor(), mVersion.GetMinor()));
 #else
-        return DAWN_INTERNAL_ERROR("The OpenGLES backend is not enabled");
+        return DAWN_UNRECOVERABLE_ERROR("The OpenGLES backend is not enabled");
 #endif
     } else {
 #if defined(DAWN_ENABLE_BACKEND_DESKTOP_GL)
         DAWN_TRY(LoadDesktopGLProcs(getProc, mVersion.GetMajor(), mVersion.GetMinor()));
 #else
-        return DAWN_INTERNAL_ERROR("The OpenGL backend is not enabled");
+        return DAWN_UNRECOVERABLE_ERROR("The OpenGL backend is not enabled");
 #endif
     }
 

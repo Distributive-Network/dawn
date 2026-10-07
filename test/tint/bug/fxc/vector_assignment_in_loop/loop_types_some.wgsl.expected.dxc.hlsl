@@ -25,9 +25,8 @@ void main() {
       v2u[i] = 1u;
       v2b[i] = true;
       {
-        i = asint((asuint(i) + asuint(int(1))));
+        i = asint((asuint(i) + 1u));
       }
-      continue;
     }
   }
   int i = int(0);

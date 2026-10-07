@@ -1,7 +1,5 @@
+// flags: --glsl-has-conservative-depth
 requires fragment_depth;
-
-@fragment
-fn any() -> @builtin(frag_depth, any) f32 { return 1.0; }
 
 @fragment
 fn less() -> @builtin(frag_depth, less) f32 { return 1.0; }

@@ -30,12 +30,14 @@
 
 #include <cassert>
 #include <string>
+#include <mutex>
+#include <unordered_map>
 
 #include <jni.h>
 #include <webgpu/webgpu.h>
 
-#include "dawn/common/Assert.h"
-#include "dawn/common/Log.h"
+#include "src/utils/assert.h"
+#include "src/utils/log.h"
 #include "JNIClasses.h"
 #include "JNIContext.h"
 
@@ -43,6 +45,53 @@
 // into the native Dawn API.
 
 namespace dawn::kotlin_api {
+
+static std::mutex gDeviceCallbacksMutex;
+static std::unordered_map<WGPUDevice, std::vector<std::shared_ptr<UserData>>> gDeviceCallbacks;
+
+UserData::~UserData() {
+    if (jvm) {
+        JNIEnv* env = nullptr;
+        bool needsDetach = false;
+        if (jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_EDETACHED) {
+#ifdef _JAVASOFT_JNI_H_
+            if (jvm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) == JNI_OK) {
+                needsDetach = true;
+            }
+#else
+            if (jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+                needsDetach = true;
+            }
+#endif
+        }
+        if (env) {
+            if (callback) env->DeleteGlobalRef(callback);
+            if (executor) env->DeleteGlobalRef(executor);
+        }
+        if (needsDetach) {
+            jvm->DetachCurrentThread();
+        }
+    }
+}
+
+void RegisterDeviceCallbacks(WGPUDevice device, const std::vector<std::shared_ptr<UserData>>& callbacks) {
+    if (callbacks.empty()) return;
+    std::lock_guard<std::mutex> lock(gDeviceCallbacksMutex);
+    auto& list = gDeviceCallbacks[device];
+    list.insert(list.end(), callbacks.begin(), callbacks.end());
+}
+
+void FreeDeviceCallbacks(WGPUDevice device) {
+    std::vector<std::shared_ptr<UserData>> callbacksToFree;
+    {
+        std::lock_guard<std::mutex> lock(gDeviceCallbacksMutex);
+        auto it = gDeviceCallbacks.find(device);
+        if (it != gDeviceCallbacks.end()) {
+            callbacksToFree = std::move(it->second);
+            gDeviceCallbacks.erase(it);
+        }
+    }
+}
 
 // Helper functions to call the correct JNIEnv::Call*Method depending on what return type we expect.
 void CallGetter(JNIEnv* env, jmethodID getter, jobject obj, jboolean* result) {
@@ -117,7 +166,7 @@ jobject ToKotlin(JNIEnv* env, const WGPUStringView* s) {
             //* Each field converted using the individual value converter.
             {% for member in kotlin_record_members(structure.members) %}
                 {{ convert_to_kotlin('input->' + member.name.camelCase(), member.name.camelCase(),
-                                     'input->' + member.length.name.camelCase() if member.length.name,
+                                     'input->' + member.length.name.camelCase() if member.length and member.length != 'constant' else (member.constant_length | string if member.length == 'constant' and member.constant_length != 1 else None),
                                      member) | indent(4) -}}
             {% endfor %}
             //* Allow conversion of every child structure.
@@ -173,10 +222,13 @@ jobject ToKotlin(JNIEnv* env, const WGPUStringView* s) {
             //* Use getters to fill in the Kotlin record that will get converted to our struct.
             {{KotlinRecord}} kotlinRecord;
             {% for member in kotlin_record_members(structure.members) %}
-                {
-                    jmethodID getter = env->GetMethodID(clz, "get{{member.name.CamelCase()}}", "(){{jni_signature(member)}}");
-                    CallGetter(env, getter, obj, &kotlinRecord.{{as_varName(member.name)}});
-                }
+                {% if not member.kotlin_only %}
+                    {
+                        {% set prefix = "is" if member.type.name.get() == "bool" else "get" %}
+                        jmethodID getter = env->GetMethodID(clz, "{{prefix}}{{member.name.CamelCase()}}", "(){{jni_signature(member)}}");
+                        CallGetter(env, getter, obj, &kotlinRecord.{{as_varName(member.name)}});
+                    }
+                {% endif %}
             {% endfor %}
 
             //* Fill all struct members from the Kotlin record.

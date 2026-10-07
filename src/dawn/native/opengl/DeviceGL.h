@@ -34,18 +34,18 @@
 #include <utility>
 #include <vector>
 
-#include "dawn/common/MutexProtected.h"
-#include "dawn/native/dawn_platform.h"
-
-#include "dawn/common/Platform.h"
-#include "dawn/native/Device.h"
-#include "dawn/native/ExecutionQueue.h"
-#include "dawn/native/QuerySet.h"
-#include "dawn/native/opengl/ContextEGL.h"
-#include "dawn/native/opengl/EGLFunctions.h"
-#include "dawn/native/opengl/Forward.h"
-#include "dawn/native/opengl/GLFormat.h"
-#include "dawn/native/opengl/OpenGLFunctions.h"
+#include "src/dawn/common/MutexProtected.h"
+#include "src/dawn/native/Device.h"
+#include "src/dawn/native/ExecutionQueue.h"
+#include "src/dawn/native/QuerySet.h"
+#include "src/dawn/native/dawn_platform.h"
+#include "src/dawn/native/opengl/ContextEGL.h"
+#include "src/dawn/native/opengl/EGLFunctions.h"
+#include "src/dawn/native/opengl/Forward.h"
+#include "src/dawn/native/opengl/GLFormat.h"
+#include "src/dawn/native/opengl/OpenGLFunctions.h"
+#include "src/utils/compiler.h"
+#include "src/utils/platform.h"
 
 namespace dawn::native {
 class AHBFunctions;
@@ -105,9 +105,58 @@ class Device final : public DeviceBase {
         return {};
     }
 
+    // GL calls for objects being destroyed need special handling.
+    // If called from the (C++) destructor (DestroyReason::CppDestructor), we cannot take a
+    // reference on "self", so we call GetData() immediately to retrieve the required data (GL
+    // object handles, etc) and capture the data values as part of the lambda's capture list.
+    // It's safe to get the handles directly because this is the last ref to the object thus there
+    // shouldn't be any pending GL commands that could modify it. If called from an APIDestroy()
+    // call (DestroyReason::EarlyDestroy), the data may not yet be valid. For example, the GL call
+    // to create the object may also be deferred and the handle not yet initialized. In that case,
+    // we capture a ref to the "self" object and the GetData() function, call self->GetData() from
+    // the outer lambda, and pass the data values to the work function.
+    template <typename T, typename Fn, typename Data>
+    MaybeError EnqueueDestroyGL(T* self,
+                                Data (T::*GetData)() const,
+                                DestroyReason reason,
+                                Fn work) {
+        if (reason == DestroyReason::CppDestructor) {
+            // “self” is being destroyed; capture data since we cannot access "self" after this
+            // call.
+            return EnqueueGL(
+                [data = (self->*GetData)(), work](const OpenGLFunctions& gl) -> MaybeError {
+                    return work(gl, data);
+                });
+        } else {
+            // “self” is not being destroyed; capture a reference to “self” to ensure that the data
+            // passed to "work" contains all the modifications that may be done by other work
+            // enqueued prior.
+            return EnqueueGL(
+                [self = Ref<T>(self), work, GetData](const OpenGLFunctions& gl) -> MaybeError {
+                    return work(gl, (self.Get()->*GetData)());
+                });
+        }
+    }
+
     template <typename Fn>
     MaybeError EnqueueGL(Fn&& work) {
         return EnqueueGL(ExecutionQueueBase::SubmitMode::Normal, std::forward<Fn>(work));
+    }
+
+    // A variant of EnqueueGL that takes an span of data. In deferral mode, a CPU-side copy of
+    // the array is made and captured with the lambda. Otherwise, the call is executed immediately
+    // without copying the array.
+    template <typename Fn>
+    MaybeError EnqueueGL(Span<const std::byte> data, Fn work) {
+        if (!IsToggleEnabled(Toggle::GLDefer)) {
+            return ExecuteGL(
+                ExecutionQueueBase::SubmitMode::Normal,
+                [data, work](const OpenGLFunctions& gl) -> MaybeError { return work(gl, data); });
+        }
+
+        // Call is deferred; must copy data.
+        return EnqueueGL([data = std::vector<std::byte>(data.begin(), data.end()), work](
+                             const OpenGLFunctions& gl) -> MaybeError { return work(gl, data); });
     }
 
     // Flush any pending GL commands enqueued via EnqueueGL().
@@ -157,9 +206,9 @@ class Device final : public DeviceBase {
 
     const GLFormat& GetGLFormat(const Format& format);
 
-    int GetMaxTextureMaxAnisotropy() const;
+    float GetMaxTextureMaxAnisotropy() const;
 
-    MaybeError ValidateTextureCanBeWrapped(const UnpackedPtr<TextureDescriptor>& descriptor);
+    MaybeValError ValidateTextureCanBeWrapped(const UnpackedPtr<TextureDescriptor>& descriptor);
     Ref<TextureBase> CreateTextureWrappingEGLImage(const ExternalImageDescriptor* descriptor,
                                                    ::EGLImage image);
     Ref<TextureBase> CreateTextureWrappingGLTexture(const ExternalImageDescriptor* descriptor,
@@ -193,7 +242,6 @@ class Device final : public DeviceBase {
     const AHBFunctions* GetOrLoadAHBFunctions();
 
     const Buffer* GetInternalTextureBuiltinsUniformBuffer() const;
-    const Buffer* GetInternalArrayLengthUniformBuffer() const;
 
   private:
     Device(AdapterBase* adapter,
@@ -233,9 +281,9 @@ class Device final : public DeviceBase {
     Ref<RenderPipelineBase> CreateUninitializedRenderPipelineImpl(
         const UnpackedPtr<RenderPipelineDescriptor>& descriptor) override;
     ResultOrError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
-        const SharedTextureMemoryDescriptor* descriptor) override;
+        UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) override;
     ResultOrError<Ref<SharedFenceBase>> ImportSharedFenceImpl(
-        const SharedFenceDescriptor* descriptor) override;
+        UnpackedPtr<SharedFenceDescriptor> unpacked) override;
     ResultOrError<Ref<TextureBase>> CreateTextureWrappingEGLImageImpl(
         const ExternalImageDescriptor* descriptor,
         ::EGLImage image);
@@ -253,14 +301,11 @@ class Device final : public DeviceBase {
 
     GLFormatTable mFormatTable;
     std::unique_ptr<ContextEGL> mContext;
-    int mMaxTextureMaxAnisotropy = 0;
+    float mMaxTextureMaxAnisotropy = 0;
 
     // Maintain an internal uniform buffer to store extra information needed by shader emulation for
     // certain texture builtins.
     Ref<Buffer> mTextureBuiltinsBuffer;
-
-    // Maintain an internal uniform buffer to store extra array length information if needed.
-    Ref<Buffer> mArrayLengthBuffer;
 
 #if DAWN_PLATFORM_IS(ANDROID)
     std::unique_ptr<AHBFunctions> mAHBFunctions;

@@ -26,12 +26,13 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/wgsl/writer/raise/ptr_to_ref.h"
+
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/function.h"
 #include "src/tint/lang/core/ir/let.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/phony.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/ir/var.h"
 #include "src/tint/lang/core/type/pointer.h"
 #include "src/tint/lang/core/type/reference.h"
@@ -138,17 +139,11 @@ struct Impl {
 }  // namespace
 
 Result<SuccessType> PtrToRef(core::ir::Module& mod) {
-    TINT_CHECK_RESULT(core::ir::ValidateAndDumpIfNeeded(
-        mod, "wgsl.PtrToRef",
-        core::ir::Capabilities{
-            core::ir::Capability::kAllowMultipleEntryPoints,
-            core::ir::Capability::kAllowOverrides,
-            core::ir::Capability::kAllowPhonyInstructions,
-        }
-
-        ));
+    core::ir::AssertValid(mod, "before wgsl.PtrToRef");
 
     Impl{mod}.Run();
+
+    mod.properties.Add(core::ir::Property::kAllowRefTypes);
 
     return Success;
 }

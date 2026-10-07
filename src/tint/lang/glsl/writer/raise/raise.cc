@@ -27,21 +27,25 @@
 
 #include "src/tint/lang/glsl/writer/raise/raise.h"
 
+#include <algorithm>
+#include <unordered_map>
+
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/transform/array_length_from_uniform.h"
+#include "src/tint/lang/core/ir/transform/array_length_from.h"
 #include "src/tint/lang/core/ir/transform/bgra8unorm_polyfill.h"
 #include "src/tint/lang/core/ir/transform/binary_polyfill.h"
 #include "src/tint/lang/core/ir/transform/binding_remapper.h"
 #include "src/tint/lang/core/ir/transform/block_decorated_structs.h"
 #include "src/tint/lang/core/ir/transform/builtin_polyfill.h"
 #include "src/tint/lang/core/ir/transform/conversion_polyfill.h"
-#include "src/tint/lang/core/ir/transform/decompose_uniform_access.h"
+#include "src/tint/lang/core/ir/transform/decompose_access.h"
 #include "src/tint/lang/core/ir/transform/demote_to_helper.h"
 #include "src/tint/lang/core/ir/transform/direct_variable_access.h"
 #include "src/tint/lang/core/ir/transform/multiplanar_external_texture.h"
 #include "src/tint/lang/core/ir/transform/prepare_immediate_data.h"
 #include "src/tint/lang/core/ir/transform/preserve_padding.h"
 #include "src/tint/lang/core/ir/transform/prevent_infinite_loops.h"
+#include "src/tint/lang/core/ir/transform/propagate_buffer_sizes.h"
 #include "src/tint/lang/core/ir/transform/remove_continue_in_switch.h"
 #include "src/tint/lang/core/ir/transform/remove_terminator_args.h"
 #include "src/tint/lang/core/ir/transform/remove_uniform_vector_component_loads.h"
@@ -49,11 +53,11 @@
 #include "src/tint/lang/core/ir/transform/robustness.h"
 #include "src/tint/lang/core/ir/transform/signed_integer_polyfill.h"
 #include "src/tint/lang/core/ir/transform/single_entry_point.h"
-#include "src/tint/lang/core/ir/transform/std140.h"
 #include "src/tint/lang/core/ir/transform/substitute_overrides.h"
 #include "src/tint/lang/core/ir/transform/value_to_let.h"
 #include "src/tint/lang/core/ir/transform/vectorize_scalar_matrix_constructors.h"
 #include "src/tint/lang/core/ir/transform/zero_init_workgroup_memory.h"
+#include "src/tint/lang/core/type/array.h"
 #include "src/tint/lang/core/type/f32.h"
 #include "src/tint/lang/core/type/u32.h"
 #include "src/tint/lang/glsl/writer/common/option_helpers.h"
@@ -73,6 +77,9 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
     TINT_CHECK_RESULT(
         core::ir::transform::SubstituteOverrides(module, options.substitute_overrides_config));
 
+    // Must come before robustness.
+    TINT_CHECK_RESULT(core::ir::transform::PropagateBufferSizes(module));
+
     // Must come before TextureBuiltinsFromUniform as it may add `textureNumLevels` calls.
     if (!options.disable_robustness) {
         core::ir::transform::RobustnessConfig config{};
@@ -84,42 +91,48 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
 
     // PrepareImmediateData must come before any transform that needs internal immediate data.
     core::ir::transform::PrepareImmediateDataConfig immediate_data_config;
+    uint32_t buffer_sizes_array_elements_num = 0;
+    if (!options.array_length_from_immediate.bindpoint_to_size_index.empty() &&
+        !options.array_length_from_immediate.buffer_sizes_offset.has_value()) {
+        return Failure("array length from immediate requires a buffer sizes offset");
+    }
+    if (options.array_length_from_immediate.buffer_sizes_offset) {
+        for (auto& entry : options.array_length_from_immediate.bindpoint_to_size_index) {
+            buffer_sizes_array_elements_num =
+                std::max(buffer_sizes_array_elements_num, entry.second + 1);
+        }
+        TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
+            core::InternalImmediate::kStorageBufferSizes,
+            options.array_length_from_immediate.buffer_sizes_offset.value(),
+            module.symbols.New("tint_storage_buffer_sizes"),
+            module.Types().array(module.Types().u32(), buffer_sizes_array_elements_num)));
+    }
     if (options.first_instance_offset) {
         TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
-            options.first_instance_offset.value(), module.symbols.New("tint_first_instance"),
-            module.Types().u32()));
+            core::InternalImmediate::kFirstInstanceOffset, options.first_instance_offset.value(),
+            module.symbols.New("tint_first_instance"), module.Types().u32()));
     }
     if (options.first_vertex_offset) {
         TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
-            options.first_vertex_offset.value(), module.symbols.New("tint_first_vertex"),
-            module.Types().u32()));
+            core::InternalImmediate::kFirstVertexOffset, options.first_vertex_offset.value(),
+            module.symbols.New("tint_first_vertex"), module.Types().u32()));
     }
     if (options.depth_range_offsets) {
         TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
-            options.depth_range_offsets.value().min, module.symbols.New("tint_frag_depth_min"),
-            module.Types().f32()));
+            core::InternalImmediate::kFragDepthMin, options.depth_range_offsets.value().min,
+            module.symbols.New("tint_frag_depth_min"), module.Types().f32()));
         TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
-            options.depth_range_offsets.value().max, module.symbols.New("tint_frag_depth_max"),
-            module.Types().f32()));
+            core::InternalImmediate::kFragDepthMax, options.depth_range_offsets.value().max,
+            module.symbols.New("tint_frag_depth_max"), module.Types().f32()));
     }
     TINT_CHECK_RESULT_UNWRAP(immediate_data_layout, core::ir::transform::PrepareImmediateData(
                                                         module, immediate_data_config));
-
-    // Note, this must come after Robustness as it may add `arrayLength`.
-    // This also needs to come before binding remapper as Dawn inserts _pre-remapping_ binding
-    // information. So, in order to move this later we'd need to update Dawn to send the
-    // _post-remapping_ data.
-    if (options.use_array_length_from_uniform) {
-        TINT_CHECK_RESULT(core::ir::transform::ArrayLengthFromUniform(
-            module, options.array_length_from_uniform.ubo_binding,
-            options.array_length_from_uniform.bindpoint_to_size_index));
-    }
 
     tint::transform::multiplanar::BindingsMap multiplanar_map{};
     RemapperData remapper_data{};
     PopulateBindingInfo(options, remapper_data, multiplanar_map);
     TINT_CHECK_RESULT(core::ir::transform::BindingRemapper(module, remapper_data));
-    // Capability::kAllowDuplicateBindings needed after BindingRemapper
+
     {
         core::ir::transform::BinaryPolyfillConfig binary_polyfills{};
         binary_polyfills.int_div_mod = !options.disable_polyfill_integer_div_mod;
@@ -156,24 +169,47 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
     TINT_CHECK_RESULT(core::ir::transform::MultiplanarExternalTexture(module, multiplanar_map));
 
     // `PreservePadding` must run before `DirectVariableAccess`.
-    TINT_CHECK_RESULT(core::ir::transform::PreservePadding(module));
+    TINT_CHECK_RESULT(core::ir::transform::PreservePadding(module, {}));
 
     {
         // This must come after `MultiplanarExternalTexture` as it will insert functions with
         // texture parameters, and also after `PreservePadding` which inserts functions with storage
         // buffer parameters.
-        core::ir::transform::DirectVariableAccessOptions dva_config{};
-        dva_config.transform_handle = true;
+        core::ir::transform::DirectVariableAccessConfig dva_config{};
+        dva_config.transform_handle = core::ir::transform::HandleTransformLevel::kFull;
         TINT_CHECK_RESULT(core::ir::transform::DirectVariableAccess(module, dva_config));
     }
 
-    if (!options.use_uniform_buffers) {
-        // DecomposeUniformAccess must come before BlockDecoratedStructs, which will wrap the
-        // uniform variable in a structure. It must come after DirectVariableAccess which removes
-        // uniform buffers passed as function parameters.
-        TINT_CHECK_RESULT(core::ir::transform::DecomposeUniformAccess(module));
-    } else {
-        TINT_CHECK_RESULT(core::ir::transform::Std140(module));
+    // DecomposeAccess must come before BlockDecoratedStructs, which will wrap the
+    // uniform variable in a structure. It must come after DirectVariableAccess which removes
+    // uniform buffers passed as function parameters.
+    // Uniform buffers are unconditionally decomposed to support implementations that do not support
+    // uniform buffer standard layout.
+    core::ir::transform::DecomposeAccessConfig decompose_config{
+        .uniform = true,
+    };
+    TINT_CHECK_RESULT(core::ir::transform::DecomposeAccess(module, decompose_config));
+
+    // Note, this must come after DecomposeAccess to support buffer_view.
+    // Note, this must come after Robustness as it may add `arrayLength`.
+    // Note, this must come before BlockDecoratedStructs as it may add a global variable
+    // This was moved after the remapper so we need to update the binding info since the options are
+    // based on Dawn's _pre-remapping_ binding information. Since we have the remapping info, we
+    // just remap it here.
+    if (options.array_length_from_immediate.buffer_sizes_offset) {
+        std::unordered_map<BindingPoint, uint32_t> size_indices;
+        for (auto& pair : options.array_length_from_immediate.bindpoint_to_size_index) {
+            auto& bp = pair.first;
+            auto& index = pair.second;
+            auto where = remapper_data.find(bp);
+            if (where != remapper_data.end()) {
+                size_indices[where->second] = index;
+            } else {
+                size_indices[bp] = index;
+            }
+        }
+        TINT_CHECK_RESULT(core::ir::transform::ArrayLengthFromImmediates(
+            module, immediate_data_layout, buffer_sizes_array_elements_num, size_indices));
     }
     TINT_CHECK_RESULT(core::ir::transform::BlockDecoratedStructs(module));
 
@@ -210,20 +246,22 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
         .signed_negation = true, .signed_arithmetic = true, .signed_shiftleft = true};
     TINT_CHECK_RESULT(core::ir::transform::SignedIntegerPolyfill(module, signed_integer_cfg));
 
-    // Must come after BuiltinPolyfill as builtins can add bitcasts
-    TINT_CHECK_RESULT(raise::BitcastPolyfill(module));
-
     TINT_CHECK_RESULT(core::ir::transform::VectorizeScalarMatrixConstructors(module));
     TINT_CHECK_RESULT(core::ir::transform::RemoveContinueInSwitch(module));
 
     TINT_CHECK_RESULT(raise::ShaderIO(
-        module, raise::ShaderIOConfig{immediate_data_layout, options.depth_range_offsets,
-                                      options.bgra_swizzle_locations}));
+        module, raise::ShaderIOConfig{immediate_data_layout, options.bgra_swizzle_locations}));
 
     // Must come after ShaderIO as it operates on module-scope `in` variables.
-    TINT_CHECK_RESULT(raise::OffsetFirstIndex(
-        module, raise::OffsetFirstIndexConfig{immediate_data_layout, options.first_vertex_offset,
-                                              options.first_instance_offset}));
+    TINT_CHECK_RESULT(raise::OffsetFirstIndex(module, raise::OffsetFirstIndexConfig{
+                                                          .immediate_data = immediate_data_layout,
+                                                      }));
+
+    TINT_CHECK_RESULT(core::ir::transform::DecomposeAccess(
+        module, {.immediate = true, .minimum_array_size = options.minimum_immediate_size}));
+
+    // Must come after DecomposeImmediateAccess and BuiltinPolyfill as those can add bitcasts.
+    TINT_CHECK_RESULT(raise::BitcastPolyfill(module));
 
     // These transforms need to be run last as various transforms introduce terminator arguments,
     // naming conflicts, and expressions that need to be explicitly not inlined.

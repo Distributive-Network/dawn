@@ -10,47 +10,50 @@ buffer s_block_1_ssbo {
 } v_1;
 int counter = 0;
 int i() {
-  uint v_2 = uint(counter);
-  counter = int((v_2 + uint(1)));
+  counter = int((uint(counter) + 1u));
   return counter;
 }
-mat4x2 v_3(uint start_byte_offset) {
-  uvec4 v_4 = v.inner[(start_byte_offset / 16u)];
-  vec2 v_5 = uintBitsToFloat(mix(v_4.xy, v_4.zw, bvec2((((start_byte_offset & 15u) >> 2u) == 2u))));
-  uvec4 v_6 = v.inner[((8u + start_byte_offset) / 16u)];
-  vec2 v_7 = uintBitsToFloat(mix(v_6.xy, v_6.zw, bvec2(((((8u + start_byte_offset) & 15u) >> 2u) == 2u))));
-  uvec4 v_8 = v.inner[((16u + start_byte_offset) / 16u)];
-  vec2 v_9 = uintBitsToFloat(mix(v_8.xy, v_8.zw, bvec2(((((16u + start_byte_offset) & 15u) >> 2u) == 2u))));
-  uvec4 v_10 = v.inner[((24u + start_byte_offset) / 16u)];
-  return mat4x2(v_5, v_7, v_9, uintBitsToFloat(mix(v_10.xy, v_10.zw, bvec2(((((24u + start_byte_offset) & 15u) >> 2u) == 2u)))));
+mat4x2 v_2(uint start_byte_offset) {
+  uvec4 v_3 = v.inner[(start_byte_offset / 16u)];
+  vec2 v_4 = uintBitsToFloat(mix(v_3.xy, v_3.zw, bvec2((((start_byte_offset & 15u) >> 2u) == 2u))));
+  uint v_5 = (8u + start_byte_offset);
+  uvec4 v_6 = v.inner[(v_5 / 16u)];
+  vec2 v_7 = uintBitsToFloat(mix(v_6.xy, v_6.zw, bvec2((((v_5 & 15u) >> 2u) == 2u))));
+  uint v_8 = (16u + start_byte_offset);
+  uvec4 v_9 = v.inner[(v_8 / 16u)];
+  vec2 v_10 = uintBitsToFloat(mix(v_9.xy, v_9.zw, bvec2((((v_8 & 15u) >> 2u) == 2u))));
+  uint v_11 = (24u + start_byte_offset);
+  uvec4 v_12 = v.inner[(v_11 / 16u)];
+  return mat4x2(v_4, v_7, v_10, uintBitsToFloat(mix(v_12.xy, v_12.zw, bvec2((((v_11 & 15u) >> 2u) == 2u)))));
 }
-mat4x2[4] v_11(uint start_byte_offset) {
+mat4x2[4] v_13(uint start_byte_offset) {
   mat4x2 a[4] = mat4x2[4](mat4x2(vec2(0.0f), vec2(0.0f), vec2(0.0f), vec2(0.0f)), mat4x2(vec2(0.0f), vec2(0.0f), vec2(0.0f), vec2(0.0f)), mat4x2(vec2(0.0f), vec2(0.0f), vec2(0.0f), vec2(0.0f)), mat4x2(vec2(0.0f), vec2(0.0f), vec2(0.0f), vec2(0.0f)));
   {
-    uint v_12 = 0u;
-    v_12 = 0u;
+    uint v_14 = 0u;
+    v_14 = 0u;
     while(true) {
-      uint v_13 = v_12;
-      if ((v_13 >= 4u)) {
+      uint v_15 = v_14;
+      if ((v_15 >= 4u)) {
         break;
       }
-      a[v_13] = v_3((start_byte_offset + (v_13 * 32u)));
+      a[v_15] = v_2((start_byte_offset + (v_15 * 32u)));
       {
-        v_12 = (v_13 + 1u);
+        v_14 = (v_15 + 1u);
       }
-      continue;
     }
   }
   return a;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
-  uint v_14 = (32u * min(uint(i()), 3u));
-  uint v_15 = (8u * min(uint(i()), 3u));
-  mat4x2 l_a[4] = v_11(0u);
-  mat4x2 l_a_i = v_3(v_14);
-  uvec4 v_16 = v.inner[((v_14 + v_15) / 16u)];
-  vec2 l_a_i_i = uintBitsToFloat(mix(v_16.xy, v_16.zw, bvec2(((((v_14 + v_15) & 15u) >> 2u) == 2u))));
-  uvec4 v_17 = v.inner[((v_14 + v_15) / 16u)];
-  v_1.inner = (((uintBitsToFloat(v_17[(((v_14 + v_15) & 15u) >> 2u)]) + l_a[0u][0u].x) + l_a_i[0u].x) + l_a_i_i.x);
+  uint v_16 = (min(uint(i()), 3u) * 32u);
+  uint v_17 = (min(uint(i()), 3u) * 8u);
+  mat4x2 l_a[4] = v_13(0u);
+  mat4x2 l_a_i = v_2(v_16);
+  uint v_18 = (v_16 + v_17);
+  uvec4 v_19 = v.inner[(v_18 / 16u)];
+  vec2 l_a_i_i = uintBitsToFloat(mix(v_19.xy, v_19.zw, bvec2((((v_18 & 15u) >> 2u) == 2u))));
+  uint v_20 = (v_16 + v_17);
+  uvec4 v_21 = v.inner[(v_20 / 16u)];
+  v_1.inner = (((uintBitsToFloat(v_21[((v_20 & 15u) >> 2u)]) + l_a[0][0].x) + l_a_i[0].x) + l_a_i_i.x);
 }

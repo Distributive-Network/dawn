@@ -29,7 +29,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 namespace tint::spirv::reader::lower {
 
@@ -98,22 +98,24 @@ struct State {
     void ReplaceAccess(const Access& access) {
         auto* object = access.inst->Object();
 
-        if (access.inst->Indices().Length() > 1) {
+        if (access.inst->Indices().size() > 1) {
             // Create a new access instruction that stops at the vector pointer.
-            Vector<core::ir::Value*, 8> partial_indices{access.inst->Indices()};
+            auto partial_indices = Vector<core::ir::Value*, 8>{access.inst->Indices()};
             partial_indices.Pop();
 
             auto* ptr = object->Type()->As<core::type::Pointer>();
             auto addrspace = ptr->AddressSpace();
-            auto* access_to_vec =
-                b.Access(ty.ptr(addrspace, access.type, ptr->Access()), object, partial_indices);
-            access_to_vec->InsertBefore(access.inst);
+            core::ir::Value* access_to_vec = nullptr;
+            b.InsertBefore(access.inst, [&] {
+                access_to_vec = b.Access(ty.ptr(addrspace, access.type, ptr->Access()), object,
+                                         partial_indices);
+            });
 
-            object = access_to_vec->Result();
+            object = access_to_vec;
         }
 
         // Replace all uses of the original access instruction.
-        auto* index = access.inst->Indices().Back();
+        auto* index = access.inst->Indices().back();
         ReplaceAccessUses(access.inst, object, index);
 
         // Destroy the original access instruction.
@@ -154,21 +156,11 @@ struct State {
 }  // namespace
 
 Result<SuccessType> VectorElementPointer(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(
-        ValidateAndDumpIfNeeded(ir, "spirv.VectorElementPointer",
-                                core::ir::Capabilities{
-                                    core::ir::Capability::kAllowMultipleEntryPoints,
-                                    core::ir::Capability::kAllowOverrides,
-                                    core::ir::Capability::kAllowVectorElementPointer,
-                                    core::ir::Capability::kAllowPhonyInstructions,
-                                    core::ir::Capability::kAllowNonCoreTypes,
-                                    core::ir::Capability::kAllowStructMatrixDecorations,
-                                    core::ir::Capability::kAllowLocationForNumericElements,
-                                    core::ir::Capability::kAllowPointerToHandle,
-                                    core::ir::Capability::kLoosenValidationForShaderIO,
-                                }));
+    core::ir::AssertValid(ir, "before spirv.VectorElementPointer");
 
     State{ir}.Process();
+
+    ir.properties.Remove(core::ir::Property::kAllowVectorElementPointer);
 
     return Success;
 }

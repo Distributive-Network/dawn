@@ -29,13 +29,14 @@
 
 #include <string>
 #include <vector>
-#include "dawn/common/StringViewUtils.h"
-#include "dawn/native/webgpu/BindGroupLayoutWGPU.h"
-#include "dawn/native/webgpu/CaptureContext.h"
-#include "dawn/native/webgpu/DeviceWGPU.h"
-#include "dawn/native/webgpu/PipelineLayoutWGPU.h"
-#include "dawn/native/webgpu/ShaderModuleWGPU.h"
-#include "dawn/native/webgpu/ToWGPU.h"
+
+#include "src/dawn/common/StringViewUtils.h"
+#include "src/dawn/native/webgpu/BindGroupLayoutWGPU.h"
+#include "src/dawn/native/webgpu/CaptureContext.h"
+#include "src/dawn/native/webgpu/DeviceWGPU.h"
+#include "src/dawn/native/webgpu/PipelineLayoutWGPU.h"
+#include "src/dawn/native/webgpu/ShaderModuleWGPU.h"
+#include "src/dawn/native/webgpu/ToWGPU.h"
 
 namespace dawn::native::webgpu {
 
@@ -50,7 +51,7 @@ RenderPipeline::RenderPipeline(Device* device,
                                const UnpackedPtr<RenderPipelineDescriptor>& descriptor)
     : RenderPipelineBase(device, descriptor),
       RecordableObject(schema::ObjectType::RenderPipeline),
-      ObjectWGPU(device->wgpu.renderPipelineRelease) {}
+      ObjectWGPU(device->wgpu->renderPipelineRelease) {}
 
 MaybeError RenderPipeline::InitializeImpl() {
     auto device = ToBackend(GetDevice());
@@ -70,8 +71,9 @@ MaybeError RenderPipeline::InitializeImpl() {
     PerColorAttachment<WGPUColorTargetStateExpandResolveTextureDawn>
         colorTargetStateExpandResolveTextureDawnExtensions = {};
 
+    std::string label = GetLabel();
     desc.nextInChain = nullptr;
-    desc.label = ToOutputStringView(GetLabel());
+    desc.label = ToOutputStringView(label);
     auto layout = GetLayout();
     DAWN_ASSERT(layout != nullptr);
     desc.layout = ToBackend(layout)->GetInnerHandle();
@@ -171,7 +173,7 @@ MaybeError RenderPipeline::InitializeImpl() {
                 wgpuTarget->nextInChain = &(e.chain);
             }
 
-            targetCount = static_cast<size_t>(i) + 1;
+            targetCount = static_cast<uint32_t>(i) + 1;
         }
         fragmentState.targetCount = targetCount;
         fragmentState.targets = colorTargets.data();
@@ -181,7 +183,7 @@ MaybeError RenderPipeline::InitializeImpl() {
         desc.fragment = nullptr;
     }
 
-    mInnerHandle = device->wgpu.deviceCreateRenderPipeline(device->GetInnerHandle(), &desc);
+    mInnerHandle = device->wgpu->deviceCreateRenderPipeline(device->GetInnerHandle(), &desc);
     DAWN_ASSERT(mInnerHandle);
     return {};
 }
@@ -235,7 +237,7 @@ MaybeError RenderPipeline::CaptureCreationParameters(CaptureContext& captureCont
             attributes.push_back({{
                 .format = attrib.format,
                 .offset = attrib.offset,
-                .shaderLocation = uint32_t(attrib.shaderLocation),
+                .shaderLocation = uint32_t{attrib.shaderLocation},
             }});
         }
 
@@ -275,19 +277,30 @@ MaybeError RenderPipeline::CaptureCreationParameters(CaptureContext& captureCont
     // on replay.
     ColorAttachmentMask attachmentMask = GetColorAttachmentsMask();
     ColorAttachmentIndex attachmentCount = GetHighestBitIndexPlusOne(attachmentMask);
-    std::vector<schema::ColorTargetState> targets(size_t(attachmentCount),
+    std::vector<schema::ColorTargetState> targets(size_t{attachmentCount},
                                                   kDefaultColorTargetState);
 
     if (fragment.module != nullptr) {
         for (auto slot : attachmentMask) {
             const auto& target = *GetColorTargetState(slot);
-            targets[size_t(slot)] = {{
+
+            schema::ExpandResolveMode expandResolveMode = schema::ExpandResolveMode::Unused;
+            if (GetAttachmentState()->GetExpandResolveInfo().resolveTargetsMask.test(slot)) {
+                expandResolveMode =
+                    GetAttachmentState()->GetExpandResolveInfo().attachmentsToExpandResolve.test(
+                        slot)
+                        ? schema::ExpandResolveMode::Enabled
+                        : schema::ExpandResolveMode::Disabled;
+            }
+
+            targets[size_t{slot}] = {{
                 .format = target.format,
                 .blend{{
                     .color = ToSchema(target.blend ? &target.blend->color : nullptr),
                     .alpha = ToSchema(target.blend ? &target.blend->alpha : nullptr),
                 }},
                 .writeMask = target.writeMask,
+                .expandResolveMode = expandResolveMode,
             }};
         }
     }

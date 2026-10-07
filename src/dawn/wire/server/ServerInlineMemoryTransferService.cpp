@@ -25,85 +25,231 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/439062058): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
+#include "src/dawn/wire/server/ServerInlineMemoryTransferService.h"
 
 #include <cstring>
 #include <memory>
+#include <utility>
 
-#include "dawn/common/Assert.h"
 #include "dawn/wire/WireServer.h"
-#include "dawn/wire/server/Server.h"
+#include "src/dawn/common/StringViewUtils.h"
+#include "src/dawn/wire/InlineSharedMemoryManager.h"
+#include "src/dawn/wire/server/Server.h"
+#include "src/utils/assert.h"
+#include "src/utils/compiler.h"
+#include "src/utils/log.h"
 
 namespace dawn::wire::server {
 
 class InlineMemoryTransferService : public MemoryTransferService {
   public:
-    class ReadHandleImpl : public ReadHandle {
+    class MemoryHandleImpl : public MemoryHandle {
       public:
-        ReadHandleImpl() {}
-        ~ReadHandleImpl() override = default;
+        MemoryHandleImpl() {}
+        ~MemoryHandleImpl() override = default;
 
-        size_t SizeOfSerializeDataUpdate(size_t offset, size_t size) override { return size; }
+        size_t GetSerializeDataUpdateSize(size_t offset, size_t size) const override {
+            return size;
+        }
 
-        void SerializeDataUpdate(const void* data,
+        void SerializeDataUpdate(std::span<volatile std::byte> serializeData,
                                  size_t offset,
                                  size_t size,
-                                 void* serializePointer) override {
-            if (size > 0) {
-                DAWN_ASSERT(data != nullptr);
-                DAWN_ASSERT(serializePointer != nullptr);
-                memcpy(serializePointer, data, size);
-            }
+                                 std::span<const std::byte> data) const override {
+            DAWN_ASSERT(serializeData.size() == GetSerializeDataUpdateSize(offset, size));
+            DAWN_ASSERT(data.size() == size);
+            DAWN_ASSERT(serializeData.size() >= data.size());
+            std::ranges::copy(data, serializeData.begin());
         }
-    };
 
-    class WriteHandleImpl : public WriteHandle {
-      public:
-        WriteHandleImpl() {}
-        ~WriteHandleImpl() override = default;
-
-        bool DeserializeDataUpdate(const void* deserializePointer,
-                                   size_t deserializeSize,
+        bool DeserializeDataUpdate(std::span<const std::byte> deserializeData,
                                    size_t offset,
-                                   size_t size) override {
-            auto target = GetTarget();
-            if (deserializeSize != size || target.data() == nullptr ||
-                deserializePointer == nullptr) {
+                                   size_t size,
+                                   std::span<std::byte> target) override {
+            DAWN_ASSERT(target.size() == size);
+            if (size > deserializeData.size()) {
                 return false;
             }
-            if (offset > target.size() || size > target.size() - offset) {
-                return false;
-            }
-            memcpy(target.data() + offset, deserializePointer, size);
+            std::ranges::copy(deserializeData.subspan(0, size), target.begin());
             return true;
         }
     };
 
-    InlineMemoryTransferService() {}
+    // TODO(386255678): support importing shared memory as shared buffer memory.
+    class MemoryHandleWithSharedMemoryImpl : public MemoryHandle {
+      public:
+        explicit MemoryHandleWithSharedMemoryImpl(Ref<SharedMemory> sharedMemory)
+            : mSharedMemory(std::move(sharedMemory)) {}
+        ~MemoryHandleWithSharedMemoryImpl() override { Release(); }
+
+        size_t GetSerializeDataUpdateSize(size_t offset, size_t size) const override {
+            // The data is transferred out-of-band through the shared memory, so nothing needs to
+            // be serialized onto the wire.
+            return 0;
+        }
+
+        void SerializeDataUpdate(std::span<volatile std::byte> serializeData,
+                                 size_t offset,
+                                 size_t size,
+                                 std::span<const std::byte> data) const override {
+            // This function should not be called when `TryWrapInBuffer()` successfully wraps the
+            // shared memory into a buffer. In that case we don't need to serialize anything as the
+            // data will be directly written into the buffer memory.
+            DAWN_ASSERT(mSharedBufferMemory == nullptr);
+
+            DAWN_ASSERT(serializeData.size() == GetSerializeDataUpdateSize(offset, size));
+
+            // Otherwise, copy the data into the shared memory so the client can read it back.
+            std::span<std::byte> mapped = mSharedMemory->GetMappedSpan();
+            DAWN_ASSERT(data.size() == size);
+            DAWN_ASSERT(offset <= mapped.size());
+            DAWN_ASSERT(size <= mapped.size() - offset);
+            std::ranges::copy(data, mapped.subspan(offset, size).begin());
+        }
+
+        bool DeserializeDataUpdate(std::span<const std::byte> deserializeData,
+                                   size_t offset,
+                                   size_t size,
+                                   std::span<std::byte> target) override {
+            // This function should not be called when `TryWrapInBuffer()` successfully wraps the
+            // shared memory into a buffer. In that case we don't need to serialize anything as the
+            // data will be directly written into the buffer memory.
+            DAWN_ASSERT(mSharedBufferMemory == nullptr);
+
+            // Otherwise, the data from the wire lives in the shared memory. Copy it into the
+            // target.
+            std::span<std::byte> mapped = mSharedMemory->GetMappedSpan();
+            if (size > target.size() || offset > mapped.size() || size > mapped.size() - offset) {
+                return false;
+            }
+            std::ranges::copy(mapped.subspan(offset, size), target.begin());
+            return true;
+        }
+
+        WGPUBuffer TryWrapInBuffer(const DawnProcTable* procs,
+                                   WGPUDevice device,
+                                   const WGPUBufferDescriptor* descriptor) override {
+            if (descriptor->size != mSharedMemory->GetMappedSpan().size()) {
+                return nullptr;
+            }
+
+            DAWN_ASSERT(mSharedMemory != nullptr);
+            DAWN_ASSERT(procs != nullptr);
+            if (!procs->deviceHasFeature(device, WGPUFeatureName_SharedBufferMemoryHostPointer)) {
+                return nullptr;
+            }
+
+            WGPUSharedBufferMemoryHostPointerDescriptor hostPointerDesc = {
+                .chain = {.sType = WGPUSType_SharedBufferMemoryHostPointerDescriptor},
+                .pointer = mSharedMemory->GetMappedSpan().data(),
+                .size = mSharedMemory->GetAllocatedSize(),
+                .disposeCallbackInfo =
+                    {
+                        .mode = WGPUCallbackMode_AllowSpontaneous,
+                        .callback = [](WGPUCallbackStatus, void*, void*) {},
+                    },
+            };
+
+            WGPUSharedBufferMemoryDescriptor desc = {};
+            desc.nextInChain = &hostPointerDesc.chain;
+            mSharedBufferMemory = procs->deviceImportSharedBufferMemory(device, &desc);
+            mProcs = procs;
+            if (mSharedBufferMemory == nullptr) {
+                Release();
+                return nullptr;
+            }
+
+            WGPUBuffer buffer =
+                mProcs->sharedBufferMemoryCreateBuffer(mSharedBufferMemory, descriptor);
+            if (buffer == nullptr) {
+                Release();
+                return nullptr;
+            }
+
+            // BeginAccess only returns success/failure, so wrap it in a validation error scope to
+            // surface the underlying reason (useful for debugging, even though we only log it).
+            mProcs->devicePushErrorScope(device, WGPUErrorFilter_Validation);
+
+            WGPUSharedBufferMemoryBeginAccessDescriptor beginAccessDesc = {};
+            beginAccessDesc.initialized = true;
+            beginAccessDesc.fenceCount = 0;
+            WGPUStatus status = mProcs->sharedBufferMemoryBeginAccess(mSharedBufferMemory, buffer,
+                                                                      &beginAccessDesc);
+
+            mProcs->devicePopErrorScope(
+                device, {nullptr, WGPUCallbackMode_AllowSpontaneous,
+                         [](WGPUPopErrorScopeStatus popStatus, WGPUErrorType type,
+                            WGPUStringView message, void*, void*) {
+                             if (popStatus == WGPUPopErrorScopeStatus_Success &&
+                                 type != WGPUErrorType_NoError) {
+                                 dawn::InfoLog()
+                                     << "sharedBufferMemoryBeginAccess raised a validation "
+                                        "error: "
+                                     << dawn::ToString(message);
+                             }
+                         },
+                         nullptr, nullptr});
+
+            if (status != WGPUStatus_Success) {
+                Release();
+            }
+
+            return buffer;
+        }
+
+      private:
+        void Release() {
+            if (mSharedBufferMemory != nullptr) {
+                DAWN_ASSERT(mProcs != nullptr);
+                mProcs->sharedBufferMemoryRelease(mSharedBufferMemory);
+                mSharedBufferMemory = nullptr;
+            }
+            mProcs = nullptr;
+        }
+
+        WGPUSharedBufferMemory mSharedBufferMemory = nullptr;
+        raw_ptr<const DawnProcTable> mProcs = nullptr;
+        Ref<SharedMemory> mSharedMemory;
+    };
+
+    InlineMemoryTransferService() = default;
+    explicit InlineMemoryTransferService(
+        std::shared_ptr<InlineSharedMemoryManager> sharedMemoryManager)
+        : mSharedMemoryManager(std::move(sharedMemoryManager)) {}
     ~InlineMemoryTransferService() override = default;
 
-    bool DeserializeReadHandle(const void* deserializePointer,
-                               size_t deserializeSize,
-                               ReadHandle** readHandle) override {
-        DAWN_ASSERT(readHandle != nullptr);
-        *readHandle = new ReadHandleImpl();
-        return true;
+    std::unique_ptr<MemoryHandle> DeserializeMemoryHandle(
+        std::span<const std::byte> creationData) override {
+        if (creationData.size() != sizeof(SharedMemoryHandle)) {
+            return nullptr;
+        }
+
+        SharedMemoryHandle handle{};
+        ByteSpanFromRef(handle).CopyFrom(creationData);
+
+        if (handle.id == kInvalidSharedMemoryID || mSharedMemoryManager == nullptr) {
+            return std::make_unique<MemoryHandleImpl>();
+        }
+
+        Ref<SharedMemory> sharedMemory = mSharedMemoryManager->AcquireFromWire(handle.id);
+        if (sharedMemory == nullptr) {
+            return std::make_unique<MemoryHandleImpl>();
+        }
+
+        return std::make_unique<MemoryHandleWithSharedMemoryImpl>(std::move(sharedMemory));
     }
 
-    bool DeserializeWriteHandle(const void* deserializePointer,
-                                size_t deserializeSize,
-                                WriteHandle** writeHandle) override {
-        DAWN_ASSERT(writeHandle != nullptr);
-        *writeHandle = new WriteHandleImpl();
-        return true;
-    }
+  private:
+    std::shared_ptr<InlineSharedMemoryManager> mSharedMemoryManager;
 };
 
 std::unique_ptr<MemoryTransferService> CreateInlineMemoryTransferService() {
     return std::make_unique<InlineMemoryTransferService>();
+}
+
+std::unique_ptr<MemoryTransferService> CreateInlineMemoryTransferService(
+    std::shared_ptr<InlineSharedMemoryManager> sharedMemoryManager) {
+    return std::make_unique<InlineMemoryTransferService>(std::move(sharedMemoryManager));
 }
 
 }  // namespace dawn::wire::server

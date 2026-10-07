@@ -33,11 +33,6 @@
 #include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/type/texture.h"
 
-// Forward declarations
-namespace tint::core::type {
-class Manager;
-}  // namespace tint::core::type
-
 namespace tint::core::type {
 
 /// A texel buffer type.
@@ -68,6 +63,9 @@ class TexelBuffer final : public Castable<TexelBuffer, Texture> {
     /// @returns the name for this type that closely resembles how it would be
     /// declared in WGSL.
     std::string FriendlyName() const override;
+
+    /// @returns the name for this type in an identifier safe string.
+    std::string IdentifierName() const override;
 
     /// @param ctx the clone context
     /// @returns a clone of this type

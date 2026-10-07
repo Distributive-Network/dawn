@@ -25,13 +25,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "src/tint/lang/core/type/helper_test.h"
+#include "src/tint/lang/core/type/subgroup_matrix.h"
 
 #include "src/tint/lang/core/type/f32.h"
+#include "src/tint/lang/core/type/helper_test.h"
 #include "src/tint/lang/core/type/i32.h"
 #include "src/tint/lang/core/type/i8.h"
 #include "src/tint/lang/core/type/manager.h"
-#include "src/tint/lang/core/type/subgroup_matrix.h"
 #include "src/tint/lang/core/type/u32.h"
 
 namespace tint::core::type {
@@ -128,6 +128,24 @@ TEST_F(SubgroupMatrixTest, FriendlyName_Result) {
     U32 u32;
     SubgroupMatrix m{SubgroupMatrixKind::kResult, &u32, 32, 32};
     EXPECT_EQ(m.FriendlyName(), "subgroup_matrix_result<u32, 32, 32>");
+}
+
+TEST_F(SubgroupMatrixTest, IdentifierName_Left) {
+    I8 i8;
+    SubgroupMatrix m{SubgroupMatrixKind::kLeft, &i8, 2, 4};
+    EXPECT_EQ(m.IdentifierName(), "subgroup_matrix_left_i8_2_4");
+}
+
+TEST_F(SubgroupMatrixTest, IdentifierName_Right) {
+    F32 f32;
+    SubgroupMatrix m{SubgroupMatrixKind::kRight, &f32, 8, 8};
+    EXPECT_EQ(m.IdentifierName(), "subgroup_matrix_right_f32_8_8");
+}
+
+TEST_F(SubgroupMatrixTest, IdentifierName_Result) {
+    U32 u32;
+    SubgroupMatrix m{SubgroupMatrixKind::kResult, &u32, 32, 32};
+    EXPECT_EQ(m.IdentifierName(), "subgroup_matrix_result_u32_32_32");
 }
 
 TEST_F(SubgroupMatrixTest, Clone) {

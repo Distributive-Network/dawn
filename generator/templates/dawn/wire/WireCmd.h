@@ -30,10 +30,16 @@
 
 #include <webgpu/webgpu.h>
 
-#include "dawn/wire/BufferConsumer.h"
+#include <optional>
+
 #include "dawn/wire/ObjectType_autogen.h"
-#include "dawn/wire/ObjectHandle.h"
-#include "dawn/wire/WireResult.h"
+#include "dawn/wire/dawn_platform.h"
+#include "src/dawn/wire/BufferConsumer.h"
+#include "src/dawn/wire/ObjectHandle.h"
+#include "src/dawn/wire/WireResult.h"
+#include "src/utils/span.h"
+
+{% from 'dawn/cpp_macros.tmpl' import as_annotated_dawnType, as_dawnType with context %}
 
 namespace dawn::wire {
 
@@ -41,13 +47,15 @@ namespace dawn::wire {
     // nullptr is treated as an error.
     class DeserializeAllocator {
         public:
-            virtual void* GetSpace(size_t size) = 0;
+            virtual ~DeserializeAllocator() = default;
+            virtual std::optional<Span<std::byte>> TryGetSpace(size_t size) = 0;
     };
 
     // Interface to convert an ID to a server object, if possible.
     // Methods return FatalError if the ID is for a non-existent object and Success otherwise.
     class ObjectIdResolver {
         public:
+            virtual ~ObjectIdResolver() = default;
             {% for type in by_category["object"] %}
                 virtual WireResult GetFromId(ObjectId id, {{as_cType(type.name)}}* out) const = 0;
                 virtual WireResult GetOptionalFromId(ObjectId id, {{as_cType(type.name)}}* out) const = 0;
@@ -57,9 +65,10 @@ namespace dawn::wire {
     // Interface to convert a client object to its ID for the wiring.
     class ObjectIdProvider {
         public:
+            virtual ~ObjectIdProvider() = default;
             {% for type in by_category["object"] %}
-                virtual WireResult GetId({{as_cType(type.name)}} object, ObjectId* out) const = 0;
-                virtual WireResult GetOptionalId({{as_cType(type.name)}} object, ObjectId* out) const = 0;
+                virtual WireResult GetId({{as_cType(type.name)}} object, volatile ObjectId* out) const = 0;
+                virtual WireResult GetOptionalId({{as_cType(type.name)}} object, volatile ObjectId* out) const = 0;
             {% endfor %}
     };
 
@@ -81,21 +90,42 @@ namespace dawn::wire {
     };
 
     struct CmdHeader {
-        uint64_t commandSize;
+        WireCmd commandId{};
+
+        CmdHeader() = default;
+        CmdHeader(const CmdHeader&) = default;
+        CmdHeader(CmdHeader&&) = default;
+
+        // Volatile constructors and assignment operators are never expected to be called at
+        // runtime when handling wire commands. They exist solely to satisfy C++20 iterator and
+        // std::span requirements (e.g. std::indirectly_readable) when constructing views over
+        // volatile shared memory buffers.
+        [[noreturn]] CmdHeader(const volatile CmdHeader& other) {
+            DAWN_UNREACHABLE();
+        }
+        [[noreturn]] CmdHeader(volatile CmdHeader&& other) {
+            DAWN_UNREACHABLE();
+        }
+        [[noreturn]] CmdHeader(const volatile CmdHeader&& other) {
+            DAWN_UNREACHABLE();
+        }
+        [[noreturn]] CmdHeader& operator=(const volatile CmdHeader& other) {
+            DAWN_UNREACHABLE();
+        }
     };
 
 {% macro write_command_struct(command, is_return_command) %}
     {% set Return = "Return" if is_return_command else "" %}
-    {% set Cmd = command.name.CamelCase() + "Cmd" %}
-    struct {{Return}}{{Cmd}} {
+    {% set CmdName = Return + command.name.CamelCase() + "Cmd" %}
+    struct {{CmdName}} {
         //* From a filled structure, compute how much size will be used in the serialization buffer.
         size_t GetRequiredSize() const;
 
         //* Serialize the structure and everything it points to into serializeBuffer which must be
         //* big enough to contain all the data (as queried from GetRequiredSize).
-        WireResult Serialize(size_t commandSize, SerializeBuffer* serializeBuffer, const ObjectIdProvider& objectIdProvider) const;
+        WireResult Serialize(SerializeBuffer* serializeBuffer, const ObjectIdProvider& objectIdProvider) const;
         // Override which produces a FatalError if any object is used.
-        WireResult Serialize(size_t commandSize, SerializeBuffer* serializeBuffer) const;
+        WireResult Serialize(SerializeBuffer* serializeBuffer) const;
 
         //* Deserializes the structure from a buffer, consuming a maximum of *size bytes. When this
         //* function returns, buffer and size will be updated by the number of bytes consumed to
@@ -111,11 +141,15 @@ namespace dawn::wire {
         {% if command.derived_method %}
             //* Command handlers want to know the object ID in addition to the backing object.
             //* Doesn't need to be filled before Serialize, or GetRequiredSize.
-            ObjectId selfId;
+            ObjectId selfId = 0;
         {% endif %}
 
         {% for member in command.members %}
-            {{as_annotated_cType(member)}};
+            {% if member.is_length %}
+                //* Skip as it's included in the span just below.
+            {% else %}
+                {{as_annotated_dawnType(member, is_volatile=is_wire_data_only(member))}}{};
+            {% endif %}
         {% endfor %}
     };
 {% endmacro %}

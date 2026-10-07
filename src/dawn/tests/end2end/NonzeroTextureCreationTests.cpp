@@ -28,12 +28,14 @@
 #include <algorithm>
 #include <vector>
 
-#include "dawn/common/Constants.h"
-#include "dawn/common/Math.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/TestUtils.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/TestUtils.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/compiler.h"
+#include "src/utils/span.h"
 
 namespace dawn {
 namespace {
@@ -71,10 +73,10 @@ class ExpectNonZero : public detail::CustomTextureExpectation {
                    << "Expected data to be non-zero, was " << value << "\n";
         }
         for (size_t i = 0; i < size / DataSize(); ++i) {
-            if (actual[i] != value) {
+            if (DAWN_UNSAFE_TODO(actual[i]) != value) {
                 return testing::AssertionFailure()
                        << "Expected data[" << i << "] to match non-zero value " << value
-                       << ", actual " << actual[i] << "\n";
+                       << ", actual " << DAWN_UNSAFE_TODO(actual[i]) << "\n";
             }
         }
 
@@ -94,7 +96,7 @@ class NonzeroTextureCreationTests : public DawnTestWithParams<Params> {
         return {};
     }
 
-    void Run() {
+    void DoRun() {
         DAWN_TEST_UNSUPPORTED_IF(GetParam().mFormat == wgpu::TextureFormat::BC1RGBAUnorm &&
                                  !SupportsFeatures({wgpu::FeatureName::TextureCompressionBC}));
 
@@ -119,6 +121,12 @@ class NonzeroTextureCreationTests : public DawnTestWithParams<Params> {
         // TODO(dawn:1844): Work around this by clearing layers one by one on Intel.
         DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsIntel() && GetParam().mDepthOrArrayLayers > 6);
 
+        // TODO(crbug.com/556959073): BlitTextureToBuffer cube sampling fails on Pixel 10 OpenGLES
+        // for RG8Unorm small mips.
+        DAWN_SUPPRESS_TEST_IF(IsImgTec() && IsOpenGLES() &&
+                              GetParam().mFormat == wgpu::TextureFormat::RG8Unorm &&
+                              GetParam().mDepthOrArrayLayers == 6 && GetParam().mMip >= 2);
+
         wgpu::TextureDescriptor descriptor;
         descriptor.dimension = GetParam().mDimension;
         descriptor.size.width = kSize;
@@ -131,7 +139,7 @@ class NonzeroTextureCreationTests : public DawnTestWithParams<Params> {
 
         // Only set the textureBindingViewDimension in compat mode. It's not needed
         // nor used in non-compat.
-        wgpu::TextureBindingViewDimensionDescriptor textureBindingViewDimensionDesc;
+        wgpu::TextureBindingViewDimension textureBindingViewDimensionDesc;
         if (IsCompatibilityMode()) {
             if (descriptor.dimension == wgpu::TextureDimension::e2D &&
                 descriptor.size.depthOrArrayLayers == 6) {
@@ -253,11 +261,11 @@ class NonzeroTextureCreationTests : public DawnTestWithParams<Params> {
 
                 uint32_t copiedWidthInBytes = utils::GetTexelBlockSizeInBytes(GetParam().mFormat) *
                                               copySize.width / blockWidth;
-                uint8_t* d = data.data();
+                dawn::Span<uint8_t> d = data;
                 for (uint32_t z = 0; z < depthOrArrayLayers; ++z) {
                     for (uint32_t row = 0; row < copySize.height / blockHeight; ++row) {
-                        std::fill_n(d, copiedWidthInBytes, 1);
-                        d += bytesPerRow;
+                        size_t offset = (z * rowsPerImage + row) * bytesPerRow;
+                        std::ranges::fill(d.subspan(offset, copiedWidthInBytes), 1);
                     }
                 }
                 EXPECT_BUFFER_U8_RANGE_EQ(data.data(), bufferDst, 0, bufferSize);
@@ -278,17 +286,17 @@ class NonzeroMultisampledTextureCreationTests : public NonzeroTextureCreationTes
 
 // Test that texture clears to a non-zero value because toggle is enabled.
 TEST_P(NonzeroTextureCreationTests, TextureCreationClears) {
-    Run();
+    DoRun();
 }
 
 // Test that texture clears to a non-zero value because toggle is enabled.
 TEST_P(NonzeroNonrenderableTextureCreationTests, TextureCreationClears) {
-    Run();
+    DoRun();
 }
 
 // Test that texture clears to a non-zero value because toggle is enabled.
 TEST_P(NonzeroCompressedTextureCreationTests, TextureCreationClears) {
-    Run();
+    DoRun();
 }
 
 // Test that texture clears to a non-zero value because toggle is enabled.
@@ -299,7 +307,7 @@ TEST_P(NonzeroDepthTextureCreationTests, TextureCreationClears) {
     // TODO(crbug.com/474396043): [Capture] error value on Mac Intel.
     DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled() && IsMetal() && IsIntel());
 
-    Run();
+    DoRun();
 }
 
 // Test that texture clears to a non-zero value because toggle is enabled.
@@ -307,7 +315,7 @@ TEST_P(NonzeroDepthStencilTextureCreationTests, TextureCreationClears) {
     // TODO(crbug.com/473870505): [Capture] support depth/stencil and multi-planar textures.
     DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
 
-    Run();
+    DoRun();
 }
 
 // Test that texture clears to a non-zero value because toggle is enabled.
@@ -315,12 +323,12 @@ TEST_P(NonzeroStencilTextureCreationTests, TextureCreationClears) {
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
 
-    Run();
+    DoRun();
 }
 
 // Test that texture clears to a non-zero value because toggle is enabled.
 TEST_P(NonzeroMultisampledTextureCreationTests, TextureCreationClears) {
-    Run();
+    DoRun();
 }
 
 DAWN_INSTANTIATE_TEST_P(

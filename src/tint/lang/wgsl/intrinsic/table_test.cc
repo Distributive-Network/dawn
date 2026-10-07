@@ -545,7 +545,7 @@ TEST_F(WgslIntrinsicTableTest, OverloadOrderByNumberOfParameters) {
     ASSERT_EQ(result.Failure().Plain(),
               R"(no matching call to 'textureDimensions(bool, bool)'
 
-33 candidate functions:
+34 candidate functions:
  • 'textureDimensions(texture: texture_depth_2d  ✗ , level: L  ✗ ) -> vec2<u32>' where:
       ✗  'L' is 'i32' or 'u32'
  • 'textureDimensions(texture: texture_depth_2d_array  ✗ , level: L  ✗ ) -> vec2<u32>' where:
@@ -592,6 +592,8 @@ TEST_F(WgslIntrinsicTableTest, OverloadOrderByNumberOfParameters) {
       ✗  'T' is 'f32', 'i32' or 'u32'
  • 'textureDimensions(texture: texture_multisampled_2d<T>  ✗ ) -> vec2<u32>' where:
       ✗  'T' is 'f32', 'i32' or 'u32'
+ • 'textureDimensions(texture: texture_multisampled_2d_array<T>  ✗ ) -> vec2<u32>' where:
+      ✗  'T' is 'f32', 'i32' or 'u32'
  • 'textureDimensions(texture: texture_storage_1d<F, R>  ✗ ) -> u32' where:
       ✗  'R' is 'read'
  • 'textureDimensions(texture: texture_storage_2d<F, R>  ✗ ) -> vec2<u32>' where:
@@ -599,8 +601,6 @@ TEST_F(WgslIntrinsicTableTest, OverloadOrderByNumberOfParameters) {
  • 'textureDimensions(texture: texture_storage_2d_array<F, R>  ✗ ) -> vec2<u32>' where:
       ✗  'R' is 'read'
  • 'textureDimensions(texture: texture_storage_3d<F, R>  ✗ ) -> vec3<u32>' where:
-      ✗  'R' is 'read'
- • 'textureDimensions(texture: texel_buffer<F, R>  ✗ ) -> u32' where:
       ✗  'R' is 'read'
  • 'textureDimensions(texture: texture_storage_1d<F, W>  ✗ ) -> u32' where:
       ✗  'W' is 'write' or 'read_write'
@@ -610,6 +610,8 @@ TEST_F(WgslIntrinsicTableTest, OverloadOrderByNumberOfParameters) {
       ✗  'W' is 'write' or 'read_write'
  • 'textureDimensions(texture: texture_storage_3d<F, W>  ✗ ) -> vec3<u32>' where:
       ✗  'W' is 'write' or 'read_write'
+ • 'textureDimensions(texture: texel_buffer<F, R>  ✗ ) -> u32' where:
+      ✗  'R' is 'read'
  • 'textureDimensions(texture: texel_buffer<F, W>  ✗ ) -> u32' where:
       ✗  'W' is 'write' or 'read_write'
 )");
@@ -624,7 +626,7 @@ TEST_F(WgslIntrinsicTableTest, OverloadOrderByMatchingParameter) {
     ASSERT_EQ(result.Failure().Plain(),
               R"(no matching call to 'textureDimensions(texture_depth_2d, bool)'
 
-33 candidate functions:
+34 candidate functions:
  • 'textureDimensions(texture: texture_depth_2d  ✓ , level: L  ✗ ) -> vec2<u32>' where:
       ✗  'L' is 'i32' or 'u32'
  • 'textureDimensions(texture: texture_depth_2d  ✓ ) -> vec2<u32>' where:
@@ -672,6 +674,8 @@ TEST_F(WgslIntrinsicTableTest, OverloadOrderByMatchingParameter) {
       ✗  'T' is 'f32', 'i32' or 'u32'
  • 'textureDimensions(texture: texture_multisampled_2d<T>  ✗ ) -> vec2<u32>' where:
       ✗  'T' is 'f32', 'i32' or 'u32'
+ • 'textureDimensions(texture: texture_multisampled_2d_array<T>  ✗ ) -> vec2<u32>' where:
+      ✗  'T' is 'f32', 'i32' or 'u32'
  • 'textureDimensions(texture: texture_storage_1d<F, R>  ✗ ) -> u32' where:
       ✗  'R' is 'read'
  • 'textureDimensions(texture: texture_storage_2d<F, R>  ✗ ) -> vec2<u32>' where:
@@ -679,8 +683,6 @@ TEST_F(WgslIntrinsicTableTest, OverloadOrderByMatchingParameter) {
  • 'textureDimensions(texture: texture_storage_2d_array<F, R>  ✗ ) -> vec2<u32>' where:
       ✗  'R' is 'read'
  • 'textureDimensions(texture: texture_storage_3d<F, R>  ✗ ) -> vec3<u32>' where:
-      ✗  'R' is 'read'
- • 'textureDimensions(texture: texel_buffer<F, R>  ✗ ) -> u32' where:
       ✗  'R' is 'read'
  • 'textureDimensions(texture: texture_storage_1d<F, W>  ✗ ) -> u32' where:
       ✗  'W' is 'write' or 'read_write'
@@ -690,6 +692,8 @@ TEST_F(WgslIntrinsicTableTest, OverloadOrderByMatchingParameter) {
       ✗  'W' is 'write' or 'read_write'
  • 'textureDimensions(texture: texture_storage_3d<F, W>  ✗ ) -> vec3<u32>' where:
       ✗  'W' is 'write' or 'read_write'
+ • 'textureDimensions(texture: texel_buffer<F, R>  ✗ ) -> u32' where:
+      ✗  'R' is 'read'
  • 'textureDimensions(texture: texel_buffer<F, W>  ✗ ) -> u32' where:
       ✗  'W' is 'write' or 'read_write'
 )");
@@ -836,8 +840,8 @@ TEST_F(WgslIntrinsicTableTest, MatchTypeInitializerImplicit) {
 TEST_F(WgslIntrinsicTableTest, MatchTypeInitializerExplicit) {
     auto* i32 = create<core::type::I32>();
     auto* vec3i = create<core::type::Vector>(i32, 3u);
-    auto result = table.Lookup(CtorConv::kVec3, Vector{i32}, Vector{i32, i32, i32},
-                               core::EvaluationStage::kConstant);
+    auto result = table.Lookup(CtorConv::kVec3, Vector<core::intrinsic::TemplateParameter, 1>{i32},
+                               Vector{i32, i32, i32}, core::EvaluationStage::kConstant);
     ASSERT_EQ(result, Success);
     EXPECT_EQ(result->return_type, vec3i);
     EXPECT_TRUE(result->info->flags.Contains(OverloadFlag::kIsConstructor));
@@ -908,8 +912,8 @@ TEST_F(WgslIntrinsicTableTest, MismatchTypeInitializerImplicit) {
 TEST_F(WgslIntrinsicTableTest, MismatchTypeInitializerExplicit) {
     auto* i32 = create<core::type::I32>();
     auto* f32 = create<core::type::F32>();
-    auto result = table.Lookup(CtorConv::kVec3, Vector{i32}, Vector{i32, f32, i32},
-                               core::EvaluationStage::kConstant);
+    auto result = table.Lookup(CtorConv::kVec3, Vector<core::intrinsic::TemplateParameter, 1>{i32},
+                               Vector{i32, f32, i32}, core::EvaluationStage::kConstant);
     ASSERT_NE(result, Success);
     EXPECT_EQ(result.Failure().Plain(),
               R"(no matching constructor for 'vec3<i32>(i32, f32, i32)'
@@ -1031,8 +1035,8 @@ TEST_F(WgslIntrinsicTableTest, MatchTypeConversion) {
     auto* vec3i = create<core::type::Vector>(i32, 3u);
     auto* f32 = create<core::type::F32>();
     auto* vec3f = create<core::type::Vector>(f32, 3u);
-    auto result =
-        table.Lookup(CtorConv::kVec3, Vector{i32}, Vector{vec3f}, core::EvaluationStage::kConstant);
+    auto result = table.Lookup(CtorConv::kVec3, Vector<core::intrinsic::TemplateParameter, 1>{i32},
+                               Vector{vec3f}, core::EvaluationStage::kConstant);
     ASSERT_EQ(result, Success);
     EXPECT_EQ(result->return_type, vec3i);
     EXPECT_FALSE(result->info->flags.Contains(OverloadFlag::kIsConstructor));
@@ -1044,8 +1048,8 @@ TEST_F(WgslIntrinsicTableTest, MismatchTypeConversion) {
     auto* arr = create<core::type::Array>(create<core::type::U32>(),
                                           create<core::type::RuntimeArrayCount>(), 4u);
     auto* f32 = create<core::type::F32>();
-    auto result =
-        table.Lookup(CtorConv::kVec3, Vector{f32}, Vector{arr}, core::EvaluationStage::kConstant);
+    auto result = table.Lookup(CtorConv::kVec3, Vector<core::intrinsic::TemplateParameter, 1>{f32},
+                               Vector{arr}, core::EvaluationStage::kConstant);
     ASSERT_NE(result, Success);
     EXPECT_EQ(result.Failure().Plain(),
               R"(no matching constructor for 'vec3<f32>(array<u32>)'
@@ -1103,8 +1107,8 @@ TEST_F(WgslIntrinsicTableTest, MatchTypeConversion_ConstantEval) {
     auto* vec3_ai = create<core::type::Vector>(ai, 3u);
     auto* f32 = create<core::type::F32>();
     auto* vec3f = create<core::type::Vector>(f32, 3u);
-    auto result = table.Lookup(CtorConv::kVec3, Vector{af}, Vector{vec3_ai},
-                               core::EvaluationStage::kConstant);
+    auto result = table.Lookup(CtorConv::kVec3, Vector<core::intrinsic::TemplateParameter, 1>{af},
+                               Vector{vec3_ai}, core::EvaluationStage::kConstant);
     ASSERT_EQ(result, Success);
     EXPECT_NE(result->const_eval_fn, nullptr);
     // NOTE: Conversions are explicit, so there's no way to have it return abstracts
@@ -1120,8 +1124,8 @@ TEST_F(WgslIntrinsicTableTest, MatchTypeConversion_RuntimeEval) {
     auto* vec3_ai = create<core::type::Vector>(ai, 3u);
     auto* vec3f = create<core::type::Vector>(create<core::type::F32>(), 3u);
     auto* vec3i = create<core::type::Vector>(create<core::type::I32>(), 3u);
-    auto result =
-        table.Lookup(CtorConv::kVec3, Vector{af}, Vector{vec3_ai}, core::EvaluationStage::kRuntime);
+    auto result = table.Lookup(CtorConv::kVec3, Vector<core::intrinsic::TemplateParameter, 1>{af},
+                               Vector{vec3_ai}, core::EvaluationStage::kRuntime);
     ASSERT_EQ(result, Success);
     EXPECT_NE(result->const_eval_fn, nullptr);
     EXPECT_EQ(result->return_type, vec3f);
@@ -1152,6 +1156,53 @@ TEST_F(WgslIntrinsicTableTest, OverloadResolution) {
     EXPECT_EQ(result->return_type, i32);
     EXPECT_EQ(result->parameters.Length(), 1u);
     EXPECT_EQ(result->parameters[0].type, ai);
+}
+
+TEST_F(WgslIntrinsicTableTest, EnumTemplateParameter_Match) {
+    Vector<core::intrinsic::TemplateParameter, 1> templates{core::Majorness::kRowMajor};
+    auto* f32 = create<core::type::F32>();
+    auto* mat = create<core::type::SubgroupMatrix>(core::SubgroupMatrixKind::kResult, f32, 8u, 8u);
+    auto* runtime = create<core::type::RuntimeArrayCount>();
+    auto* arr = create<core::type::Array>(f32, runtime, 0u);
+    auto* ptr =
+        create<core::type::Pointer>(core::AddressSpace::kStorage, arr, core::Access::kReadWrite);
+    auto* u32 = create<core::type::U32>();
+    Vector<const core::type::Type*, 4> arg_tys{ptr, u32, mat, u32};
+    auto result = table.Lookup(wgsl::BuiltinFn::kSubgroupMatrixStore, templates, arg_tys,
+                               core::EvaluationStage::kRuntime);
+    ASSERT_EQ(result, Success);
+}
+
+TEST_F(WgslIntrinsicTableTest, EnumTemplateParameter_Match_MultiParam) {
+    auto* f32 = create<core::type::F32>();
+    auto* mat = create<core::type::SubgroupMatrix>(core::SubgroupMatrixKind::kResult, f32, 8u, 8u);
+    auto* runtime = create<core::type::RuntimeArrayCount>();
+    auto* arr = create<core::type::Array>(f32, runtime, 0u);
+    auto* ptr =
+        create<core::type::Pointer>(core::AddressSpace::kStorage, arr, core::Access::kReadWrite);
+    auto* u32 = create<core::type::U32>();
+    Vector<const core::type::Type*, 4> arg_tys{ptr, u32, u32};
+    Vector<core::intrinsic::TemplateParameter, 1> templates{mat, core::Majorness::kColMajor};
+    auto result = table.Lookup(wgsl::BuiltinFn::kSubgroupMatrixLoad, templates, arg_tys,
+                               core::EvaluationStage::kRuntime);
+    ASSERT_EQ(result, Success);
+    EXPECT_EQ(result->return_type, mat);
+}
+
+TEST_F(WgslIntrinsicTableTest, EnumTemplateParameter_NoMatch_Type) {
+    auto* f32 = create<core::type::F32>();
+    auto* mat = create<core::type::SubgroupMatrix>(core::SubgroupMatrixKind::kResult, f32, 8u, 8u);
+    auto* runtime = create<core::type::RuntimeArrayCount>();
+    auto* arr = create<core::type::Array>(f32, runtime, 0u);
+    auto* ptr =
+        create<core::type::Pointer>(core::AddressSpace::kStorage, arr, core::Access::kReadWrite);
+    auto* u32 = create<core::type::U32>();
+    Vector<const core::type::Type*, 4> arg_tys{ptr, u32, mat, u32};
+    Vector<core::intrinsic::TemplateParameter, 1> templates{f32};
+    auto result = table.Lookup(wgsl::BuiltinFn::kSubgroupMatrixStore, templates, arg_tys,
+                               core::EvaluationStage::kRuntime);
+    ASSERT_NE(result, Success);
+    ASSERT_THAT(result.Failure().Plain(), HasSubstr("no matching call"));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

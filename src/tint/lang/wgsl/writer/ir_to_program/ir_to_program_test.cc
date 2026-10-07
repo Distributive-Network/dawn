@@ -27,17 +27,19 @@
 
 // GEN_BUILD:CONDITION(tint_build_wgsl_writer)
 
+#include "src/tint/lang/wgsl/writer/ir_to_program/ir_to_program.h"
+
 #include <limits>
 #include <sstream>
 #include <string>
 
 #include "src/tint/lang/core/enums.h"
+#include "src/tint/lang/core/ir/array_count.h"
 #include "src/tint/lang/core/type/binding_array.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
 #include "src/tint/lang/wgsl/ir/builtin_call.h"
-#include "src/tint/lang/wgsl/writer/ir_to_program/ir_to_program.h"
 #include "src/tint/lang/wgsl/writer/ir_to_program/ir_to_program_test.h"
 #include "src/tint/lang/wgsl/writer/writer.h"
 #include "src/tint/utils/text/string.h"
@@ -47,10 +49,15 @@ namespace tint::wgsl::writer {
 using namespace tint::core::number_suffixes;  // NOLINT
 using namespace tint::core::fluent_types;     // NOLINT
 
-IRToProgramTest::Result IRToProgramTest::Run() {
+IRToProgramTest::Result IRToProgramTest::RunTest() {
     Result result;
 
     result.ir = str();
+
+    mod.properties.Add(core::ir::Property::kAllowOverrides);
+    mod.properties.Add(core::ir::Property::kAllowPhonyInstructions);
+    mod.properties.Add(core::ir::Property::kAllowRefTypes);
+    mod.properties.Add(core::ir::Property::kAllow16BitFloats);
 
     auto output_program = IRToProgram(mod, options);
     if (!output_program.IsValid()) {
@@ -304,7 +311,9 @@ TEST_F(IRToProgramTest, EntryPoint_ParameterAttribute_Compute) {
         MakeBuiltinParam(b, ty.vec3u(), core::BuiltinValue::kLocalInvocationId),
         MakeBuiltinParam(b, ty.u32(), core::BuiltinValue::kLocalInvocationIndex),
         MakeBuiltinParam(b, ty.vec3u(), core::BuiltinValue::kGlobalInvocationId),
+        MakeBuiltinParam(b, ty.u32(), core::BuiltinValue::kGlobalInvocationIndex),
         MakeBuiltinParam(b, ty.vec3u(), core::BuiltinValue::kWorkgroupId),
+        MakeBuiltinParam(b, ty.u32(), core::BuiltinValue::kWorkgroupIndex),
         MakeBuiltinParam(b, ty.vec3u(), core::BuiltinValue::kNumWorkgroups),
         MakeBuiltinParam(b, ty.u32(), core::BuiltinValue::kSubgroupInvocationId),
         MakeBuiltinParam(b, ty.u32(), core::BuiltinValue::kSubgroupSize),
@@ -316,7 +325,7 @@ TEST_F(IRToProgramTest, EntryPoint_ParameterAttribute_Compute) {
 enable subgroups;
 
 @compute @workgroup_size(3u, 4u, 5u)
-fn f(@builtin(local_invocation_id) v : vec3<u32>, @builtin(local_invocation_index) v_1 : u32, @builtin(global_invocation_id) v_2 : vec3<u32>, @builtin(workgroup_id) v_3 : vec3<u32>, @builtin(num_workgroups) v_4 : vec3<u32>, @builtin(subgroup_invocation_id) v_5 : u32, @builtin(subgroup_size) v_6 : u32) {
+fn f(@builtin(local_invocation_id) v : vec3<u32>, @builtin(local_invocation_index) v_1 : u32, @builtin(global_invocation_id) v_2 : vec3<u32>, @builtin(global_invocation_index) v_3 : u32, @builtin(workgroup_id) v_4 : vec3<u32>, @builtin(workgroup_index) v_5 : u32, @builtin(num_workgroups) v_6 : vec3<u32>, @builtin(subgroup_invocation_id) v_7 : u32, @builtin(subgroup_size) v_8 : u32) {
 }
 )");
 }
@@ -329,6 +338,7 @@ TEST_F(IRToProgramTest, EntryPoint_ParameterAttribute_Fragment) {
         MakeBuiltinParam(b, ty.u32(), core::BuiltinValue::kSampleMask),
         MakeBuiltinParam(b, ty.u32(), core::BuiltinValue::kSubgroupSize),
         MakeBuiltinParam(b, ty.u32(), core::BuiltinValue::kPrimitiveIndex),
+        MakeBuiltinParam(b, ty.u32(), core::BuiltinValue::kViewIndex),
     });
 
     fn->Block()->Append(b.Return(fn));
@@ -336,9 +346,10 @@ TEST_F(IRToProgramTest, EntryPoint_ParameterAttribute_Fragment) {
     EXPECT_WGSL(R"(
 enable subgroups;
 enable primitive_index;
+enable view_instancing;
 
 @fragment
-fn f(@builtin(front_facing) v : bool, @builtin(sample_index) v_1 : u32, @builtin(sample_mask) v_2 : u32, @builtin(subgroup_size) v_3 : u32, @builtin(primitive_index) v_4 : u32) {
+fn f(@builtin(front_facing) v : bool, @builtin(sample_index) v_1 : u32, @builtin(sample_mask) v_2 : u32, @builtin(subgroup_size) v_3 : u32, @builtin(primitive_index) v_4 : u32, @builtin(view_index) v_5 : u32) {
 }
 )");
 }
@@ -1443,6 +1454,19 @@ TEST_F(IRToProgramTest, TypeConstruct_binding_array) {
 
 fn f(i : i32) {
 }
+)");
+}
+
+TEST_F(IRToProgramTest, Type_Multisampled2DArrayTexture) {
+    auto* texture = b.Var(
+        "texture",
+        ty.ref(handle, ty.multisampled_texture(core::type::TextureDimension::k2dArray, ty.f32()),
+               read));
+    texture->SetBindingPoint(0, 0);
+    mod.root_block->Append(texture);
+
+    EXPECT_WGSL(R"(
+@group(0u) @binding(0u) var texture : texture_multisampled_2d_array<f32>;
 )");
 }
 
@@ -3558,7 +3582,9 @@ TEST_F(IRToProgramTest, Override_BitcastInitializer) {
         auto* from = b.Override("from", 42_u);
         from->SetOverrideId(OverrideId{10});
 
-        o = b.Override("o", b.Bitcast(ty.i32(), from));
+        o = b.Override("o", b.CallExplicit<wgsl::ir::BuiltinCall>(
+                                ty.i32(), wgsl::BuiltinFn::kBitcast,
+                                Vector<core::ir::TemplateParameter, 1>{ty.i32()}, from));
     });
 
     auto* fn = b.Function("f", ty.i32());
@@ -3572,6 +3598,41 @@ override o : i32 = bitcast<i32>(v);
 fn f() -> i32 {
   return o;
 }
+)");
+}
+
+TEST_F(IRToProgramTest, Override_ArraySize) {
+    b.Append(b.ir.root_block, [&] {
+        auto* o = b.Override("o", ty.i32());
+        o->SetOverrideId(OverrideId{10});
+
+        auto* cnt = ty.Get<core::ir::type::ValueArrayCount>(o->Result());
+        auto* ary = ty.Get<core::type::Array>(ty.i32(), cnt, 0_u);
+        b.Var("v", ty.ref(workgroup, ary, read_write));
+    });
+
+    EXPECT_WGSL(R"(
+@id(10) override o : i32;
+
+var<workgroup> v : array<i32, o>;
+)");
+}
+
+TEST_F(IRToProgramTest, Override_ArraySize_Expression) {
+    b.Append(b.ir.root_block, [&] {
+        auto* wgsize = b.Override("wgsize", ty.i32());
+        wgsize->SetOverrideId(OverrideId{10});
+
+        auto* mul = b.Multiply(wgsize, 2_i);
+        auto* cnt = ty.Get<core::ir::type::ValueArrayCount>(mul);
+        auto* ary = ty.Get<core::type::Array>(ty.i32(), cnt, 0_u);
+        b.Var("v", ty.ref(workgroup, ary, read_write));
+    });
+
+    EXPECT_WGSL(R"(
+@id(10) override wgsize : i32;
+
+var<workgroup> v : array<i32, (wgsize * 2i)>;
 )");
 }
 
@@ -3701,24 +3762,6 @@ fn f() {
     _ = subgroupBallot(true);
   }
 }
-)");
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// chromium_internal_graphite
-////////////////////////////////////////////////////////////////////////////////
-TEST_F(IRToProgramTest, Enable_ChromiumInternalGraphite_SubgroupBallot) {
-    b.Append(b.ir.root_block, [&] {
-        auto t = b.Var("T", ty.ref<core::AddressSpace::kHandle>(ty.storage_texture(
-                                core::type::TextureDimension::k2d, core::TexelFormat::kR8Unorm,
-                                core::Access::kRead)));
-        t->SetBindingPoint(0, 0);
-    });
-
-    EXPECT_WGSL(R"(
-enable chromium_internal_graphite;
-
-@group(0u) @binding(0u) var T : texture_storage_2d<r8unorm, read>;
 )");
 }
 

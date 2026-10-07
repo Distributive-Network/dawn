@@ -22,10 +22,8 @@ void main() {
       }
       foo();
       {
-        uint v = uint(i);
-        i = int((v + uint(1)));
+        i = int((uint(i) + 1u));
       }
-      continue;
     }
   }
 }

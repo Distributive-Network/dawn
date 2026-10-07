@@ -101,7 +101,7 @@ interop::Interface<interop::GPUSupportedFeatures> GPUAdapter::getFeatures(Napi::
 
 interop::Interface<interop::GPUSupportedLimits> GPUAdapter::getLimits(Napi::Env env) {
     dawn::utils::ComboLimits limits;
-    if (!adapter_.GetLimits(limits.GetLinked())) {
+    if (adapter_.GetLimits(limits.GetLinked()) != wgpu::Status::Success) {
         Napi::Error::New(env, "failed to get adapter limits").ThrowAsJavaScriptException();
     }
 
@@ -161,7 +161,7 @@ interop::Promise<interop::Interface<interop::GPUDevice>> GPUAdapter::requestDevi
                     binding::Errors::OperationError(env, "Limit \"" #LIMIT "\" out of range.")); \
                 return promise;                                                                  \
             }                                                                                    \
-            *dawnLimit = jsLimit;                                                                \
+            *dawnLimit = static_cast<DawnLimitType>(jsLimit);                                    \
         }                                                                                        \
         descriptor.requiredLimits.erase(#LIMIT);                                                 \
     }
@@ -191,7 +191,10 @@ interop::Promise<interop::Interface<interop::GPUDevice>> GPUAdapter::requestDevi
 
     // Set the device callbacks.
     using DeviceLostContext = AsyncContext<interop::Interface<interop::GPUDeviceLostInfo>>;
-    auto device_lost_ctx = new DeviceLostContext(env, PROMISE_INFO, async_);
+    // The device lost promise stays pending for the whole lifetime of the device, and its callback
+    // is spontaneous, so it does not need (and must not keep alive) the process-events pump.
+    auto device_lost_ctx =
+        new DeviceLostContext(env, PROMISE_INFO, async_, AsyncPolling::kNotRequired);
     auto device_lost_promise = device_lost_ctx->promise;
     desc.SetDeviceLostCallback(
         wgpu::CallbackMode::AllowSpontaneous,

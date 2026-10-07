@@ -26,7 +26,6 @@ ary_ret v_1(uint start_byte_offset) {
       {
         v_2 = (v_3 + 1u);
       }
-      continue;
     }
   }
   float4x4 v_4[4] = a;
@@ -46,15 +45,14 @@ void f_inner(uint tint_local_index) {
       {
         v_5 = (v_6 + 1u);
       }
-      continue;
     }
   }
   GroupMemoryBarrierWithGroupSync();
   float4x4 v_7[4] = v_1(0u);
   w = v_7;
-  w[1u] = v(128u);
-  w[1u][0u] = asfloat(u[1u]).ywxz;
-  w[1u][0u].x = asfloat(u[1u].x);
+  w[int(1)] = v(128u);
+  w[int(1)][int(0)] = asfloat(u[1u]).ywxz;
+  w[int(1)][int(0)].x = asfloat(u[1u].x);
 }
 
 [numthreads(1, 1, 1)]

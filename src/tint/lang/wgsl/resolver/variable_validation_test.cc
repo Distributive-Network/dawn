@@ -107,7 +107,7 @@ TEST_F(ResolverVariableValidationTest, GlobalVarUsedAtModuleScope) {
 
 TEST_F(ResolverVariableValidationTest, OverrideNoInitializerNoType) {
     // override a;
-    Override(Source{{12, 34}}, "a");
+    Override(Source{{12, 34}}, "a", ast::Type{}, nullptr);
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), "12:34 error: override declaration requires a type or initializer");
@@ -134,7 +134,7 @@ TEST_F(ResolverVariableValidationTest, OverrideExceedsIDLimit_LastReserved) {
     // ...
     // @id(N) override oN : i32;
     constexpr size_t kLimit = std::numeric_limits<decltype(OverrideId::value)>::max();
-    Override("reserved", ty.i32(), Id(AInt(kLimit)));
+    Override("reserved", ty.i32(), Vector{Id(AInt(kLimit))});
     for (size_t i = 0; i < kLimit; i++) {
         Override("o" + std::to_string(i), ty.i32());
     }
@@ -364,7 +364,7 @@ TEST_F(ResolverVariableValidationTest, NonConstructibleType_RuntimeArray) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(error: runtime-sized arrays can only be used in the <storage> address space
+              R"(error: runtime-sized arrays cannot be used in the <function> address space
 12:34 note: while analyzing structure member S.m
 56:78 note: while instantiating 'var' v)");
 }
@@ -530,6 +530,170 @@ TEST_F(ResolverVariableValidationTest, GlobalVariable_ImmediateWithInitializer) 
     EXPECT_EQ(
         r()->error(),
         R"(1:2 error: var of address space 'immediate' cannot have an initializer. var initializers are only supported for the address spaces 'private' and 'function')");
+}
+
+TEST_F(ResolverVariableValidationTest, GlobalVariable_Immediate_Array) {
+    EXPECT_ERROR(R"(var<immediate> v : array<u32, 4>;)",
+                 R"(input.wgsl:1:20 error: arrays cannot be used in the <immediate> address space
+var<immediate> v : array<u32, 4>;
+                   ^^^^^^^^^^^^^
+
+input.wgsl:1:1 note: while instantiating 'var' v
+var<immediate> v : array<u32, 4>;
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+)");
+}
+
+TEST_F(ResolverVariableValidationTest, GlobalVariable_Immediate_ArrayInStruct) {
+    EXPECT_ERROR(R"(
+struct S {
+  a : u32,
+  b : array<u32, 4>,
+}
+var<immediate> v : S;
+)",
+                 R"(input.wgsl:4:7 error: arrays cannot be used in the <immediate> address space
+  b : array<u32, 4>,
+      ^^^^^^^^^^^^^
+
+input.wgsl:4:3 note: while analyzing structure member S.b
+  b : array<u32, 4>,
+  ^
+
+input.wgsl:6:1 note: while instantiating 'var' v
+var<immediate> v : S;
+^^^^^^^^^^^^^^^^^^^^
+)");
+}
+
+// TODO(459529440): Enable once ProgramToIr calls IR validator at end
+TEST_F(ResolverVariableValidationTest, DISABLED_FunctionScopeVar_ExcessiveElements) {
+    EXPECT_ERROR(
+        R"(
+fn main() {
+  var v : array<bool, 65535>;
+}
+)",
+        R"(input.wgsl:3:3 error: type has excessive number of elements (>32767) for an initializer
+  var v : array<bool, 65535>;
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+)");
+}
+
+// TODO(459529440): Enable once ProgramToIr calls IR validator at end
+TEST_F(ResolverVariableValidationTest, DISABLED_PrivateScopeVar_ExcessiveElements) {
+    EXPECT_ERROR(
+        R"(
+var<private> v : array<bool, 65535>;
+)",
+        R"(input.wgsl:2:1 error: type has excessive number of elements (>32767) for an initializer
+var<private> v : array<bool, 65535>;
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+)");
+}
+
+// TODO(459529440): Enable once ProgramToIr calls IR validator at end
+TEST_F(ResolverVariableValidationTest, DISABLED_NestedArray_ExcessiveElements) {
+    EXPECT_ERROR(
+        R"(
+fn main() {
+  var v : array<array<bool, 256>, 256>;
+}
+)",
+        R"(input.wgsl:3:3 error: type has excessive number of elements (>32767) for an initializer
+  var v : array<array<bool, 256>, 256>;
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+)");
+}
+
+// TODO(459529440): Enable once ProgramToIr calls IR validator at end
+TEST_F(ResolverVariableValidationTest, DISABLED_StructInArray_ExcessiveElements) {
+    EXPECT_ERROR(
+        R"(
+struct S {
+  a : u32,
+  b : u32,
+  c : u32,
+  d : u32,
+}
+fn main() {
+  var v : array<S, 10000>;
+}
+)",
+        R"(input.wgsl:9:3 error: type has excessive number of elements (>32767) for an initializer
+  var v : array<S, 10000>;
+  ^^^^^^^^^^^^^^^^^^^^^^^
+)");
+}
+
+// TODO(459529440): Enable once ProgramToIr calls IR validator at end
+TEST_F(ResolverVariableValidationTest, DISABLED_StructWithMultipleArrays_ExcessiveElements) {
+    EXPECT_ERROR(
+        R"(
+struct S {
+  a : array<bool, 20000>,
+  b : array<bool, 20000>,
+}
+fn main() {
+  var v : S;
+}
+)",
+        R"(input.wgsl:7:3 error: type has excessive number of elements (>32767) for an initializer
+  var v : S;
+  ^^^^^^^^^
+)");
+}
+
+TEST_F(ResolverVariableValidationTest, WorkgroupScopeVar_ExcessiveElements_Success) {
+    EXPECT_SUCCESS(R"(
+var<workgroup> v : array<bool, 65535>;
+)");
+}
+
+// TODO(459529440): Enable once ProgramToIr calls IR validator at end
+TEST_F(ResolverVariableValidationTest, DISABLED_Let_ExcessiveElements) {
+    EXPECT_ERROR(
+        R"(
+fn main() {
+  let v : array<bool, 65535> = array<bool, 65535>();
+}
+)",
+        R"(input.wgsl:3:32 error: array constructor has excessive number of elements (>32767)
+  let v : array<bool, 65535> = array<bool, 65535>();
+                               ^^^^^^^^^^^^^^^^^^
+)");
+}
+
+TEST_F(ResolverVariableValidationTest, PhonyAssignment_ExcessiveElements) {
+    EXPECT_ERROR(
+        R"(
+@group(0) @binding(0) var<storage> v : array<i32, 1000000>;
+fn main() {
+  _ = v;
+}
+)",
+        R"(input.wgsl:4:7 error: array count (1000000) must be less than 65536
+  _ = v;
+      ^
+)");
+}
+
+TEST_F(ResolverVariableValidationTest, ReturnType_ExcessiveElements) {
+    EXPECT_ERROR(
+        R"(
+@group(0) @binding(0) var<storage> v : array<i32, 1000000>;
+fn foo() -> array<i32, 1000000> {
+  return v;
+}
+)",
+        R"(input.wgsl:3:13 error: array count (1000000) must be less than 65536
+fn foo() -> array<i32, 1000000> {
+            ^^^^^^^^^^^^^^^^^^^
+
+input.wgsl:3:13 note: while instantiating return type for foo
+fn foo() -> array<i32, 1000000> {
+            ^^^^^^^^^^^^^^^^^^^
+)");
 }
 
 }  // namespace

@@ -43,7 +43,8 @@ namespace tint::core::type {
 namespace {
 
 core::type::Flags FlagsFrom(const Type* element, const ArrayCount* count) {
-    core::type::Flags flags;
+    core::type::Flags flags{};
+
     // Only constant-expression sized arrays are constructible
     if (count->Is<ConstantArrayCount>()) {
         if (element->IsConstructible()) {
@@ -58,7 +59,9 @@ core::type::Flags FlagsFrom(const Type* element, const ArrayCount* count) {
             flags.Add(Flag::kFixedFootprint);
         }
     }
-    if (element->IsHostShareable()) {
+    // Host-shareable if the element is host-shareable AND the count is not override sized.
+    if (element->IsHostShareable() &&
+        (count->Is<ConstantArrayCount>() || count->Is<RuntimeArrayCount>())) {
         flags.Add(Flag::kHostShareable);
     }
     return flags;
@@ -102,6 +105,17 @@ std::string Array::FriendlyName() const {
     }
 
     out << ">";
+    return out.str();
+}
+
+std::string Array::IdentifierName() const {
+    StringStream out;
+    out << "array_" << element_->IdentifierName();
+
+    auto count_str = count_->FriendlyName();
+    if (!count_str.empty()) {
+        out << "_" << count_str;
+    }
     return out.str();
 }
 

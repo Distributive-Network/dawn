@@ -29,19 +29,25 @@
 #define SRC_DAWN_TESTS_WHITE_BOX_SHAREDBUFFERMEMORYTESTS_H_
 
 #include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
+#include "src/dawn/tests/DawnTest.h"
 
 namespace dawn {
 
 class SharedBufferMemoryTestBackend {
   public:
+    virtual ~SharedBufferMemoryTestBackend() = default;
+
     virtual void SetUp() {}
     virtual void TearDown() {}
+
+    // Name used to identify this backend in test names.
+    virtual std::string Name() const = 0;
 
     // The required features for testing this backend.
     virtual std::vector<wgpu::FeatureName> RequiredFeatures(const wgpu::Adapter& device) const = 0;
@@ -51,11 +57,12 @@ class SharedBufferMemoryTestBackend {
                                                               wgpu::BufferUsage usages,
                                                               uint32_t bufferSize,
                                                               uint32_t data = 0) = 0;
-
-    // Creates a SharedFence from a backend-specific fence type.
-    wgpu::SharedFence ImportFenceTo(const wgpu::Device& importingDevice,
-                                    const wgpu::SharedFence& fence);
 };
+
+inline std::ostream& operator<<(std::ostream& o, SharedBufferMemoryTestBackend* backend) {
+    o << backend->Name();
+    return o;
+}
 
 using Backend = SharedBufferMemoryTestBackend*;
 DAWN_TEST_PARAM_STRUCT(SharedBufferMemoryTestParams, Backend);

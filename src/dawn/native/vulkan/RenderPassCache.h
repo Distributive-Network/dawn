@@ -34,14 +34,14 @@
 #include <mutex>
 
 #include "absl/container/flat_hash_map.h"
-#include "dawn/common/Constants.h"
-#include "dawn/common/ityp_array.h"
-#include "dawn/common/ityp_bitset.h"
-#include "dawn/common/vulkan_platform.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/IntegerTypes.h"
-#include "dawn/native/dawn_platform.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/common/ityp_array.h"
+#include "src/dawn/common/ityp_bitset.h"
+#include "src/dawn/common/vulkan_platform.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace dawn::native::vulkan {
 
@@ -57,33 +57,35 @@ struct RenderPassCacheQuery {
                   wgpu::TextureFormat format,
                   wgpu::LoadOp loadOp,
                   wgpu::StoreOp storeOp,
-                  bool hasResolveTarget);
+                  bool hasResolveTarget,
+                  bool renderToSingleSampled);
     void SetDepthStencil(wgpu::TextureFormat format,
                          wgpu::LoadOp depthLoadOp,
                          wgpu::StoreOp depthStoreOp,
                          bool depthReadOnly,
                          wgpu::LoadOp stencilLoadOp,
                          wgpu::StoreOp stencilStoreOp,
-                         bool stencilRendOnly);
+                         bool stencilReadOnly);
     void SetSampleCount(uint32_t sampleCount);
 
     ColorAttachmentMask colorMask;
     ColorAttachmentMask resolveTargetMask;
-    PerColorAttachment<wgpu::TextureFormat> colorFormats;
-    PerColorAttachment<wgpu::LoadOp> colorLoadOp;
-    PerColorAttachment<wgpu::StoreOp> colorStoreOp;
+    PerColorAttachment<wgpu::TextureFormat> colorFormats{};
+    PerColorAttachment<wgpu::LoadOp> colorLoadOp{};
+    PerColorAttachment<wgpu::StoreOp> colorStoreOp{};
     ColorAttachmentMask expandResolveMask;
+    ColorAttachmentMask renderToSingleSampleMask;
 
     bool hasDepthStencil = false;
-    wgpu::TextureFormat depthStencilFormat;
-    wgpu::LoadOp depthLoadOp;
-    wgpu::StoreOp depthStoreOp;
-    bool depthReadOnly;
-    wgpu::LoadOp stencilLoadOp;
-    wgpu::StoreOp stencilStoreOp;
-    bool stencilReadOnly;
+    wgpu::TextureFormat depthStencilFormat{};
+    wgpu::LoadOp depthLoadOp{};
+    wgpu::StoreOp depthStoreOp{};
+    bool depthReadOnly = false;
+    wgpu::LoadOp stencilLoadOp{};
+    wgpu::StoreOp stencilStoreOp{};
+    bool stencilReadOnly = false;
 
-    uint32_t sampleCount;
+    uint32_t sampleCount = 0;
 };
 
 // Caches VkRenderPasses so that we don't create duplicate ones for every RenderPipeline or
@@ -100,7 +102,7 @@ class RenderPassCache {
     struct RenderPassInfo {
         VkRenderPass renderPass = VK_NULL_HANDLE;
         uint32_t mainSubpass = 0;
-        uint64_t uniqueId;
+        uint64_t uniqueId = 0;
     };
 
     ResultOrError<RenderPassInfo> GetRenderPass(const RenderPassCacheQuery& query);

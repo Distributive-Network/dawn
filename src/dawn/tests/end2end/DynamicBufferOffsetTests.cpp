@@ -30,10 +30,11 @@
 #include <string>
 #include <vector>
 
-#include "dawn/common/Math.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/compiler.h"
 
 namespace dawn {
 namespace {
@@ -43,8 +44,8 @@ constexpr uint32_t kBindingSize = 8;
 
 class DynamicBufferOffsetTests : public DawnTest {
   protected:
-    uint32_t mMinUniformBufferOffsetAlignment;
-    uint32_t mMinStorageBufferOffsetAlignment;
+    uint32_t mMinUniformBufferOffsetAlignment = 0;
+    uint32_t mMinStorageBufferOffsetAlignment = 0;
     wgpu::BindGroup mBindGroups[2];
     wgpu::BindGroupLayout mBindGroupLayouts[2];
 
@@ -263,6 +264,9 @@ class DynamicBufferOffsetTests : public DawnTest {
 
 // Dynamic offsets are all zero and no effect to result.
 TEST_P(DynamicBufferOffsetTests, BasicRenderPipeline) {
+    // TODO(crbug.com/522869941): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::RenderPipeline pipeline = CreateRenderPipeline();
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
 
@@ -284,8 +288,8 @@ TEST_P(DynamicBufferOffsetTests, BasicRenderPipeline) {
 
 // Have non-zero dynamic offsets.
 TEST_P(DynamicBufferOffsetTests, SetDynamicOffsetsRenderPipeline) {
-    // TODO(42242119): fail on Qualcomm Adreno X1.
-    DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsQualcomm());
+    // TODO(crbug.com/522869941): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
 
     wgpu::RenderPipeline pipeline = CreateRenderPipeline();
     utils::BasicRenderPass renderPass = utils::CreateBasicRenderPass(device, kRTSize, kRTSize);
@@ -329,9 +333,6 @@ TEST_P(DynamicBufferOffsetTests, BasicComputePipeline) {
 
 // Have non-zero dynamic offsets.
 TEST_P(DynamicBufferOffsetTests, SetDynamicOffsetsComputePipeline) {
-    // TODO(42242119): fail on Qualcomm Adreno X1.
-    DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsQualcomm());
-
     wgpu::ComputePipeline pipeline = CreateComputePipeline();
 
     std::array<uint32_t, 2> offsets = {mMinUniformBufferOffsetAlignment,
@@ -353,8 +354,8 @@ TEST_P(DynamicBufferOffsetTests, SetDynamicOffsetsComputePipeline) {
 
 // Test basic inherit on render pipeline
 TEST_P(DynamicBufferOffsetTests, BasicInheritRenderPipeline) {
-    // TODO(42242119): fail on Qualcomm Adreno X1.
-    DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsQualcomm());
+    // TODO(crbug.com/40238674): Fails on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsImgTec());
 
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
             @vertex
@@ -457,8 +458,8 @@ TEST_P(DynamicBufferOffsetTests, InheritDynamicOffsetsRenderPipeline) {
     // TODO(crbug.com/40287156): Remove when test is no longer flaky on Pixel 6
     DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsARM());
 
-    // TODO(42242119): fail on Qualcomm Adreno X1.
-    DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsQualcomm());
+    // TODO(crbug.com/522869941): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
 
     // Using default pipeline and setting dynamic offsets
     wgpu::RenderPipeline pipeline = CreateRenderPipeline();
@@ -489,9 +490,6 @@ TEST_P(DynamicBufferOffsetTests, InheritDynamicOffsetsRenderPipeline) {
 
 // Test inherit dynamic offsets on compute pipeline
 TEST_P(DynamicBufferOffsetTests, InheritDynamicOffsetsComputePipeline) {
-    // TODO(42242119): fail on Qualcomm Adreno X1.
-    DAWN_SUPPRESS_TEST_IF(IsD3D11() && IsQualcomm());
-
     wgpu::ComputePipeline pipeline = CreateComputePipeline();
     wgpu::ComputePipeline testPipeline = CreateComputePipeline(true);
 
@@ -517,6 +515,9 @@ TEST_P(DynamicBufferOffsetTests, InheritDynamicOffsetsComputePipeline) {
 
 // Setting multiple dynamic offsets for the same bindgroup in one render pass.
 TEST_P(DynamicBufferOffsetTests, UpdateDynamicOffsetsMultipleTimesRenderPipeline) {
+    // TODO(crbug.com/522869941): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     // Using default pipeline and setting dynamic offsets
     wgpu::RenderPipeline pipeline = CreateRenderPipeline();
 
@@ -658,7 +659,8 @@ TEST_P(ClampedOOBDynamicBufferOffsetTests, CheckOOBAccess) {
     uint32_t minUniformBufferOffsetAlignment = GetSupportedLimits().minUniformBufferOffsetAlignment;
     uint32_t minStorageBufferOffsetAlignment = GetSupportedLimits().minStorageBufferOffsetAlignment;
 
-    uint32_t arrayByteLength = kArrayLength * 4 * sizeof(uint32_t);
+    uint32_t arrayByteLength =
+        static_cast<uint32_t>(static_cast<size_t>(kArrayLength) * 4 * sizeof(uint32_t));
 
     uint32_t uniformBufferOffset = Align(arrayByteLength, minUniformBufferOffsetAlignment);
     uint32_t storageBufferOffset = Align(arrayByteLength, minStorageBufferOffsetAlignment);
@@ -696,7 +698,7 @@ TEST_P(ClampedOOBDynamicBufferOffsetTests, CheckOOBAccess) {
                                                    GetParam().mReadBufferUsage);
 
     // Fill the dst buffer with 0xFF.
-    memset(expectedDst.data(), 0xFF, dstBufferSize);
+    DAWN_UNSAFE_TODO(memset(expectedDst.data(), 0xFF, dstBufferSize));
     wgpu::Buffer dst =
         utils::CreateBufferFromData(device, &expectedDst[0], dstBufferSize,
                                     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc);
@@ -750,6 +752,120 @@ DAWN_INSTANTIATE_TEST_P(ClampedOOBDynamicBufferOffsetTests,
                         {wgpu::BufferUsage::Uniform, wgpu::BufferUsage::Storage},
                         {false, true},
                         {false, true});
+
+class OOBDynamicBufferOffsetTests : public DawnTest {};
+
+// Tests that a non-visible binding does not end up disabling robustness for a dynamic binding at
+// index 0. This was happening on D3D12 because we erroneously were adding non-visible buffers to
+// 'ignored_by_robustness' for which the default shader register was 0, thus disabling robustness
+// for the dynamic buffer correctly bound to shader register 0. See crbug.com/512988356
+TEST_P(OOBDynamicBufferOffsetTests, NonVisibleBindingDoesNotDisableRobustness) {
+    // Bind group layout 0:
+    //   binding 0: dynamic uniform, visibility Compute -> robustness should be enabled
+    //   binding 7: read-only-storage, visibility None -> formerly disabled robustness on binding 0
+    wgpu::BindGroupLayout bgl0 = utils::MakeBindGroupLayout(
+        device, {
+                    {0, wgpu::ShaderStage::Compute, wgpu::BufferBindingType::Uniform, true},
+                    {7, wgpu::ShaderStage::None, wgpu::BufferBindingType::ReadOnlyStorage},
+                });
+
+    // Bind group layout 1: index source + output
+    wgpu::BindGroupLayout bgl1 = utils::MakeBindGroupLayout(
+        device, {
+                    {0, wgpu::ShaderStage::Compute, wgpu::BufferBindingType::ReadOnlyStorage},
+                    {1, wgpu::ShaderStage::Compute, wgpu::BufferBindingType::Storage},
+                });
+
+    wgpu::PipelineLayout layout = utils::MakePipelineLayout(device, {bgl0, bgl1});
+
+    // WGSL: index a fixed-size uniform array with a runtime value loaded from a
+    // storage buffer. With robustness enabled, Tint emits `min(idx, 1u)`; with the bug,
+    // the clamp is erroneously dropped.
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        struct U { a : array<u32, 1> };
+        @group(0) @binding(0) var<uniform> u : U;
+        @group(1) @binding(0) var<storage, read> indices : array<u32>;
+        @group(1) @binding(1) var<storage, read_write> outp: array<u32>;
+
+        @compute @workgroup_size(1)
+        fn main() {
+            for (var i = 0; i < 8; i++) {
+                let idx = indices[i];
+                let result = u.a[idx];
+                outp[i] = result;
+            }
+        }
+    )");
+
+    wgpu::ComputePipelineDescriptor cpDesc;
+    cpDesc.layout = layout;
+    cpDesc.compute.module = module;
+    wgpu::ComputePipeline pipeline = device.CreateComputePipeline(&cpDesc);
+
+    // Uniform with single uint32_t sentinel value
+    const uint32_t kSentinel = 0xCAFEF00D;
+    std::vector uniformData(1, kSentinel);
+    wgpu::Buffer uniformBuf =
+        utils::CreateBufferFromData(device, uniformData.data(), 1 * sizeof(uint32_t),
+                                    wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst);
+
+    // Visibility None buffer (must still be bound).
+    wgpu::BufferDescriptor visNoneDesc;
+    visNoneDesc.size = sizeof(uint32_t);
+    visNoneDesc.usage = wgpu::BufferUsage::Storage;
+    wgpu::Buffer visNoneBuf = device.CreateBuffer(&visNoneDesc);
+
+    size_t kBufferElems = 8;
+    size_t kBufferSize = kBufferElems * sizeof(uint32_t);
+
+    // Indices buffer with values 0, 10, 100, 1000, etc.
+    std::vector<uint32_t> indices(kBufferElems);
+    for (uint32_t i = 0; i < kBufferElems; ++i) {
+        indices[i] = i * 10;
+    }
+    wgpu::Buffer indicesBuf =
+        utils::CreateBufferFromData(device, indices.data(), kBufferSize,
+                                    wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst);
+
+    // Output buffer.
+    wgpu::BufferDescriptor outDesc;
+    outDesc.size = kBufferSize;
+    outDesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc;
+    wgpu::Buffer outBuf = device.CreateBuffer(&outDesc);
+
+    wgpu::BindGroup bg0 = utils::MakeBindGroup(device, bgl0, {{0, uniformBuf}, {7, visNoneBuf}});
+    wgpu::BindGroup bg1 = utils::MakeBindGroup(device, bgl1, {{0, indicesBuf}, {1, outBuf}});
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
+    pass.SetPipeline(pipeline);
+    uint32_t dynamicOffset = 0;
+    pass.SetBindGroup(0, bg0, 1, &dynamicOffset);
+    pass.SetBindGroup(1, bg1);
+    pass.DispatchWorkgroups(1);
+    pass.End();
+
+    wgpu::CommandBuffer commands = encoder.Finish();
+    device.GetQueue().Submit(1, &commands);
+
+    // All values in output should be kSentinel.
+    // When robustness is erroneously disabled, the uniform buffer is indexed OOB which is UB, so
+    // the results can be anything, although typically we'll get kSentinel as the first value, and 0
+    // for the rest.
+    std::vector<uint32_t> expected(kBufferSize, kSentinel);
+    EXPECT_BUFFER_U32_RANGE_EQ(expected.data(), outBuf, 0, kBufferElems);
+}
+
+// DAWN_INSTANTIATE_TEST(OOBDynamicBufferOffsetTests, D3D12Backend());
+
+DAWN_INSTANTIATE_TEST(OOBDynamicBufferOffsetTests,
+                      D3D11Backend(),
+                      D3D12Backend(),
+                      MetalBackend(),
+                      OpenGLBackend(),
+                      OpenGLESBackend(),
+                      VulkanBackend(),
+                      WebGPUBackend());
 
 }  // anonymous namespace
 }  // namespace dawn

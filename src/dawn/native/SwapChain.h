@@ -30,12 +30,12 @@
 
 #include <vector>
 
-#include "dawn/native/Error.h"
-#include "dawn/native/Format.h"
-#include "dawn/native/Forward.h"
-#include "dawn/native/ObjectBase.h"
-#include "dawn/native/dawn_platform.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/Format.h"
+#include "src/dawn/native/Forward.h"
+#include "src/dawn/native/ObjectBase.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace dawn::native {
 
@@ -43,10 +43,10 @@ TextureDescriptor GetSwapChainBaseTextureDescriptor(SwapChainBase* swapChain);
 
 struct SwapChainTextureInfo {
     Ref<TextureBase> texture;
-    wgpu::SurfaceGetCurrentTextureStatus status;
+    wgpu::SurfaceGetCurrentTextureStatus status = wgpu::SurfaceGetCurrentTextureStatus::Error;
 };
 
-class SwapChainBase : public RefCounted {
+class SwapChainBase : public ApiObjectBase {
   public:
     SwapChainBase(DeviceBase* device, Surface* surface, const SurfaceConfiguration* config);
 
@@ -54,6 +54,7 @@ class SwapChainBase : public RefCounted {
     //
     //  - The surface it is attached to is being destroyed.
     //  - The swapchain is being replaced by another one on the surface.
+    //  - The device that created it is being destroyed (see DestroyImpl).
     //
     // Note that the surface has a Ref on the last swapchain that was used on it so the
     // SwapChain destructor will only be called after one of the things above happens.
@@ -61,23 +62,12 @@ class SwapChainBase : public RefCounted {
     // The call for the detaching previous swapchain should be called inside the backend
     // implementation of SwapChains. This is to allow them to acquire any resources before
     // calling detach to make a seamless transition from the previous swapchain.
-    //
-    // Likewise the call for the swapchain being destroyed must be done in the backend's
-    // swapchain's destructor since C++ says it is UB to call virtual methods in the base class
-    // destructor.
     void DetachFromSurface();
 
     void SetIsAttached();
 
-    // TODO(crbug.com/dawn/831):
-    // APIRelease() can be called without any synchronization guarantees so we need to use a Release
-    // method that will call LockAndDeleteThis() on destruction.
-    // This is because losing the last reference to the SwapChain will detach its surface which
-    // explicitly destroys the current texture. Explicit destruction of textures is not thread safe
-    // yet.
-    void APIRelease() { ReleaseAndLockBeforeDestroy(); }
+    ObjectType GetType() const override;
 
-    DeviceBase* GetDevice() const;
     uint32_t GetWidth() const;
     uint32_t GetHeight() const;
     wgpu::TextureFormat GetFormat() const;
@@ -97,31 +87,33 @@ class SwapChainBase : public RefCounted {
     ~SwapChainBase() override;
 
   private:
+    // Detaches the swapchain from its surface if it is still attached, which is the case when the
+    // device is destroyed while the surface is still configured with it.
+    void DestroyImpl(DestroyReason reason) override;
+
     void SetChildLabel(ApiObjectBase* child) const;
     // Get a format set from mViewFormats (equivalent information, but easier to validate the
     // current texture)
     FormatSet ComputeViewFormatSet() const;
 
-    Ref<DeviceBase> mDevice;
-
     bool mAttached = false;
-    uint32_t mWidth;
-    uint32_t mHeight;
-    wgpu::TextureFormat mFormat;
-    wgpu::TextureUsage mUsage;
-    wgpu::PresentMode mPresentMode;
+    uint32_t mWidth = 0;
+    uint32_t mHeight = 0;
+    wgpu::TextureFormat mFormat = wgpu::TextureFormat::Undefined;
+    wgpu::TextureUsage mUsage = wgpu::TextureUsage::None;
+    wgpu::PresentMode mPresentMode = wgpu::PresentMode::Fifo;
     // This is not stored as a FormatSet so that it can hold the data pointed to by the
     // descriptor returned by GetSwapChainBaseTextureDescriptor():
-    std::vector<wgpu::TextureFormat> mViewFormats;
-    wgpu::CompositeAlphaMode mAlphaMode;
+    std::vector<wgpu::TextureFormat> mViewFormats = {};
+    wgpu::CompositeAlphaMode mAlphaMode = wgpu::CompositeAlphaMode::Auto;
 
     // This is a weak reference to the surface. If the surface is destroyed it will call
     // DetachFromSurface and mSurface will be updated to nullptr.
     raw_ptr<Surface> mSurface = nullptr;
     SwapChainTextureInfo mCurrentTextureInfo;
 
-    MaybeError ValidatePresent() const;
-    MaybeError ValidateGetCurrentTexture() const;
+    MaybeValError ValidatePresent() const;
+    MaybeValError ValidateGetCurrentTexture() const;
 
     // GetCurrentTextureImpl and PresentImpl are guaranteed to be called in an interleaved manner,
     // starting with GetCurrentTextureImpl.

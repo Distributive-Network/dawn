@@ -25,9 +25,8 @@ void main() {
       InnerS v_2 = v;
       s1.a1[v_1] = v_2;
       {
-        i = asint((asuint(i) + asuint(int(1))));
+        i = asint((asuint(i) + 1u));
       }
-      continue;
     }
   }
 }

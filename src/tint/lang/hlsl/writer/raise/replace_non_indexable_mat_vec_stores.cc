@@ -28,7 +28,8 @@
 #include "src/tint/lang/hlsl/writer/raise/replace_non_indexable_mat_vec_stores.h"
 
 #include "src/tint/lang/core/ir/builder.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
+#include "src/tint/lang/core/type/i32.h"
 
 namespace tint::hlsl::writer::raise {
 namespace {
@@ -61,11 +62,9 @@ struct State {
             return true;
         }
         // Also check for lets to constant, which is a common use-case
-        if (auto* result = value->As<core::ir::InstructionResult>()) {
-            if (auto* let = result->Instruction()->As<core::ir::Let>()) {
-                if (let->Value()->Is<core::ir::Constant>()) {
-                    return true;
-                }
+        if (auto* let = value->AsInstruction<core::ir::Let>()) {
+            if (let->Value()->Is<core::ir::Constant>()) {
+                return true;
             }
         }
         return false;
@@ -82,13 +81,13 @@ struct State {
         // This will always be the last index in the chain.
 
         // The last index must be dynamic
-        if (IsConstant(to_access->Indices().Back())) {
+        if (IsConstant(to_access->Indices().back())) {
             return {};
         }
         // Get the root object type
         const auto* object_ty = to_access->Object()->Type()->As<core::type::Pointer>()->StoreType();
         const auto indicesButLast =
-            to_access->Indices().Truncate(to_access->Indices().Length() - 1);
+            to_access->Indices().subspan(0, to_access->Indices().size() - 1);
         for (auto* idx : indicesButLast) {
             object_ty = GetElementType(object_ty, idx);
         }
@@ -113,16 +112,22 @@ struct State {
         b.InsertBefore(store, [&] {
             // Create access to the matrix we're dynamically indexing
             core::ir::Value* matrix = to_access->Object();
-            if (!indicesButLast.IsEmpty()) {
+            if (!indicesButLast.empty()) {
                 // Matrix is in a struct or array, for example
                 matrix = b.Access(ty.ptr(to_ptr->AddressSpace(), mat_ty), to_access->Object(),
-                                  ToVector<4>(indicesButLast))
-                             ->Result();
+                                  Vector<core::ir::Value*, 4>{indicesButLast});
             }
             // Switch over dynamic index, emitting a case for all possible column indices
-            auto* switch_ = b.Switch(to_access->Indices().Back());
+            auto* index_val = to_access->Indices().back();
+            auto* switch_ = b.Switch(index_val);
             for (uint32_t i = 0; i < mat_ty->Columns(); ++i) {
-                b.Append(b.Case(switch_, {b.Constant(u32(i))}), [&] {
+                core::ir::Constant* case_val = nullptr;
+                if (index_val->Type()->Is<core::type::I32>()) {
+                    case_val = b.Constant(i32(i));
+                } else {
+                    case_val = b.Constant(u32(i));
+                }
+                b.Append(b.Case(switch_, {case_val}), [&] {
                     auto* const vec_ty = to_ptr->StoreType();
                     auto* access = b.Access(ty.ptr(to_ptr->AddressSpace(), vec_ty), matrix, u32(i));
                     auto* new_store = Switch(
@@ -159,11 +164,7 @@ struct State {
             return;
         }
         // Must be storing via an access
-        auto* to = store->To()->As<core::ir::InstructionResult>();
-        if (!to) {
-            return;
-        }
-        auto* to_access = to->Instruction()->As<core::ir::Access>();
+        auto* to_access = store->To()->AsInstruction<core::ir::Access>();
         if (!to_access) {
             return;
         }
@@ -287,9 +288,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> ReplaceNonIndexableMatVecStores(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(ValidateAndDumpIfNeeded(
-        ir, "hlsl.ReplaceNonIndexableMatVecStores",
-        core::ir::Capabilities{core::ir::Capability::kAllowDuplicateBindings}));
+    core::ir::AssertValid(ir, "before hlsl.ReplaceNonIndexableMatVecStores");
 
     State{ir}.Process();
 

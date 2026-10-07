@@ -34,9 +34,11 @@
 #                       Do not modify this file directly
 ################################################################################
 
+if(TINT_BUILD_WGSL_WRITER)
 ################################################################################
 # Target:    tint_lang_wgsl_writer_ir_to_program
 # Kind:      lib
+# Condition: TINT_BUILD_WGSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_wgsl_writer_ir_to_program lib
   lang/wgsl/writer/ir_to_program/ir_to_program.cc
@@ -49,6 +51,7 @@ tint_target_add_dependencies(tint_lang_wgsl_writer_ir_to_program lib
   tint_lang_core_constant
   tint_lang_core_intrinsic
   tint_lang_core_ir
+  tint_lang_core_ir_validator
   tint_lang_core_type
   tint_lang_wgsl
   tint_lang_wgsl_ast
@@ -65,6 +68,7 @@ tint_target_add_dependencies(tint_lang_wgsl_writer_ir_to_program lib
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -74,11 +78,15 @@ tint_target_add_external_dependencies(tint_lang_wgsl_writer_ir_to_program lib
   "src_utils"
 )
 
+endif(TINT_BUILD_WGSL_WRITER)
+if(TINT_BUILD_WGSL_WRITER)
 ################################################################################
 # Target:    tint_lang_wgsl_writer_ir_to_program_test
 # Kind:      test
+# Condition: TINT_BUILD_WGSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_wgsl_writer_ir_to_program_test test
+  lang/wgsl/writer/ir_to_program/ir_to_program_test.cc
   lang/wgsl/writer/ir_to_program/ir_to_program_test.h
 )
 
@@ -96,6 +104,7 @@ tint_target_add_dependencies(tint_lang_wgsl_writer_ir_to_program_test test
   tint_lang_wgsl_ir
   tint_lang_wgsl_program
   tint_lang_wgsl_sem
+  tint_lang_wgsl_writer
   tint_lang_wgsl_writer_common
   tint_lang_wgsl_writer_ir_to_program
   tint_utils
@@ -105,6 +114,7 @@ tint_target_add_dependencies(tint_lang_wgsl_writer_ir_to_program_test test
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -115,11 +125,4 @@ tint_target_add_external_dependencies(tint_lang_wgsl_writer_ir_to_program_test t
   "src_utils"
 )
 
-if(TINT_BUILD_WGSL_WRITER)
-  tint_target_add_sources(tint_lang_wgsl_writer_ir_to_program_test test
-    "lang/wgsl/writer/ir_to_program/ir_to_program_test.cc"
-  )
-  tint_target_add_dependencies(tint_lang_wgsl_writer_ir_to_program_test test
-    tint_lang_wgsl_writer
-  )
 endif(TINT_BUILD_WGSL_WRITER)

@@ -31,7 +31,7 @@ from collections import namedtuple, defaultdict
 from copy import deepcopy
 
 from generator_lib import Generator, run_generator, FileRender, GeneratorOutput
-from webgpu_json_utility import build_doc_map, load_json_data
+from webgpu_docs_utility import build_doc_map, load_json_data
 
 ############################################################
 # OBJECT MODEL
@@ -39,6 +39,7 @@ from webgpu_json_utility import build_doc_map, load_json_data
 
 
 class Metadata:
+
     def __init__(self, metadata):
         self.api = metadata['api']
         self.namespace = metadata['namespace']
@@ -48,7 +49,9 @@ class Metadata:
         self.native_namespace = metadata['native_namespace']
         self.copyright_year = metadata.get('copyright_year', None)
 
+
 class Name:
+
     def __init__(self, name, native=False):
         self.native = native
         self.name = name
@@ -99,6 +102,7 @@ class Name:
             result += chunk.lower()
         return result
 
+
 def concat_names(*names):
     return ' '.join([name.canonical_case() for name in names])
 
@@ -108,9 +112,9 @@ def validate_and_get_tags(json_data):
         'dawn',
         'emscripten',
         'native',
-        'compat',
         'deprecated',
         'art',
+        'art_experimental',
     }
 
     tags = json_data.get('tags')
@@ -121,6 +125,7 @@ def validate_and_get_tags(json_data):
 
 
 class Type:
+
     def __init__(self, name, json_data, native=False):
         self.json_data = json_data
         self.dict_name = name
@@ -133,11 +138,15 @@ class Type:
     def __lt__(self, other):
         return self.name < other.name
 
+    def get_child_map(self):
+        return {}
+
 
 EnumValue = namedtuple('EnumValue', ['name', 'value', 'valid', 'json_data'])
 
 
 class EnumType(Type):
+
     def __init__(self, is_enabled, name, json_data):
         Type.__init__(self, name, json_data)
 
@@ -145,6 +154,7 @@ class EnumType(Type):
         self.hasUndefined = False
         self.contiguous = True
         self.startValue = None
+        self.allowConflict = False
         lastValue = None
         for m in self.json_data['values']:
             if not is_enabled(m):
@@ -156,9 +166,6 @@ class EnumType(Type):
                 tags = []
 
             prefix = 0
-            if 'compat' in tags:
-                assert prefix == 0
-                prefix = 0x0002_0000
 
             if 'dawn' in tags:
                 # Dawn-only or Dawn+Emscripten
@@ -191,12 +198,12 @@ class EnumType(Type):
             lastValue = value
             self.values.append(
                 EnumValue(Name(value_name), value, m.get('valid', True), m))
+            self.allowConflict |= m.get('enum_value_conflict', False)
 
         # Assert that all values except those with "enum_value_conflict": true are unique in enums
         all_values = set()
         for value in self.values:
             if value.value in all_values:
-                #TODO(42241174) remove this condition once wgpu refactoring is complete.
                 if not value.json_data.get('enum_value_conflict', False):
                     raise Exception(
                         "Duplicate value {} for '{}' in enum '{}'".format(
@@ -209,6 +216,7 @@ BitmaskValue = namedtuple('BitmaskValue', ['name', 'value', 'json_data'])
 
 
 class BitmaskType(Type):
+
     def __init__(self, is_enabled, name, json_data):
         Type.__init__(self, name, json_data)
         self.values = [
@@ -230,6 +238,7 @@ class CallbackFunctionType(Type):
 
 
 class FunctionPointerType(Type):
+
     def __init__(self, is_enabled, name, json_data):
         Type.__init__(self, name, json_data)
         self.returns = None
@@ -237,12 +246,14 @@ class FunctionPointerType(Type):
 
 
 class TypedefType(Type):
+
     def __init__(self, is_enabled, name, json_data):
         Type.__init__(self, name, json_data)
         self.type = None
 
 
 class NativeType(Type):
+
     def __init__(self, is_enabled, name, json_data):
         Type.__init__(self, name, json_data, native=True)
         self.is_wire_transparent = json_data.get('wire transparent', True)
@@ -256,6 +267,12 @@ class AnnotatedTypedMember:
         self.annotation = annotation
         self.optional = optional
         self.json_data = json_data
+        self.length = None
+        self.constant_length = None
+        self.is_length = False
+
+    def get_child_map(self):
+        return {}
 
 
 # Methods and structures are both "records", so record members correspond to
@@ -271,11 +288,10 @@ class RecordMember(AnnotatedTypedMember):
                  array_element_optional=False,
                  is_return_value=False,
                  default_value=None,
-                 skip_serialize=False):
+                 skip_serialize=False,
+                 kotlin_only=False):
         super().__init__(typ, annotation, optional, json_data)
         self.name = name
-        self.length = None
-        self.optional = optional
         self.array_element_optional = array_element_optional
         if array_element_optional:
             assert annotation == 'const*', 'array_element_optional can only be used on array types'
@@ -284,6 +300,7 @@ class RecordMember(AnnotatedTypedMember):
         self.id_type = None
         self.default_value = default_value
         self.skip_serialize = skip_serialize
+        self.kotlin_only = kotlin_only
 
     def set_handle_type(self, handle_type):
         assert self.type.dict_name == "ObjectHandle"
@@ -316,8 +333,12 @@ class Method():
         self.autolock = autolock
         self.json_data = json_data
 
+    def get_child_map(self):
+        return {arg.name.get(): arg for arg in self.arguments}
+
 
 class ObjectType(Type):
+
     def __init__(self, is_enabled, name, json_data):
         json_data_override = {'methods': []}
         if 'methods' in json_data:
@@ -326,14 +347,19 @@ class ObjectType(Type):
             ]
         Type.__init__(self, name, dict(json_data, **json_data_override))
 
+    def get_child_map(self):
+        return {method.name.get(): method for method in self.methods}
+
 
 class Record:
+
     def __init__(self, name):
         self.name = Name(name)
         self.members = []
         self.may_have_dawn_object = False
 
     def update_metadata(self):
+
         def may_have_dawn_object(member):
             if isinstance(member.type, ObjectType):
                 return True
@@ -353,6 +379,7 @@ class Record:
 
 
 class StructureType(Record, Type):
+
     def __init__(self, is_enabled, name, json_data):
         tags = validate_and_get_tags(json_data)
         if tags == ['emscripten']:
@@ -398,6 +425,9 @@ class StructureType(Record, Type):
         self.is_wire_transparent = all(
             get_is_wire_transparent(m) for m in self.members)
 
+    def get_child_map(self):
+        return {member.name.get(): member for member in self.members}
+
     @property
     def output(self):
         # self.out is a temporary way to express that this is an output structure
@@ -422,12 +452,14 @@ class StructureType(Record, Type):
 
 
 class CallbackInfoType(StructureType):
+
     def __init__(self, is_enabled, name, json_data):
         StructureType.__init__(self, is_enabled, name, json_data)
         self.extensible = 'in'
 
 
 class ConstantDefinition():
+
     def __init__(self, is_enabled, name, json_data):
         self.type = None
         self.value = json_data['value']
@@ -435,8 +467,12 @@ class ConstantDefinition():
         self.json_data = json_data
         self.name = Name(name)
 
+    def get_child_map(self):
+        return {}
+
 
 class FunctionDeclaration():
+
     def __init__(self, is_enabled, name, json_data, no_cpp=False):
         self.returns = None
         self.arguments = []
@@ -444,8 +480,12 @@ class FunctionDeclaration():
         self.name = Name(name)
         self.no_cpp = no_cpp
 
+    def get_child_map(self):
+        return {arg.name.get(): arg for arg in self.arguments}
+
 
 class Command(Record):
+
     def __init__(self, name, members=None):
         Record.__init__(self, name)
         self.members = members or []
@@ -453,10 +493,11 @@ class Command(Record):
         self.derived_method = None
 
 
-def linked_record_members(json_data, types):
+def linked_record_members(json_data, types, check_span_regularity=False):
     members = []
     members_by_name = {}
-    for m in json_data:
+    index_of_member = {}
+    for (i, m) in enumerate(json_data):
         member = RecordMember(Name(m['name']),
                               types[m['type']],
                               m.get('annotation', 'value'),
@@ -475,6 +516,7 @@ def linked_record_members(json_data, types):
             member.set_id_type(types[id_type])
         members.append(member)
         members_by_name[member.name.canonical_case()] = member
+        index_of_member[member.name.canonical_case()] = i
 
     for (member, m) in zip(members, json_data):
         if member.annotation != 'value':
@@ -489,7 +531,15 @@ def linked_record_members(json_data, types):
                 member.length = "constant"
                 member.constant_length = m['length']
             else:
+                # Check that the length member comes just before the `member`
+                if check_span_regularity:
+                    length_index = index_of_member[m['length']]
+                    member_index = index_of_member[
+                        member.name.canonical_case()]
+                    assert length_index == member_index - 1
+
                 member.length = members_by_name[m['length']]
+                member.length.is_length = True
 
     return members
 
@@ -515,12 +565,17 @@ def link_object(obj, types):
     obj.methods = [make_method(m) for m in obj.json_data.get('methods', [])]
     obj.methods.sort(key=lambda method: method.name)
 
+
 def link_structure(struct, types):
-    struct.members = linked_record_members(struct.json_data['members'], types)
+    struct.members = linked_record_members(struct.json_data['members'],
+                                           types,
+                                           check_span_regularity=True)
     for root in struct.json_data.get('chain roots', []):
         struct.chain_roots.append(types[root])
         types[root].extensions.append(struct)
-    struct.chain_roots = [types[root] for root in struct.json_data.get('chain roots', [])]
+    struct.chain_roots = [
+        types[root] for root in struct.json_data.get('chain roots', [])
+    ]
     assert all((root.category == 'structure' for root in struct.chain_roots))
 
 
@@ -550,6 +605,7 @@ def link_function(function, types):
 
     function.arguments = linked_record_members(
         function.json_data.get('args', []), types)
+
 
 # Sort structures so that if struct A has struct B as a member, then B is
 # listed before A.
@@ -641,7 +697,28 @@ def topo_sort_object(objects):
     return result
 
 
-def parse_json(json, enabled_tags, disabled_tags=None):
+def apply_addins(types, addins):
+
+    def get_addin_target(search_map, path):
+        while path:
+            part = path.pop(0)
+            if part not in search_map:
+                return None
+            target = search_map[part]
+            if not path:
+                return target
+            search_map = target.get_child_map()
+        return None
+
+    for key, prop_dict in addins.items():
+        path = key.split('::')
+        target = get_addin_target(types, path)
+        assert target is not None, f'Addin instance "{key}" not found in dawn.json'
+        for prop, val in prop_dict.items():
+            setattr(target, prop, val)
+
+
+def parse_json(json, enabled_tags, disabled_tags=None, metadata=None):
     is_enabled = lambda json_data: item_is_enabled(
         enabled_tags, json_data) and not item_is_disabled(
             disabled_tags, json_data)
@@ -711,6 +788,9 @@ def parse_json(json, enabled_tags, disabled_tags=None):
     for struct in by_category['structure']:
         struct.update_metadata()
 
+    addins = metadata.get('addins', {}) if metadata else {}
+    apply_addins(types, addins)
+
     api_params = {
         'types': types,
         'by_category': by_category,
@@ -727,6 +807,7 @@ def parse_json(json, enabled_tags, disabled_tags=None):
         'c_methods_sorted_by_parent':
         get_c_methods_sorted_by_parent(api_params),
         'c_methods_sorted_by_name': get_c_methods_sorted_by_name(api_params),
+        'cpp_methods': lambda typ: cpp_methods(api_params, typ),
     }
 
 
@@ -858,17 +939,24 @@ def analyze_converter_usage(params_kotlin):
         # Only proceed if it's a structure and hasn't been marked yet to avoid infinite recursion.
         if isinstance(typ, StructureType) and not typ.needs_n2k:
             typ.needs_n2k = True
-            # Recursively mark all members of this structure.
+            # Recursively mark all members of this structure. kotlin_only
+            # members never cross JNI, so their types don't need a converter.
             for member in typ.members:
-                mark_n2k(member.type)
+                if not member.kotlin_only:
+                    mark_n2k(member.type)
+            # Recursively mark all potential chained children.
+            for child in chain_children.get(typ.name.get(), []):
+                mark_n2k(child)
 
     def mark_k2n(typ):
         # Only proceed if it's a structure and hasn't been marked yet to avoid infinite recursion.
         if isinstance(typ, StructureType) and not typ.needs_k2n:
             typ.needs_k2n = True
-            # Recursively mark all members of this structure.
+            # Recursively mark all members of this structure. See mark_n2k for
+            # why kotlin_only members are excluded.
             for member in typ.members:
-                mark_k2n(member.type)
+                if not member.kotlin_only:
+                    mark_k2n(member.type)
             # Recursively mark all potential chained children.
             for child in chain_children.get(typ.name.get(), []):
                 mark_k2n(child)
@@ -876,7 +964,7 @@ def analyze_converter_usage(params_kotlin):
     # Scan Objects and Methods for roots.
     for obj in params_kotlin['by_category']['object']:
         for method in obj.methods:
-            if not params_kotlin['include_method'](obj, method):
+            if not params_kotlin['include_method'](method):
                 continue
 
             # Root A: Return values are always Native -> Kotlin.
@@ -908,17 +996,52 @@ def analyze_converter_usage(params_kotlin):
 
 def compute_kotlin_params(loaded_json,
                           kotlin_json,
-                          webgpu_json_data=None,
+                          webgpu_kt_docs_data=None,
                           doc_warn_log_file_path=None):
-    params_kotlin = parse_json(loaded_json, enabled_tags=['art'])
+
+    params_kotlin = parse_json(loaded_json,
+                               enabled_tags=['art', 'art_experimental'],
+                               metadata=kotlin_json['metadata'])
     params_kotlin['kotlin_package'] = kotlin_json['kotlin_package']
     params_kotlin['jni_primitives'] = kotlin_json['jni_primitives']
     params_kotlin['jni_signatures'] = kotlin_json['jni_signatures']
     kt_file_path = params_kotlin['kotlin_package'].replace('.', '/')
-    customize_api = kotlin_json["customize_api"]
-    customize_objects = customize_api["objects"]
-    customize_structures = customize_api["structures"]
-    customize_enums = customize_api["enums"]
+
+    # Among record members, the "omitted" addin is only supported on structure
+    # members: the JNI argument struct is still built from the full argument
+    # list, so omitting a function/method argument would silently pass a
+    # zero-initialized value to the native call.
+    all_functions_and_methods = params_kotlin['by_category']['function'] + [
+        method for obj in params_kotlin['by_category']['object']
+        for method in obj.methods
+    ]
+    for function in all_functions_and_methods:
+        for arg in function.arguments:
+            assert not getattr(arg, 'omitted', False), (
+                f'"omitted" addin is not supported on arguments: '
+                f'"{function.name.get()}::{arg.name.get()}"')
+
+    # Kotlin-only members from the "additional_members" addin are appended to
+    # the structure's members so that templates see a single member list. They
+    # are marked kotlin_only because they have no native counterpart.
+    for struct in params_kotlin['by_category']['structure']:
+        for added_member in getattr(struct, 'additional_members', []):
+            name = Name(added_member['name'])
+            # Default to native for simple types if not specified
+            category = added_member.get('category', 'native')
+            type_name = added_member['type']
+            if type_name in params_kotlin['types']:
+                typ = params_kotlin['types'][type_name]
+            else:
+                typ = Type(type_name, {'category': category})
+            struct.members.append(
+                RecordMember(name,
+                             typ,
+                             added_member.get('annotation', 'value'), {},
+                             optional=added_member.get('optional', False),
+                             default_value=added_member.get(
+                                 'default_value', None),
+                             kotlin_only=True))
 
     def kotlin_record_members(members):
         # Members are sorted in the following order.
@@ -965,8 +1088,10 @@ def compute_kotlin_params(loaded_json,
                          {'category': 'kotlin type'}), None, {})
                 continue
 
-            yield member
+            if getattr(member, 'omitted', False):
+                continue
 
+            yield member
 
     # Calculate if we should, and can, provide a Kotlin default value for a given argument.
     # This will affect its order in the method parameter and structure field lists.
@@ -978,8 +1103,10 @@ def compute_kotlin_params(loaded_json,
             if arg.type.category in [
                     'callback function', 'callback info', 'function pointer',
                     'object', 'structure'
-            ]:
+            ] or arg.type.name.get() == 'char':
                 return 'arrayOf()'
+            if arg.type.name.get() == 'float':
+                return 'floatArrayOf()'
             return 'intArrayOf()'
 
         # All other optional types default to 'null'.
@@ -1031,11 +1158,11 @@ def compute_kotlin_params(loaded_json,
             # to insert the bitwise equivalent of a signed number.
             if arg.type.name.get() in ['int', 'int32_t', 'uint32_t'
                                        ] and arg.default_value == '0xFFFFFFFF':
-                return '-0x7FFFFFFF'
+                return '-1'
             if arg.type.name.get() in [
                     'int64_t', 'uint64_t', 'size_t'
             ] and arg.default_value == '0xFFFFFFFFFFFFFFFF':
-                return '-0x7FFFFFFFFFFFFFFF'
+                return '-1'
 
             # In all remaining cases the default as specified in dawn.json will work verbatim in
             # Kotlin.
@@ -1046,8 +1173,12 @@ def compute_kotlin_params(loaded_json,
         )
         return None
 
-    def kotlin_name(type):
-        return f"{'GPU' if type.category in ('object', 'structure') else ''}{type.name.CamelCase()}"
+    def kotlin_name(item):
+        if isinstance(item, (FunctionDeclaration, Method)):
+            # The "kotlin_name" addin lets dawn_kotlin.json rename a function
+            # or method in the Kotlin API.
+            return getattr(item, 'kotlin_name', item.name.camelCase())
+        return f"{'GPU' if item.category in ('object', 'structure') else ''}{item.name.CamelCase()}"
 
     def kotlin_return(method):
         for argument in method.arguments:
@@ -1081,32 +1212,27 @@ def compute_kotlin_params(loaded_json,
             method.returns.type, method.returns.annotation, False,
             method.json_data) if method.returns else None
 
-    def include_method(obj, method):
+    def include_method(method):
         if method.returns and method.returns.type.category == 'function pointer':
             # Kotlin doesn't support returning functions.
             return False
 
-        if obj is None:
-            return True
-
         # Is the method marked omitted in dawn_kotlin.json?
-        return customize_objects.get(obj.name.get(),
-                                     {}).get("methods", {}).get(
-                                         method.name.get(),
-                                         {}).get('omitted') is not True
+        return not getattr(method, 'omitted', False)
 
     def include_structure(structure):
         if structure.name.canonical_case() == "string view":
             return False
         # Is the structure marked omitted in dawn_kotlin.json?
-        return customize_structures.get(structure.name.get(),
-                                        {}).get('omitted') is not True
+        return not getattr(structure, 'omitted', False)
 
     def include_enum(enum):
-        return customize_enums.get(enum.name.get(),
-                                   {}).get('omitted') is not True
+        return not getattr(enum, 'omitted', False)
 
     def include_callback(function):
+        if getattr(function, 'omitted', False):
+            return False
+
         structures = params_kotlin['by_category']['structure']
         function_pointers = params_kotlin['by_category']['function pointer']
         if any(member.name.get() == function.name.get()
@@ -1143,7 +1269,7 @@ def compute_kotlin_params(loaded_json,
         'doc_warn_log_filepath': doc_warn_log_file_path,
     }
     params_kotlin['kdocs'] = build_doc_map(by_category=by_category,
-                                           json_data=webgpu_json_data,
+                                           json_data=webgpu_kt_docs_data,
                                            params=kdocs_params)
     params_kotlin['chain_children'] = chain_children
     params_kotlin['kotlin_default'] = kotlin_default
@@ -1155,6 +1281,20 @@ def compute_kotlin_params(loaded_json,
     params_kotlin['kotlin_record_members'] = kotlin_record_members
     params_kotlin['jni_name'] = jni_name
     params_kotlin['include_callback'] = include_callback
+
+    def check_jvm_overload_usage(functions):
+        """Checks functions to see if they have default parameters.
+
+        Sets a `has_default` flag on each function, which is used to add @JvmOverloads.
+        """
+        for func in functions:
+            func.has_default = False
+            for arg in func.arguments:
+                if kotlin_default(arg) is not None:
+                    func.has_default = True
+                    break
+
+    check_jvm_overload_usage(params_kotlin['by_category']['function'])
 
     params_kotlin['has_kotlin_classes'] = (
         [
@@ -1181,12 +1321,15 @@ def as_varName(*names):
         [name.CamelCase() for name in names[1:]])
 
 
-def as_cType(c_prefix, name):
+def as_cType(c_prefix, name, spanify=False):
     # Special case for 'bool' because it has a typedef for compatibility.
-    if name.native and name.get() != 'bool':
+    if name.get() == 'void' and spanify:
+        return 'std::byte'
+    elif name.native and name.get() != 'bool':
         return name.concatcase()
     else:
         return c_prefix + name.CamelCase()
+
 
 def as_cppType(name):
     # Special case for 'bool' because it has a typedef for compatibility.
@@ -1291,6 +1434,19 @@ def annotate(typ, arg, *, make_const_member=False, with_nullability=False):
 def item_is_enabled(enabled_tags, json_data):
     tags = validate_and_get_tags(json_data)
     if tags is None: return True
+
+    # Strip 'art_experimental' for non-Art targets so it doesn't cause
+    # the item to be excluded from C++/Emscripten builds.
+    if not ('art_experimental' in enabled_tags):
+        original_tags_empty = not tags
+        tags = [tag for tag in tags if tag not in ('art_experimental')]
+        # NOTE: If an item is tagged ONLY with 'art_experimental', it is disabled
+        # for non-Art targets.
+        if not tags and not original_tags_empty:
+            return False
+        if not tags:
+            return True
+
     return any(tag in enabled_tags for tag in tags)
 
 
@@ -1356,6 +1512,18 @@ def c_methods(params, typ):
         assert False, "c_methods only valid on objects and structure"
 
 
+def cpp_methods(params, typ):
+    if typ.category == 'structure':
+        methods = []
+        for member in typ.members:
+            if member.type.category == 'callback info':
+                methods.append(
+                    Method(Name(" ".join(["set"] + member.name.chunks[:-1])),
+                           None, [member], False, {}))
+        return methods
+    else:
+        assert False, "cpp_methods only valid on structures"
+
 def get_c_methods_sorted_by_parent(api_params):
     return sorted([(typ, c_methods(api_params, typ))
                    for typ in (api_params['by_category']['object'] +
@@ -1378,19 +1546,12 @@ def find_by_name(members, name):
 
 
 def has_callback_arguments(method):
-    return any(arg.type.category == 'function pointer' for arg in method.arguments)
-
-
-# TODO: crbug.com/dawn/2509 - Remove this helper when once we deprecate older APIs.
-def has_callback_info(method):
-    return method.returns.type.name.get() == 'future' and any(
-        arg.name.get() == 'callback info'
-        and arg.type.category != 'callback info' for arg in method.arguments)
-
-
-def has_callbackInfoStruct(method):
-    return any(arg.type.category == 'callback info'
+    return any(arg.type.category == 'function pointer'
                for arg in method.arguments)
+
+
+def has_callbackInfoStruct(args):
+    return any(arg.type.category == 'callback info' for arg in args)
 
 
 def is_wire_serializable(type):
@@ -1403,8 +1564,10 @@ def is_wire_serializable(type):
 
 
 def is_enum_value_proxy(value):
-    return ('deprecated' in value.json_data.get('tags', [])
-            and value.json_data.get('enum_value_conflict', False))
+    conflicts = value.json_data.get('enum_value_conflict', False)
+    is_proxy = 'deprecated' in value.json_data.get(
+        'tags', []) or value.json_data.get('is_proxy', False)
+    return conflicts and is_proxy
 
 
 def unreachable_code(msg="unreachable_code"):
@@ -1459,7 +1622,7 @@ def make_base_render_params(metadata):
             'as_MethodSuffix': as_MethodSuffix,
             'as_CppMethodSuffix': as_CppMethodSuffix,
             'as_cProc': as_cProc,
-            'as_cType': lambda name: as_cType(c_prefix, name),
+            'as_cType': lambda name, spanify=False: as_cType(c_prefix, name, spanify),
             'as_cppType': as_cppType,
             'as_jsEnumValue': as_jsEnumValue,
             'has_wasmType': has_wasmType,
@@ -1477,6 +1640,7 @@ def make_base_render_params(metadata):
 
 
 class MultiGeneratorFromDawnJSON(Generator):
+
     def get_description(self):
         return 'Generates code for various target from Dawn.json.'
 
@@ -1494,14 +1658,18 @@ class MultiGeneratorFromDawnJSON(Generator):
                             default=None,
                             type=str,
                             help='The DAWN WIRE JSON definition to use.')
+        parser.add_argument('--native-json',
+                            default=None,
+                            type=str,
+                            help='The DAWN NATIVE JSON definition to use.')
         parser.add_argument('--kotlin-json',
                             default=None,
                             type=str,
                             help='The KOTLIN JSON definition to use.')
-        parser.add_argument('--webgpu-json',
+        parser.add_argument('--webgpu-kt-docs',
                             default=None,
                             type=str,
-                            help='The WebGPU API documentation to use.')
+                            help='The WebGPU Kotlin API documentation to use.')
         parser.add_argument(
             '--targets',
             required=True,
@@ -1529,29 +1697,31 @@ class MultiGeneratorFromDawnJSON(Generator):
             with open(args.wire_json) as f:
                 wire_json = json.loads(f.read())
 
+        native_json = None
+        if args.native_json:
+            with open(args.native_json) as f:
+                native_json = json.loads(f.read())
+
         kotlin_json = None
         if args.kotlin_json:
             with open(args.kotlin_json) as f:
                 kotlin_json = json.loads(f.read())
 
-        webgpu_json_data = None
-        if args.webgpu_json:
-            webgpu_json_data = load_json_data(args.webgpu_json)
+        webgpu_kt_docs_data = None
+        if args.webgpu_kt_docs:
+            webgpu_kt_docs_data = load_json_data(args.webgpu_kt_docs)
 
         doc_warn_log_file_path = args.doc_warn_log_file
 
         renders = []
         imported_templates = []
 
-        params_dawn = parse_json(
-            loaded_json,
-            enabled_tags=['compat', 'dawn', 'native', 'deprecated'])
+        params_dawn = parse_json(loaded_json,
+                                 enabled_tags=['dawn', 'native', 'deprecated'])
 
-        params_all = parse_json(loaded_json,
-                                enabled_tags=[
-                                    'compat', 'dawn', 'emscripten', 'native',
-                                    'deprecated'
-                                ])
+        params_all = parse_json(
+            loaded_json,
+            enabled_tags=['dawn', 'emscripten', 'native', 'deprecated'])
 
         metadata = params_dawn['metadata']
         RENDER_PARAMS_BASE = make_base_render_params(metadata)
@@ -1619,6 +1789,14 @@ class MultiGeneratorFromDawnJSON(Generator):
                            'include/webgpu/' + api + '_cpp_chained_struct.h',
                            [RENDER_PARAMS_BASE, params_dawn]))
 
+        if 'cpp_modules' in targets:
+            renders.append(
+                FileRender('api_cpp.ixx', 'include/dawn/' + api + '.ixx', [
+                    RENDER_PARAMS_BASE, params_dawn, {
+                        'cpp_header': api + '/' + api + '_cpp.h',
+                    }
+                ]))
+
         if 'proc' in targets:
             renders.append(
                 FileRender('dawn_proc.cpp', 'src/dawn/' + prefix + '_proc.cpp',
@@ -1635,13 +1813,37 @@ class MultiGeneratorFromDawnJSON(Generator):
                            [RENDER_PARAMS_BASE, params_dawn]))
 
         if 'webgpu_headers' in targets:
+            imported_templates += [
+                "BSD_LICENSE",
+                "dawn/cpp_macros.tmpl",
+            ]
+
             params_upstream = parse_json(loaded_json,
                                          enabled_tags=['native'],
                                          disabled_tags=['dawn'])
-            imported_templates.append('BSD_LICENSE')
             renders.append(
                 FileRender('api.h', 'webgpu-headers/' + api + '.h',
                            [RENDER_PARAMS_BASE, params_upstream]))
+
+            upstream_cpp = 'include/webgpu_upstream/' + api + '/' + api
+            renders.append(
+                FileRender('api_cpp.h', upstream_cpp + '_cpp.h', [
+                    RENDER_PARAMS_BASE, params_upstream, {
+                        'c_header': api + '/' + api + '.h',
+                        'c_namespace': None,
+                    }
+                ]))
+            renders.append(
+                FileRender('api_cpp_chained_struct.h',
+                           upstream_cpp + '_cpp_chained_struct.h',
+                           [RENDER_PARAMS_BASE, params_upstream]))
+            renders.append(
+                FileRender('api_cpp_print.h', upstream_cpp + '_cpp_print.h', [
+                    RENDER_PARAMS_BASE, params_upstream, {
+                        'cpp_header': api + '/' + api + '_cpp.h',
+                        'c_namespace': None,
+                    }
+                ]))
 
         if 'emdawnwebgpu_headers' in targets:
             imported_templates += [
@@ -1649,8 +1851,8 @@ class MultiGeneratorFromDawnJSON(Generator):
             ]
 
             assert api == 'webgpu'
-            params_emscripten = parse_json(
-                loaded_json, enabled_tags=['compat', 'emscripten'])
+            params_emscripten = parse_json(loaded_json,
+                                           enabled_tags=['emscripten'])
             # system/include/webgpu
             imported_templates.append('BSD_LICENSE')
             renders.append(
@@ -1679,10 +1881,21 @@ class MultiGeneratorFromDawnJSON(Generator):
                                }
                            ]))
 
+        if 'emdawnwebgpu_modules' in targets:
+            assert api == 'webgpu'
+            params_emscripten = parse_json(loaded_json,
+                                           enabled_tags=['emscripten'])
+            renders.append(
+                FileRender('api_cpp.ixx', 'include/dawn/' + api + '.ixx', [
+                    RENDER_PARAMS_BASE, params_emscripten, {
+                        'cpp_header': api + '/' + api + '_cpp.h',
+                    }
+                ]))
+
         if 'emdawnwebgpu_js' in targets:
             assert api == 'webgpu'
-            params_emscripten = parse_json(
-                loaded_json, enabled_tags=['compat', 'emscripten'])
+            params_emscripten = parse_json(loaded_json,
+                                           enabled_tags=['emscripten'])
             renders.append(
                 FileRender('emdawnwebgpu/struct_info_webgpu.json',
                            'src/emdawnwebgpu/struct_info_webgpu.json',
@@ -1699,8 +1912,8 @@ class MultiGeneratorFromDawnJSON(Generator):
 
         if 'emdawnwebgpu_link_test_cpp' in targets:
             assert api == 'webgpu'
-            params_emscripten = parse_json(
-                loaded_json, enabled_tags=['compat', 'emscripten'])
+            params_emscripten = parse_json(loaded_json,
+                                           enabled_tags=['emscripten'])
             renders.append(
                 FileRender('emdawnwebgpu/LinkTest.cpp',
                            'src/emdawnwebgpu/LinkTest.cpp',
@@ -1710,7 +1923,6 @@ class MultiGeneratorFromDawnJSON(Generator):
             mock_params = [
                 RENDER_PARAMS_BASE, params_dawn, {
                     'has_callback_arguments': has_callback_arguments,
-                    "has_callback_info": has_callback_info
                 }
             ]
             renders.append(
@@ -1721,19 +1933,25 @@ class MultiGeneratorFromDawnJSON(Generator):
                            mock_params))
 
         if 'native_utils' in targets:
+            params_dawn_native = parse_json(
+                loaded_json,
+                enabled_tags=['dawn', 'native', 'deprecated'],
+                metadata=native_json['metadata'])
             frontend_params = [
                 RENDER_PARAMS_BASE,
-                params_dawn,
+                params_dawn_native,
                 {
                     # TODO: as_frontendType and co. take a Type, not a Name :(
-                    'as_frontendType': lambda typ: as_frontendType(metadata, typ),
-                    'as_annotated_frontendType': \
-                        lambda arg: annotate(as_frontendType(metadata, arg.type), arg),
-                }
+                    'as_frontendType':
+                    lambda typ: as_frontendType(metadata, typ),
+                },
             ]
 
             imported_templates += [
+                "dawn/api_structs.h.tmpl",
+                "dawn/api_structs.cpp.tmpl",
                 "dawn/cpp_macros.tmpl",
+                "dawn/dawn_platform.h.tmpl",
             ]
 
             impl_dir = metadata.impl_dir + '/' if metadata.impl_dir else ''
@@ -1741,69 +1959,80 @@ class MultiGeneratorFromDawnJSON(Generator):
             namespace = metadata.namespace
             renders.append(
                 FileRender('dawn/native/ValidationUtils.h',
-                           'src/' + native_dir + '/ValidationUtils_autogen.h',
+                           native_dir + '/ValidationUtils_autogen.h',
                            frontend_params))
             renders.append(
                 FileRender('dawn/native/ValidationUtils.cpp',
-                           'src/' + native_dir + '/ValidationUtils_autogen.cpp',
+                           native_dir + '/ValidationUtils_autogen.cpp',
                            frontend_params))
             renders.append(
                 FileRender('dawn/native/dawn_platform.h',
-                           'src/' + native_dir + '/' + prefix + '_platform_autogen.h',
+                           native_dir + '/' + prefix + '_platform_autogen.h',
                            frontend_params))
             renders.append(
                 FileRender('dawn/native/api_structs.h',
-                           'src/' + native_dir + '/' + namespace + '_structs_autogen.h',
-                           frontend_params))
-            renders.append(
-                FileRender('dawn/native/api_structs.cpp',
-                           'src/' + native_dir + '/' + namespace + '_structs_autogen.cpp',
-                           frontend_params))
-            renders.append(
-                FileRender('dawn/native/ProcTable.cpp',
-                           'src/' + native_dir + '/ProcTable.cpp', frontend_params))
-            renders.append(
-                FileRender('dawn/native/ChainUtils.h',
-                           'src/' + native_dir + '/ChainUtils_autogen.h',
-                           frontend_params))
-            renders.append(
-                FileRender('dawn/native/ChainUtils.cpp',
-                           'src/' + native_dir + '/ChainUtils_autogen.cpp',
-                           frontend_params))
-            renders.append(
-                FileRender('dawn/native/Features.h',
-                           'src/' + native_dir + '/Features_autogen.h',
-                           frontend_params))
-            renders.append(
-                FileRender('dawn/native/Features.inl',
-                           'src/' + native_dir + '/Features_autogen.inl',
-                           frontend_params))
-            renders.append(
-                FileRender('dawn/native/api_absl_format.h',
-                           'src/' + native_dir + '/' + api + '_absl_format_autogen.h',
-                           frontend_params))
-            renders.append(
-                FileRender('dawn/native/api_absl_format.cpp',
-                           'src/' + native_dir + '/' + api + '_absl_format_autogen.cpp',
+                           native_dir + '/' + namespace + '_structs_autogen.h',
                            frontend_params))
             renders.append(
                 FileRender(
-                    'dawn/native/api_StreamImpl.cpp', 'src/' + native_dir +
-                    '/' + api + '_StreamImpl_autogen.cpp', frontend_params))
+                    'dawn/native/api_structs.cpp',
+                    native_dir + '/' + namespace + '_structs_autogen.cpp',
+                    frontend_params))
+            renders.append(
+                FileRender(
+                    'dawn/native/api_structs_defaults.h', native_dir + '/' +
+                    namespace + '_structs_defaults_autogen.h',
+                    frontend_params))
+            renders.append(
+                FileRender(
+                    'dawn/native/api_structs_defaults.cpp', native_dir + '/' +
+                    namespace + '_structs_defaults_autogen.cpp',
+                    frontend_params))
+            renders.append(
+                FileRender('dawn/native/ProcTable.cpp',
+                           native_dir + '/ProcTable.cpp', frontend_params))
+            renders.append(
+                FileRender('dawn/native/ChainUtils.h',
+                           native_dir + '/ChainUtils_autogen.h',
+                           frontend_params))
+            renders.append(
+                FileRender('dawn/native/ChainUtils.cpp',
+                           native_dir + '/ChainUtils_autogen.cpp',
+                           frontend_params))
+            renders.append(
+                FileRender('dawn/native/Features.h',
+                           native_dir + '/Features_autogen.h',
+                           frontend_params))
+            renders.append(
+                FileRender('dawn/native/Features.inl',
+                           native_dir + '/Features_autogen.inl',
+                           frontend_params))
+            renders.append(
+                FileRender('dawn/native/api_absl_format.h',
+                           native_dir + '/' + api + '_absl_format_autogen.h',
+                           frontend_params))
+            renders.append(
+                FileRender('dawn/native/api_absl_format.cpp',
+                           native_dir + '/' + api + '_absl_format_autogen.cpp',
+                           frontend_params))
+            renders.append(
+                FileRender('dawn/native/api_StreamImpl.cpp',
+                           native_dir + '/' + api + '_StreamImpl_autogen.cpp',
+                           frontend_params))
             renders.append(
                 FileRender('dawn/native/ObjectType.h',
-                           'src/' + native_dir + '/ObjectType_autogen.h',
+                           native_dir + '/ObjectType_autogen.h',
                            frontend_params))
             renders.append(
                 FileRender('dawn/native/ObjectType.cpp',
-                           'src/' + native_dir + '/ObjectType_autogen.cpp',
+                           native_dir + '/ObjectType_autogen.cpp',
                            frontend_params))
 
         if 'dawn_utils' in targets:
             # Generate ComboLimits without any extensions so it works on
             # all targets (and doesn't chain any experimental stuff like
             # extensions that are output only and produce warnings on input).
-            params = parse_json(loaded_json, enabled_tags=['compat'])
+            params = parse_json(loaded_json, enabled_tags=[])
             renders.append(
                 FileRender('dawn/utils/ComboLimits.h',
                            'src/dawn/utils/ComboLimits.h',
@@ -1814,12 +2043,19 @@ class MultiGeneratorFromDawnJSON(Generator):
                            [RENDER_PARAMS_BASE, params]))
 
         if 'wire' in targets:
-            params_dawn_wire = parse_json(
-                loaded_json,
-                enabled_tags=['compat', 'dawn', 'deprecated'],
-                disabled_tags=['native'])
+            params_dawn_wire = parse_json(loaded_json,
+                                          enabled_tags=['dawn', 'deprecated'],
+                                          disabled_tags=['native'],
+                                          metadata=wire_json['metadata'])
             additional_params = compute_wire_params(params_dawn_wire,
                                                     wire_json)
+
+            imported_templates += [
+                "dawn/api_structs.h.tmpl",
+                "dawn/api_structs.cpp.tmpl",
+                "dawn/cpp_macros.tmpl",
+                "dawn/dawn_platform.h.tmpl",
+            ]
 
             wire_params = [
                 RENDER_PARAMS_BASE, params_dawn_wire, {
@@ -1827,6 +2063,9 @@ class MultiGeneratorFromDawnJSON(Generator):
                     'as_annotated_wireType': \
                         lambda arg: annotate(as_wireType(metadata, arg.type), arg),
                     'is_wire_serializable': lambda type : is_wire_serializable(type),
+                    'is_wire_data_only': \
+                        lambda member: member.type.name.get() in ['void', 'std::byte'] and \
+                                       not member.skip_serialize,
                 }, additional_params
             ]
             renders.append(
@@ -1839,12 +2078,25 @@ class MultiGeneratorFromDawnJSON(Generator):
                 FileRender('dawn/wire/WireCmd.cpp',
                            'src/dawn/wire/WireCmd_autogen.cpp', wire_params))
             renders.append(
+                FileRender(
+                    'dawn/wire/api_structs.h', 'src/dawn/wire/' +
+                    metadata.namespace + '_structs_autogen.h', wire_params))
+            renders.append(
+                FileRender(
+                    'dawn/wire/api_structs.cpp', 'src/dawn/wire/' +
+                    metadata.namespace + '_structs_autogen.cpp', wire_params))
+            renders.append(
+                FileRender('dawn/wire/dawn_platform.h',
+                           'src/dawn/wire/' + prefix + '_platform.h',
+                           wire_params))
+
+            renders.append(
                 FileRender('dawn/wire/client/ApiObjects.h',
                            'src/dawn/wire/client/ApiObjects_autogen.h',
                            wire_params))
             renders.append(
                 FileRender('dawn/wire/client/ApiProcs.cpp',
-                           'src/dawn/wire/client/ApiProcs_autogen.cpp',
+                           'src/dawn/wire/client/ApiProcs_autogen.cpp.inc',
                            wire_params))
             renders.append(
                 FileRender('dawn/wire/client/ClientBase.h',
@@ -1859,6 +2111,19 @@ class MultiGeneratorFromDawnJSON(Generator):
                     'dawn/wire/client/ClientPrototypes.inc',
                     'src/dawn/wire/client/ClientPrototypes_autogen.inc',
                     wire_params))
+            renders.append(
+                FileRender(
+                    'dawn/wire/client/api_structs.h', 'src/dawn/wire/client/' +
+                    metadata.namespace + '_structs_autogen.h', wire_params))
+            renders.append(
+                FileRender(
+                    'dawn/wire/client/api_structs.cpp',
+                    'src/dawn/wire/client/' + metadata.namespace +
+                    '_structs_autogen.cpp', wire_params))
+            renders.append(
+                FileRender('dawn/wire/client/dawn_platform.h',
+                           'src/dawn/wire/client/' + prefix + '_platform.h',
+                           wire_params))
             renders.append(
                 FileRender('dawn/wire/server/ServerBase.h',
                            'src/dawn/wire/server/ServerBase_autogen.h',
@@ -1881,9 +2146,10 @@ class MultiGeneratorFromDawnJSON(Generator):
                            'src/dawn/wire/server/WGPUTraits_autogen.h',
                            wire_params))
 
+
         if 'kotlin' in targets:
             params_kotlin = compute_kotlin_params(loaded_json, kotlin_json,
-                                                  webgpu_json_data,
+                                                  webgpu_kt_docs_data,
                                                   doc_warn_log_file_path)
             kt_file_path = params_kotlin['kotlin_package'].replace('.', '/')
             jni_name = params_kotlin['jni_name']
@@ -1963,7 +2229,7 @@ class MultiGeneratorFromDawnJSON(Generator):
 
         if "jni" in targets:
             params_kotlin = compute_kotlin_params(loaded_json, kotlin_json,
-                                                  webgpu_json_data,
+                                                  webgpu_kt_docs_data,
                                                   doc_warn_log_file_path)
 
             imported_templates += [
@@ -1993,8 +2259,12 @@ class MultiGeneratorFromDawnJSON(Generator):
         deps = [os.path.abspath(args.dawn_json)]
         if args.wire_json != None:
             deps += [os.path.abspath(args.wire_json)]
+        if args.native_json != None:
+            deps += [os.path.abspath(args.native_json)]
         if args.kotlin_json != None:
             deps += [os.path.abspath(args.kotlin_json)]
+        if args.webgpu_kt_docs != None:
+            deps += [os.path.abspath(args.webgpu_kt_docs)]
         return deps
 
 

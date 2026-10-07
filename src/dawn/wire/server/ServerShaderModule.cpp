@@ -26,19 +26,20 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <memory>
+#include <utility>
 
-#include "dawn/wire/server/Server.h"
+#include "src/dawn/wire/server/Server.h"
 
 namespace dawn::wire::server {
 
 WireResult Server::DoShaderModuleGetCompilationInfo(Known<WGPUShaderModule> shaderModule,
-                                                    ObjectHandle eventManager,
-                                                    WGPUFuture future) {
+                                                    Known<WGPUInstance> instance,
+                                                    Future future) {
     auto userdata = MakeUserdata<ShaderModuleGetCompilationInfoUserdata>();
-    userdata->eventManager = eventManager;
+    userdata->instanceId = instance.id;
     userdata->future = future;
 
-    mProcs.shaderModuleGetCompilationInfo(
+    mProcs->shaderModuleGetCompilationInfo(
         shaderModule->handle,
         MakeCallbackInfo<WGPUCompilationInfoCallbackInfo,
                          &Server::OnShaderModuleGetCompilationInfo>(userdata.release()));
@@ -46,15 +47,15 @@ WireResult Server::DoShaderModuleGetCompilationInfo(Known<WGPUShaderModule> shad
 }
 
 void Server::OnShaderModuleGetCompilationInfo(ShaderModuleGetCompilationInfoUserdata* data,
-                                              WGPUCompilationInfoRequestStatus status,
-                                              const WGPUCompilationInfo* info) {
+                                              wgpu::CompilationInfoRequestStatus status,
+                                              const CompilationInfo* info) {
     ReturnShaderModuleGetCompilationInfoCallbackCmd cmd;
-    cmd.eventManager = data->eventManager;
+    cmd.instanceId = data->instanceId;
     cmd.future = data->future;
     cmd.status = status;
     cmd.info = info;
 
-    SerializeCommand(cmd);
+    SerializeCommand(std::move(cmd));
 }
 
 }  // namespace dawn::wire::server

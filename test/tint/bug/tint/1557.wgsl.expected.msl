@@ -20,7 +20,7 @@ void g() {
       if ((j >= 1)) {
         break;
       }
-      j = as_type<int>((as_type<uint>(j) + as_type<uint>(1)));
+      j = as_type<int>((as_type<uint>(j) + 1u));
       int k = f();
       {
         uint const tint_low_inc = (tint_loop_idx.x - 1u);
@@ -28,7 +28,6 @@ void g() {
         uint const tint_carry = uint((tint_low_inc == 4294967295u));
         tint_loop_idx.y = (tint_loop_idx.y - tint_carry);
       }
-      continue;
     }
   }
 }
@@ -46,7 +45,7 @@ kernel void v(const constant int* u [[buffer(0)]]) {
         }
         default:
         {
-          g();
+          (g());
           break;
         }
       }

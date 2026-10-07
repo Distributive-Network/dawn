@@ -1,5 +1,13 @@
-SKIP: FAILED
 
-buffers are not supported by the HLSL backend
+RWByteAddressBuffer v : register(u0);
+void foo() {
+  uint v_1 = 0u;
+  v.GetDimensions(v_1);
+  v.Store((4u + ((((v_1 < 8u)) ? (0u) : (0u)) * 1u)), 1077936128u);
+}
 
-tint executable returned error: exit status 1
+[numthreads(1, 1, 1)]
+void main() {
+  foo();
+}
+

@@ -25,14 +25,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/439062058): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 // This is an example to manually test surface code. Controls are the following, scoped to the
 // currently focused window:
 //  - W: creates a new window.
+//  - T: creates a new window with a transparent framebuffer, to test the alpha modes.
 //  - L: Latches the current surface, to check what happens when the window changes but not the
 //    surface.
 //  - R: switches the rendering mode, between "The Red Triangle" and color-cycling clears that's
@@ -69,6 +65,9 @@
 //  - Config change tests:
 //    - Check that cycling between present modes.
 //    - Check that cycling between alpha modes (it sometimes produce a meaningful difference).
+//    - Check alpha modes on a transparent window (T) in the cycling color render mode: the clear
+//      is premultiplied and cycles its alpha, so Premultiplied and Unpremultiplied let the
+//      desktop show through and Opaque does not.
 //    - Check that cycling between formats works and gives the same color.
 //
 //  - Frame throttling:
@@ -80,7 +79,6 @@
 //    - Check sRGB vs not sRGB gradients.
 //    - Check wide gamut / extended color range.
 //    - Check OpenGL rendering with extra usages / depth buffer / MRT.
-//    - Check with GLFW transparency on / off.
 
 #include <webgpu/webgpu_cpp.h>
 
@@ -93,14 +91,16 @@
 #include <vector>
 
 #include "GLFW/glfw3.h"
-#include "dawn/common/Assert.h"
-#include "dawn/common/Log.h"
 #include "dawn/dawn_proc.h"  // nogncheck
 #include "dawn/native/DawnNative.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/CommandLineParser.h"
-#include "dawn/utils/WGPUHelpers.h"
 #include "dawn/webgpu_cpp_print.h"
+#include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/CommandLineParser.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/assert.h"
+#include "src/utils/compiler.h"
+#include "src/utils/log.h"
 #include "webgpu/webgpu_glfw.h"
 
 template <typename T>
@@ -124,10 +124,11 @@ void CycleIn(T* value, const std::vector<T>& cycle) {
 }
 
 struct WindowData {
-    GLFWwindow* window = nullptr;
+    raw_ptr<GLFWwindow> window = nullptr;
     uint64_t serial = 0;
 
     float clearCycle = 1.0f;
+    bool transparent = false;
     bool latched = false;
     bool renderTriangle = true;
     uint32_t divisor = 1;
@@ -199,12 +200,13 @@ void SyncFromWindow(WindowData* data) {
     int height;
     glfwGetFramebufferSize(data->window, &width, &height);
 
-    data->targetConfig.width = std::max(1u, width / data->divisor);
-    data->targetConfig.height = std::max(1u, height / data->divisor);
+    data->targetConfig.width = std::max(1u, static_cast<uint32_t>(width) / data->divisor);
+    data->targetConfig.height = std::max(1u, static_cast<uint32_t>(height) / data->divisor);
 }
 
-void AddWindow() {
+void AddWindow(bool transparent = false) {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, transparent ? GLFW_TRUE : GLFW_FALSE);
     GLFWwindow* window = glfwCreateWindow(400, 400, "", nullptr, nullptr);
     glfwSetKeyCallback(window, OnKeyPress);
 
@@ -216,7 +218,7 @@ void AddWindow() {
     config.device = device;
     config.usage = wgpu::TextureUsage::RenderAttachment;
     config.format = caps.formats[0];
-    config.alphaMode = caps.alphaModes[0];
+    config.alphaMode = wgpu::CompositeAlphaMode::Inherit;
     config.presentMode = caps.presentModes[0];
     config.width = 0;
     config.height = 0;
@@ -224,13 +226,16 @@ void AddWindow() {
     std::unique_ptr<WindowData> data = std::make_unique<WindowData>();
     data->window = window;
     data->serial = windowSerial++;
+    data->transparent = transparent;
     data->surface = surface;
     data->currentConfig = config;
     data->targetConfig = config;
     SyncFromWindow(data.get());
-    data->presentModes.assign(caps.presentModes, caps.presentModes + caps.presentModeCount);
-    data->alphaModes.assign(caps.alphaModes, caps.alphaModes + caps.alphaModeCount);
-    data->formats.assign(caps.formats, caps.formats + caps.formatCount);
+    data->presentModes.assign(caps.presentModes,
+                              DAWN_UNSAFE_TODO(caps.presentModes + caps.presentModeCount));
+    data->alphaModes.assign(caps.alphaModes,
+                            DAWN_UNSAFE_TODO(caps.alphaModes + caps.alphaModeCount));
+    data->formats.assign(caps.formats, DAWN_UNSAFE_TODO(caps.formats + caps.formatCount));
 
     windows[window] = std::move(data);
 }
@@ -253,15 +258,19 @@ void DoRender(WindowData* data) {
         pass.Draw(3);
         pass.End();
     } else {
-        data->clearCycle -= 1.0 / 60.f;
-        if (data->clearCycle < 0.0) {
+        data->clearCycle -= 1.0f / 60.0f;
+        if (data->clearCycle < 0.0f) {
             data->clearCycle = 1.0f;
         }
 
+        // On a transparent window cycle the alpha as well, so that the alpha modes have a
+        // visible effect. The color channels are premultiplied so that Premultiplied is valid.
+        const double alpha = data->transparent ? double{data->clearCycle} : 1.0;
+
         dawn::utils::ComboRenderPassDescriptor desc({view});
         desc.cColorAttachments[0].loadOp = wgpu::LoadOp::Clear;
-        desc.cColorAttachments[0].clearValue = {data->clearCycle, 1.0f - data->clearCycle, 0.0f,
-                                                1.0f};
+        desc.cColorAttachments[0].clearValue = {
+            alpha * double{data->clearCycle}, alpha * double{1.0f - data->clearCycle}, 0.0, alpha};
 
         wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&desc);
         pass.End();
@@ -315,6 +324,10 @@ void OnKeyPress(GLFWwindow* window, int key, int, int action, int) {
     switch (key) {
         case GLFW_KEY_W:
             AddWindow();
+            break;
+
+        case GLFW_KEY_T:
+            AddWindow(/*transparent=*/true);
             break;
 
         case GLFW_KEY_L:

@@ -25,17 +25,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/metal/ComputePipelineMTL.h"
+#include "src/dawn/native/metal/ComputePipelineMTL.h"
 
-#include "dawn/common/Math.h"
-#include "dawn/native/Adapter.h"
-#include "dawn/native/CreatePipelineAsyncEvent.h"
-#include "dawn/native/Instance.h"
-#include "dawn/native/metal/BackendMTL.h"
-#include "dawn/native/metal/DeviceMTL.h"
-#include "dawn/native/metal/ShaderModuleMTL.h"
-#include "dawn/native/metal/UtilsMetal.h"
-#include "dawn/platform/metrics/HistogramMacros.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/native/Adapter.h"
+#include "src/dawn/native/CreatePipelineAsyncEvent.h"
+#include "src/dawn/native/Instance.h"
+#include "src/dawn/native/metal/BackendMTL.h"
+#include "src/dawn/native/metal/DeviceMTL.h"
+#include "src/dawn/native/metal/ImmediatesLayoutMTL.h"
+#include "src/dawn/native/metal/ShaderModuleMTL.h"
+#include "src/dawn/native/metal/UtilsMetal.h"
+#include "src/dawn/platform/metrics/HistogramMacros.h"
 
 namespace dawn::native::metal {
 
@@ -52,11 +53,14 @@ ComputePipeline::ComputePipeline(DeviceBase* dev,
 
 ComputePipeline::~ComputePipeline() = default;
 
-MaybeError ComputePipeline::InitializeImpl() {
+ResultOrError<Extent3D> ComputePipeline::InitializeImpl() {
     auto mtlDevice = ToBackend(GetDevice())->GetMTLDevice();
 
     const ProgrammableStage& computeStage = GetStage(SingleShaderStage::Compute);
     ShaderModule::MetalFunctionData computeData;
+
+    mImmediateMask |= GetImmediateBlockBits(offsetof(ComputeImmediates, nonConstantZero),
+                                            sizeof(NonConstantZero));
 
     DAWN_TRY(ToBackend(computeStage.module.Get())
                  ->CreateFunction(SingleShaderStage::Compute, computeStage, ToBackend(GetLayout()),
@@ -80,18 +84,18 @@ MaybeError ComputePipeline::InitializeImpl() {
                                    reflection:nil
                                         error:&error]);
     if (error != nullptr) {
-        return DAWN_INTERNAL_ERROR("Error creating pipeline state " +
-                                   std::string([error.localizedDescription UTF8String]));
+        return DAWN_PIPELINE_UNCATEGORIZED_ERROR(
+            "Error creating pipeline state %s",
+            std::string([error.localizedDescription UTF8String]));
     }
     DAWN_ASSERT(mMtlComputePipelineState != nil);
     timer.RecordMicroseconds("Metal.newComputePipelineStateWithDescriptor.CacheMiss");
 
-    // Copy over the local workgroup size as it is passed to dispatch explicitly in Metal
-    mLocalWorkgroupSize = computeData.localWorkgroupSize;
-
-    mRequiresStorageBufferLength = computeData.needsStorageBufferLength;
     mWorkgroupAllocations = std::move(computeData.workgroupAllocations);
-    return {};
+
+    return {{checked_cast<uint32_t>(computeData.localWorkgroupSize.width),
+             checked_cast<uint32_t>(computeData.localWorkgroupSize.height),
+             checked_cast<uint32_t>(computeData.localWorkgroupSize.depth)}};
 }
 
 void ComputePipeline::Encode(id<MTLComputeCommandEncoder> encoder) {
@@ -107,11 +111,7 @@ void ComputePipeline::Encode(id<MTLComputeCommandEncoder> encoder) {
 }
 
 MTLSize ComputePipeline::GetLocalWorkGroupSize() const {
-    return mLocalWorkgroupSize;
-}
-
-bool ComputePipeline::RequiresStorageBufferLength() const {
-    return mRequiresStorageBufferLength;
+    return ToMTLSize(GetWorkgroupSize());
 }
 
 }  // namespace dawn::native::metal

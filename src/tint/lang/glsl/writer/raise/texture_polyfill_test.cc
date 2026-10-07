@@ -84,14 +84,12 @@ $B1: {  # root
   $B2: {
     %3:texture_2d<f32> = load %v
     %4:vec2<i32> = glsl.textureSize %3, 0i
-    %5:vec2<u32> = bitcast %4
+    %5:vec2<u32> = bitcast<vec2<u32>> %4
     %6:u32 = swizzle %5, x
     ret %6
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -134,13 +132,11 @@ $B1: {  # root
   $B2: {
     %3:texture_2d<f32> = load %v
     %4:vec2<i32> = glsl.textureSize %3, 0i
-    %5:vec2<u32> = bitcast %4
+    %5:vec2<u32> = bitcast<vec2<u32>> %4
     ret %5
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -182,15 +178,12 @@ $B1: {  # root
 %foo = func():vec2<u32> {
   $B2: {
     %3:texture_2d<f32> = load %v
-    %4:i32 = bitcast 3u
-    %5:vec2<i32> = glsl.textureSize %3, %4
-    %6:vec2<u32> = bitcast %5
-    ret %6
+    %4:vec2<i32> = glsl.textureSize %3, 3i
+    %5:vec2<u32> = bitcast<vec2<u32>> %4
+    ret %5
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -235,14 +228,12 @@ $B1: {  # root
     %3:texture_2d_array<f32> = load %v
     %4:vec3<i32> = glsl.textureSize %3, 0i
     %5:vec2<i32> = swizzle %4, xy
-    %6:vec2<u32> = bitcast %5
+    %6:vec2<u32> = bitcast<vec2<u32>> %5
     %x:vec2<u32> = let %6
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -287,14 +278,12 @@ $B1: {  # root
   $B2: {
     %3:texture_storage_2d<rg32float, read> = load %v
     %4:vec2<i32> = glsl.imageSize %3
-    %5:vec2<u32> = bitcast %4
+    %5:vec2<u32> = bitcast<vec2<u32>> %4
     %x:vec2<u32> = let %5
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -338,14 +327,12 @@ $B1: {  # root
   $B2: {
     %3:texture_depth_multisampled_2d = load %v
     %4:vec2<i32> = glsl.textureSize %3
-    %5:vec2<u32> = bitcast %4
+    %5:vec2<u32> = bitcast<vec2<u32>> %4
     %x:vec2<u32> = let %5
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -391,14 +378,63 @@ $B1: {  # root
     %3:texture_2d_array<f32> = load %v
     %4:vec3<i32> = glsl.textureSize %3, 0i
     %5:i32 = swizzle %4, z
-    %6:u32 = bitcast %5
+    %6:u32 = bitcast<u32> %5
     %x:u32 = let %6
     ret
   }
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
+    TexturePolyfillConfig cfg;
+    Run(TexturePolyfill, cfg);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(GlslWriter_TexturePolyfillTest, TextureNumLayers_Multisampled2DArray) {
+    auto* var = b.Var("v", handle,
+                      ty.multisampled_texture(core::type::TextureDimension::k2dArray, ty.f32()),
+                      core::Access::kRead);
+    var->SetBindingPoint(0, 0);
+    b.ir.root_block->Append(var);
+
+    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    b.Append(func->Block(), [&] {
+        b.Let("x", b.Call(ty.u32(), core::BuiltinFn::kTextureNumLayers, b.Load(var)));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<handle, texture_multisampled_2d_array<f32>, read> = var undef @binding_point(0, 0)
+}
+
+%foo = @fragment func():void {
+  $B2: {
+    %3:texture_multisampled_2d_array<f32> = load %v
+    %4:u32 = textureNumLayers %3
+    %x:u32 = let %4
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<handle, texture_multisampled_2d_array<f32>, read> = combined_texture_sampler undef @binding_point(0, 0)
+}
+
+%foo = @fragment func():void {
+  $B2: {
+    %3:texture_multisampled_2d_array<f32> = load %v
+    %4:vec3<i32> = glsl.textureSize %3
+    %5:i32 = swizzle %4, z
+    %6:u32 = bitcast<u32> %5
+    %x:u32 = let %6
+    ret
+  }
+}
+)";
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -443,14 +479,12 @@ $B1: {  # root
     %3:texture_2d_array<f32> = load %v
     %4:vec3<i32> = glsl.textureSize %3, 0i
     %5:i32 = swizzle %4, z
-    %6:u32 = bitcast %5
+    %6:u32 = bitcast<u32> %5
     %x:u32 = let %6
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -496,14 +530,12 @@ $B1: {  # root
     %3:texture_cube_array<f32> = load %v
     %4:vec3<i32> = glsl.textureSize %3, 0i
     %5:i32 = swizzle %4, z
-    %6:u32 = bitcast %5
+    %6:u32 = bitcast<u32> %5
     %x:u32 = let %6
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -548,14 +580,12 @@ $B1: {  # root
     %3:texture_cube_array<f32> = load %v
     %4:vec3<i32> = glsl.textureSize %3, 0i
     %5:i32 = swizzle %4, z
-    %6:u32 = bitcast %5
+    %6:u32 = bitcast<u32> %5
     %x:u32 = let %6
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -602,14 +632,12 @@ $B1: {  # root
     %3:texture_storage_2d_array<rg32float, read> = load %v
     %4:vec3<i32> = glsl.imageSize %3
     %5:i32 = swizzle %4, z
-    %6:u32 = bitcast %5
+    %6:u32 = bitcast<u32> %5
     %x:u32 = let %6
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -653,17 +681,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<i32> = construct 0i, 0i
-    %4:texture_2d<f32> = load %v
-    %5:i32 = convert 0u
-    %6:vec4<f32> = glsl.texelFetch %4, %3, %5
-    %x:vec4<f32> = let %6
+    %3:texture_2d<f32> = load %v
+    %4:vec4<f32> = glsl.texelFetch %3, vec2<i32>(0i), 0i
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -715,8 +739,6 @@ $B1: {  # root
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
-
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
     EXPECT_EQ(expect, str());
@@ -760,15 +782,12 @@ $B1: {  # root
 %foo = @fragment func():void {
   $B2: {
     %3:texture_3d<f32> = load %v
-    %4:i32 = convert 0u
-    %5:vec4<f32> = glsl.texelFetch %3, vec3<i32>(0i), %4
-    %x:vec4<f32> = let %5
+    %4:vec4<f32> = glsl.texelFetch %3, vec3<i32>(0i), 0i
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -814,15 +833,12 @@ $B1: {  # root
 %foo = @fragment func():void {
   $B2: {
     %3:texture_multisampled_2d<i32> = load %v
-    %4:i32 = convert 0u
-    %5:vec4<i32> = glsl.texelFetch %3, vec2<i32>(0i), %4
-    %x:vec4<i32> = let %5
+    %4:vec4<i32> = glsl.texelFetch %3, vec2<i32>(0i), 0i
+    %x:vec4<i32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -874,8 +890,6 @@ $B1: {  # root
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
-
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
     EXPECT_EQ(expect, str());
@@ -919,14 +933,11 @@ $B1: {  # root
 %foo = @fragment func():void {
   $B2: {
     %3:texture_storage_2d<r32float, read_write> = load %1
-    %4:vec2<i32> = construct 1i, 0i
-    %5:void = glsl.imageStore %3, %4, vec4<f32>(0.5f, 0.0f, 0.0f, 1.0f)
+    %4:void = glsl.imageStore %3, vec2<i32>(1i, 0i), vec4<f32>(0.5f, 0.0f, 0.0f, 1.0f)
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -971,14 +982,11 @@ $B1: {  # root
 %foo = @fragment func():void {
   $B2: {
     %3:texture_storage_2d<rgba32sint, read_write> = load %1
-    %4:vec2<i32> = convert vec2<u32>(0u)
-    %5:void = glsl.imageStore %3, %4, vec4<i32>(5i, 0i, 0i, 1i)
+    %4:void = glsl.imageStore %3, vec2<i32>(0i), vec4<i32>(5i, 0i, 0i, 1i)
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -1023,15 +1031,11 @@ $B1: {  # root
 %foo = @fragment func():void {
   $B2: {
     %3:texture_storage_2d_array<rgba32sint, read_write> = load %1
-    %4:vec2<i32> = convert vec2<u32>(0u)
-    %5:vec3<i32> = construct %4, 1i
-    %6:void = glsl.imageStore %3, %5, vec4<i32>(5i, 0i, 0i, 1i)
+    %4:void = glsl.imageStore %3, vec3<i32>(0i, 0i, 1i), vec4<i32>(5i, 0i, 0i, 1i)
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -1082,8 +1086,6 @@ $B1: {  # root
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
-
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
     EXPECT_EQ(expect, str());
@@ -1127,15 +1129,11 @@ $B1: {  # root
 %foo = @fragment func():void {
   $B2: {
     %3:texture_storage_2d_array<rgba32float, read_write> = load %1
-    %4:i32 = convert 3u
-    %5:vec3<i32> = construct vec2<i32>(1i, 2i), %4
-    %6:void = glsl.imageStore %3, %5, vec4<f32>(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f)
+    %4:void = glsl.imageStore %3, vec3<i32>(1i, 2i, 3i), vec4<f32>(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f)
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     Run(TexturePolyfill, cfg);
@@ -1179,13 +1177,11 @@ $B1: {  # root
   $B2: {
     %3:texture_2d<f32> = load %t
     %4:vec2<i32> = glsl.textureSize %3, 0i
-    %5:vec2<u32> = bitcast %4
+    %5:vec2<u32> = bitcast<vec2<u32>> %4
     ret %5
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1224,11 +1220,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = textureGatherCompare %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = textureGatherCompare %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1242,16 +1237,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec4<f32> = glsl.textureGather %4, %3, 3.0f
-    %x:vec4<f32> = let %5
+    %3:texture_depth_2d = load %t_s
+    %4:vec4<f32> = glsl.textureGather %3, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1291,11 +1283,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = textureGatherCompare %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = textureGatherCompare %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1309,16 +1300,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec4<f32> = glsl.textureGatherOffset %4, %3, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %5
+    %3:texture_depth_2d = load %t_s
+    %4:vec4<f32> = glsl.textureGatherOffset %3, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1358,11 +1346,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 2.5f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = textureGatherCompare %5, %6, %4, 6u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = textureGatherCompare %4, %5, vec3<f32>(1.0f, 2.0f, 2.5f), 6u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1376,18 +1363,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 2.5f
-    %4:texture_depth_cube_array = load %t_s
-    %5:f32 = convert 6u
-    %6:vec4<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.textureGather %4, %6, 3.0f
-    %x:vec4<f32> = let %7
+    %3:texture_depth_cube_array = load %t_s
+    %4:vec4<f32> = glsl.textureGather %3, vec4<f32>(1.0f, 2.0f, 2.5f, 6.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1428,11 +1410,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = textureGatherCompare %5, %6, %4, 6i, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = textureGatherCompare %4, %5, vec2<f32>(1.0f, 2.0f), 6i, 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1446,18 +1427,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 6i
-    %6:vec3<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.textureGatherOffset %4, %6, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %3:texture_depth_2d_array = load %t_s
+    %4:vec4<f32> = glsl.textureGatherOffset %3, vec3<f32>(1.0f, 2.0f, 6.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1495,11 +1471,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = textureGather 3u, %5, %6, %4
-    %x:vec4<i32> = let %7
+    %4:texture_2d<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = textureGather 3u, %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<i32> = let %6
     ret
   }
 }
@@ -1513,17 +1488,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d<i32> = load %t_s
-    %5:i32 = convert 3u
-    %6:vec4<i32> = glsl.textureGather %4, %3, %5
-    %x:vec4<i32> = let %6
+    %3:texture_2d<i32> = load %t_s
+    %4:vec4<i32> = glsl.textureGather %3, vec2<f32>(1.0f, 2.0f), 3i
+    %x:vec4<i32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1561,11 +1532,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = textureGather 0u, %5, %6, %4, vec2<i32>(1i, 3i)
-    %x:vec4<i32> = let %7
+    %4:texture_2d<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = textureGather 0u, %4, %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(1i, 3i)
+    %x:vec4<i32> = let %6
     ret
   }
 }
@@ -1579,17 +1549,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d<i32> = load %t_s
-    %5:i32 = convert 0u
-    %6:vec4<i32> = glsl.textureGatherOffset %4, %3, vec2<i32>(1i, 3i), %5
-    %x:vec4<i32> = let %6
+    %3:texture_2d<i32> = load %t_s
+    %4:vec4<i32> = glsl.textureGatherOffset %3, vec2<f32>(1.0f, 2.0f), vec2<i32>(1i, 3i), 0i
+    %x:vec4<i32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1628,11 +1594,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = textureGather 1u, %5, %6, %4, 1u
-    %x:vec4<i32> = let %7
+    %4:texture_2d_array<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = textureGather 1u, %4, %5, vec2<f32>(1.0f, 2.0f), 1u
+    %x:vec4<i32> = let %6
     ret
   }
 }
@@ -1646,19 +1611,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d_array<i32> = load %t_s
-    %5:f32 = convert 1u
-    %6:vec3<f32> = construct %3, %5
-    %7:i32 = convert 1u
-    %8:vec4<i32> = glsl.textureGather %4, %6, %7
-    %x:vec4<i32> = let %8
+    %3:texture_2d_array<i32> = load %t_s
+    %4:vec4<i32> = glsl.textureGather %3, vec3<f32>(1.0f, 2.0f, 1.0f), 1i
+    %x:vec4<i32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1699,11 +1658,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = textureGather 2u, %5, %6, %4, 1i, vec2<i32>(1i, 2i)
-    %x:vec4<i32> = let %7
+    %4:texture_2d_array<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = textureGather 2u, %4, %5, vec2<f32>(1.0f, 2.0f), 1i, vec2<i32>(1i, 2i)
+    %x:vec4<i32> = let %6
     ret
   }
 }
@@ -1717,19 +1675,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d_array<i32> = load %t_s
-    %5:f32 = convert 1i
-    %6:vec3<f32> = construct %3, %5
-    %7:i32 = convert 2u
-    %8:vec4<i32> = glsl.textureGatherOffset %4, %6, vec2<i32>(1i, 2i), %7
-    %x:vec4<i32> = let %8
+    %3:texture_2d_array<i32> = load %t_s
+    %4:vec4<i32> = glsl.textureGatherOffset %3, vec3<f32>(1.0f, 2.0f, 1.0f), vec2<i32>(1i, 2i), 2i
+    %x:vec4<i32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1766,11 +1718,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1784,16 +1735,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec4<f32> = glsl.textureGather %4, %3, 0.0f
-    %x:vec4<f32> = let %5
+    %3:texture_depth_2d = load %t_s
+    %4:vec4<f32> = glsl.textureGather %3, vec2<f32>(1.0f, 2.0f), 0.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1830,11 +1778,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4, vec2<i32>(3i, 4i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(3i, 4i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1848,16 +1795,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec4<f32> = glsl.textureGatherOffset %4, %3, 0.0f, vec2<i32>(3i, 4i)
-    %x:vec4<f32> = let %5
+    %3:texture_depth_2d = load %t_s
+    %4:vec4<f32> = glsl.textureGatherOffset %3, vec2<f32>(1.0f, 2.0f), 0.0f, vec2<i32>(3i, 4i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1895,11 +1839,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4, 4i
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f), 4i
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1913,18 +1856,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4i
-    %6:vec3<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.textureGather %4, %6, 0.0f
-    %x:vec4<f32> = let %7
+    %3:texture_depth_2d_array = load %t_s
+    %4:vec4<f32> = glsl.textureGather %3, vec3<f32>(1.0f, 2.0f, 4.0f), 0.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -1964,11 +1902,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4, 4u, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1982,18 +1919,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec3<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.textureGatherOffset %4, %6, 0.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %3:texture_depth_2d_array = load %t_s
+    %4:vec4<f32> = glsl.textureGatherOffset %3, vec3<f32>(1.0f, 2.0f, 4.0f), 0.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2048,16 +1980,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 0.5f
-    %4:texture_2d<f32> = load %t_s
-    %5:vec4<f32> = glsl.texture %4, %3
-    %x:vec4<f32> = let %5
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec2<f32>(1.0f, 0.5f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2095,11 +2024,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2113,16 +2041,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d<f32> = load %t_s
-    %5:vec4<f32> = glsl.texture %4, %3
-    %x:vec4<f32> = let %5
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2161,11 +2086,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2179,16 +2103,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureOffset %4, %3, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %5
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureOffset %3, vec2<f32>(1.0f, 2.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2227,11 +2148,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, 4u
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), 4u
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2245,18 +2165,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d_array<f32> = load %t_s
-    %5:f32 = convert 4u
-    %6:vec3<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.texture %4, %6
-    %x:vec4<f32> = let %7
+    %3:texture_2d_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec3<f32>(1.0f, 2.0f, 4.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2297,11 +2212,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, 4u, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2315,18 +2229,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d_array<f32> = load %t_s
-    %5:f32 = convert 4u
-    %6:vec3<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.textureOffset %4, %6, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %3:texture_2d_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureOffset %3, vec3<f32>(1.0f, 2.0f, 4.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2364,11 +2273,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2382,16 +2290,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_3d<f32> = load %t_s
-    %5:vec4<f32> = glsl.texture %4, %3
-    %x:vec4<f32> = let %5
+    %3:texture_3d<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2430,11 +2335,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2448,16 +2352,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_3d<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureOffset %4, %3, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %5
+    %3:texture_3d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureOffset %3, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2495,11 +2396,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2513,16 +2413,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_cube<f32> = load %t_s
-    %5:vec4<f32> = glsl.texture %4, %3
-    %x:vec4<f32> = let %5
+    %3:texture_cube<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2561,11 +2458,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, 4u
-    %x:vec4<f32> = let %7
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2579,18 +2475,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_cube_array<f32> = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.texture %4, %6
-    %x:vec4<f32> = let %7
+    %3:texture_cube_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2627,11 +2518,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:f32 = let %6
     ret
   }
 }
@@ -2645,17 +2535,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec3<f32> = construct %3, 0.0f
-    %6:f32 = glsl.texture %4, %5
-    %x:f32 = let %6
+    %3:texture_depth_2d = load %t_s
+    %4:f32 = glsl.texture %3, vec3<f32>(1.0f, 2.0f, 0.0f)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2693,11 +2579,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -2711,17 +2596,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec3<f32> = construct %3, 0.0f
-    %6:f32 = glsl.textureOffset %4, %5, vec2<i32>(4i, 5i)
-    %x:f32 = let %6
+    %3:texture_depth_2d = load %t_s
+    %4:f32 = glsl.textureOffset %3, vec3<f32>(1.0f, 2.0f, 0.0f), vec2<i32>(4i, 5i)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2759,11 +2640,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4, 4u
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), 4u
+    %x:f32 = let %6
     ret
   }
 }
@@ -2777,18 +2657,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5, 0.0f
-    %7:f32 = glsl.texture %4, %6
-    %x:f32 = let %7
+    %3:texture_depth_2d_array = load %t_s
+    %4:f32 = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 4.0f, 0.0f)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2827,11 +2702,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4, 4u, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -2845,20 +2719,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5, 0.0f
-    %7:vec2<f32> = dpdx %3
-    %8:vec2<f32> = dpdy %3
-    %9:f32 = glsl.textureGradOffset %4, %6, %7, %8, vec2<i32>(4i, 5i)
-    %x:f32 = let %9
+    %3:texture_depth_2d_array = load %t_s
+    %4:vec2<f32> = dpdx vec2<f32>(1.0f, 2.0f)
+    %5:vec2<f32> = dpdy vec2<f32>(1.0f, 2.0f)
+    %6:f32 = glsl.textureGradOffset %3, vec4<f32>(1.0f, 2.0f, 4.0f, 0.0f), %4, %5, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2896,11 +2765,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4, 4u
-    %x:f32 = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u
+    %x:f32 = let %6
     ret
   }
 }
@@ -2914,18 +2782,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_depth_cube_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5
-    %7:f32 = glsl.texture %4, %6, 0.0f
-    %x:f32 = let %7
+    %3:texture_depth_cube_array = load %t_s
+    %4:f32 = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 0.0f
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -2963,11 +2826,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2981,16 +2843,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d<f32> = load %t_s
-    %5:vec4<f32> = glsl.texture %4, %3, 3.0f
-    %x:vec4<f32> = let %5
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3030,11 +2889,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3048,16 +2906,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureOffset %4, %3, vec2<i32>(4i, 5i), 3.0f
-    %x:vec4<f32> = let %5
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureOffset %3, vec2<f32>(1.0f, 2.0f), vec2<i32>(4i, 5i), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3097,11 +2952,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 4u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3115,18 +2969,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d_array<f32> = load %t_s
-    %5:f32 = convert 4u
-    %6:vec3<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.texture %4, %6, 3.0f
-    %x:vec4<f32> = let %7
+    %3:texture_2d_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3167,11 +3016,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 4u, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3185,18 +3033,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d_array<f32> = load %t_s
-    %5:f32 = convert 4u
-    %6:vec3<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.textureOffset %4, %6, vec2<i32>(4i, 5i), 3.0f
-    %x:vec4<f32> = let %7
+    %3:texture_2d_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureOffset %3, vec3<f32>(1.0f, 2.0f, 4.0f), vec2<i32>(4i, 5i), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3234,11 +3077,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3252,16 +3094,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_3d<f32> = load %t_s
-    %5:vec4<f32> = glsl.texture %4, %3, 3.0f
-    %x:vec4<f32> = let %5
+    %3:texture_3d<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3301,11 +3140,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f, vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3319,16 +3157,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_3d<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureOffset %4, %3, vec3<i32>(4i, 5i, 6i), 3.0f
-    %x:vec4<f32> = let %5
+    %3:texture_3d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureOffset %3, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<i32>(4i, 5i, 6i), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3366,11 +3201,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3384,16 +3218,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_cube<f32> = load %t_s
-    %5:vec4<f32> = glsl.texture %4, %3, 3.0f
-    %x:vec4<f32> = let %5
+    %3:texture_cube<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3433,11 +3264,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 4u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3451,18 +3281,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_cube_array<f32> = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.texture %4, %6, 3.0f
-    %x:vec4<f32> = let %7
+    %3:texture_cube_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3517,16 +3342,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 0.5f
-    %4:texture_2d<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureLod %4, %3, 0.0f
-    %x:vec4<f32> = let %5
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureLod %3, vec2<f32>(1.0f, 0.5f), 0.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3564,11 +3386,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3582,16 +3403,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureLod %4, %3, 3.0f
-    %x:vec4<f32> = let %5
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureLod %3, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3631,11 +3449,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3649,16 +3466,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureLodOffset %4, %3, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %5
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureLodOffset %3, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3698,11 +3512,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 4u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3716,18 +3529,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d_array<f32> = load %t_s
-    %5:f32 = convert 4u
-    %6:vec3<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.textureLod %4, %6, 3.0f
-    %x:vec4<f32> = let %7
+    %3:texture_2d_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureLod %3, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3768,11 +3576,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 4u, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3786,18 +3593,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_2d_array<f32> = load %t_s
-    %5:f32 = convert 4u
-    %6:vec3<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.textureLodOffset %4, %6, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %3:texture_2d_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureLodOffset %3, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3835,11 +3637,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3853,16 +3654,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_3d<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureLod %4, %3, 3.0f
-    %x:vec4<f32> = let %5
+    %3:texture_3d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureLod %3, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3902,11 +3700,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f, vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3920,16 +3717,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_3d<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureLodOffset %4, %3, 3.0f, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %5
+    %3:texture_3d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureLodOffset %3, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f, vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -3967,11 +3761,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3985,16 +3778,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_cube<f32> = load %t_s
-    %5:vec4<f32> = glsl.textureLod %4, %3, 3.0f
-    %x:vec4<f32> = let %5
+    %3:texture_cube<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureLod %3, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4034,11 +3824,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 4u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4052,18 +3841,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_cube_array<f32> = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5
-    %7:vec4<f32> = glsl.textureLod %4, %6, 3.0f
-    %x:vec4<f32> = let %7
+    %3:texture_cube_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureLod %3, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 3.0f
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4100,11 +3884,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 3i
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3i
+    %x:f32 = let %6
     ret
   }
 }
@@ -4118,18 +3901,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec3<f32> = construct %3, 0.0f
-    %6:f32 = convert 3i
-    %7:f32 = glsl.textureLod %4, %5, %6
-    %x:f32 = let %7
+    %3:texture_depth_2d = load %t_s
+    %4:f32 = glsl.textureLod %3, vec3<f32>(1.0f, 2.0f, 0.0f), 3.0f
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4167,11 +3945,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 3u, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3u, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -4185,18 +3962,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec3<f32> = construct %3, 0.0f
-    %6:f32 = convert 3u
-    %7:f32 = glsl.textureLodOffset %4, %5, %6, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %3:texture_depth_2d = load %t_s
+    %4:f32 = glsl.textureLodOffset %3, vec3<f32>(1.0f, 2.0f, 0.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4234,11 +4006,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 4u, 3i
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3i
+    %x:f32 = let %6
     ret
   }
 }
@@ -4252,19 +4023,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5, 0.0f
-    %7:f32 = convert 3i
-    %8:f32 = glsl.extTextureLod %4, %6, %7
-    %x:f32 = let %8
+    %3:texture_depth_2d_array = load %t_s
+    %4:f32 = glsl.extTextureLod %3, vec4<f32>(1.0f, 2.0f, 4.0f, 0.0f), 3.0f
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4304,11 +4069,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 4u, 3u, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3u, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -4322,19 +4086,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5, 0.0f
-    %7:f32 = convert 3u
-    %8:f32 = glsl.extTextureLodOffset %4, %6, %7, vec2<i32>(4i, 5i)
-    %x:f32 = let %8
+    %3:texture_depth_2d_array = load %t_s
+    %4:f32 = glsl.extTextureLodOffset %3, vec4<f32>(1.0f, 2.0f, 4.0f, 0.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4372,11 +4130,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 4u, 3i
-    %x:f32 = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3i
+    %x:f32 = let %6
     ret
   }
 }
@@ -4390,19 +4147,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_depth_cube_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5
-    %7:f32 = convert 3i
-    %8:f32 = glsl.extTextureLod %4, %6, 0.0f, %7
-    %x:f32 = let %8
+    %3:texture_depth_cube_array = load %t_s
+    %4:f32 = glsl.extTextureLod %3, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 0.0f, 3.0f
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4442,13 +4193,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec2<f32>(1.0f, 2.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4462,18 +4210,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:vec2<f32> = construct 3.0f, 4.0f
-    %5:vec2<f32> = construct 6.0f, 7.0f
-    %6:texture_2d<f32> = load %t_s
-    %7:vec4<f32> = glsl.textureGrad %6, %3, %4, %5
-    %x:vec4<f32> = let %7
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureGrad %3, vec2<f32>(1.0f, 2.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4515,13 +4258,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec2<f32>(1.0f, 2.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4535,18 +4275,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:vec2<f32> = construct 3.0f, 4.0f
-    %5:vec2<f32> = construct 6.0f, 7.0f
-    %6:texture_2d<f32> = load %t_s
-    %7:vec4<f32> = glsl.textureGradOffset %6, %3, %4, %5, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %3:texture_2d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureGradOffset %3, vec2<f32>(1.0f, 2.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4588,13 +4323,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d_array<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, 4u, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4608,20 +4340,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:vec2<f32> = construct 3.0f, 4.0f
-    %5:vec2<f32> = construct 6.0f, 7.0f
-    %6:texture_2d_array<f32> = load %t_s
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %3, %7
-    %9:vec4<f32> = glsl.textureGrad %6, %8, %4, %5
-    %x:vec4<f32> = let %9
+    %3:texture_2d_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureGrad %3, vec3<f32>(1.0f, 2.0f, 4.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4664,13 +4389,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d_array<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, 4u, %5, %6, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4684,20 +4406,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:vec2<f32> = construct 3.0f, 4.0f
-    %5:vec2<f32> = construct 6.0f, 7.0f
-    %6:texture_2d_array<f32> = load %t_s
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %3, %7
-    %9:vec4<f32> = glsl.textureGradOffset %6, %8, %4, %5, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %3:texture_2d_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureGradOffset %3, vec3<f32>(1.0f, 2.0f, 4.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4737,13 +4452,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_3d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4757,18 +4469,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %5:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %6:texture_3d<f32> = load %t_s
-    %7:vec4<f32> = glsl.textureGrad %6, %3, %4, %5
-    %x:vec4<f32> = let %7
+    %3:texture_3d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureGrad %3, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4810,13 +4517,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_3d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %9
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f), vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4830,18 +4534,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %5:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %6:texture_3d<f32> = load %t_s
-    %7:vec4<f32> = glsl.textureGradOffset %6, %3, %4, %5, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %3:texture_3d<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureGradOffset %3, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f), vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4881,13 +4580,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_cube<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4901,18 +4597,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %5:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %6:texture_cube<f32> = load %t_s
-    %7:vec4<f32> = glsl.textureGrad %6, %3, %4, %5
-    %x:vec4<f32> = let %7
+    %3:texture_cube<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureGrad %3, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -4954,13 +4645,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_cube_array<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, 4u, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4974,20 +4662,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %5:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %6:texture_cube_array<f32> = load %t_s
-    %7:f32 = convert 4u
-    %8:vec4<f32> = construct %3, %7
-    %9:vec4<f32> = glsl.textureGrad %6, %8, %4, %5
-    %x:vec4<f32> = let %9
+    %3:texture_cube_array<f32> = load %t_s
+    %4:vec4<f32> = glsl.textureGrad %3, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5024,11 +4705,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -5042,17 +4722,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec3<f32> = construct %3, 3.0f
-    %6:f32 = glsl.texture %4, %5
-    %x:f32 = let %6
+    %3:texture_depth_2d = load %t_s
+    %4:f32 = glsl.texture %3, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5090,11 +4766,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -5108,17 +4783,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec3<f32> = construct %3, 3.0f
-    %6:f32 = glsl.textureOffset %4, %5, vec2<i32>(4i, 5i)
-    %x:f32 = let %6
+    %3:texture_depth_2d = load %t_s
+    %4:f32 = glsl.textureOffset %3, vec3<f32>(1.0f, 2.0f, 3.0f), vec2<i32>(4i, 5i)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5157,11 +4828,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 4u, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -5175,18 +4845,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5, 3.0f
-    %7:f32 = glsl.texture %4, %6
-    %x:f32 = let %7
+    %3:texture_depth_2d_array = load %t_s
+    %4:f32 = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 4.0f, 3.0f)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5226,11 +4891,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 4u, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -5244,20 +4908,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5, 3.0f
-    %7:vec2<f32> = dpdx %3
-    %8:vec2<f32> = dpdy %3
-    %9:f32 = glsl.textureGradOffset %4, %6, %7, %8, vec2<i32>(4i, 5i)
-    %x:f32 = let %9
+    %3:texture_depth_2d_array = load %t_s
+    %4:vec2<f32> = dpdx vec2<f32>(1.0f, 2.0f)
+    %5:vec2<f32> = dpdy vec2<f32>(1.0f, 2.0f)
+    %6:f32 = glsl.textureGradOffset %3, vec4<f32>(1.0f, 2.0f, 4.0f, 3.0f), %4, %5, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5294,11 +4953,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -5312,17 +4970,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_depth_cube = load %t_s
-    %5:vec4<f32> = construct %3, 3.0f
-    %6:f32 = glsl.texture %4, %5
-    %x:f32 = let %6
+    %3:texture_depth_cube = load %t_s
+    %4:f32 = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 3.0f, 3.0f)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5361,11 +5015,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 4u, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -5379,18 +5032,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_depth_cube_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5
-    %7:f32 = glsl.texture %4, %6, 3.0f
-    %x:f32 = let %7
+    %3:texture_depth_cube_array = load %t_s
+    %4:f32 = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 3.0f
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5427,11 +5075,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -5445,17 +5092,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec3<f32> = construct %3, 3.0f
-    %6:f32 = glsl.texture %4, %5
-    %x:f32 = let %6
+    %3:texture_depth_2d = load %t_s
+    %4:f32 = glsl.texture %3, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5494,11 +5137,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -5512,17 +5154,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d = load %t_s
-    %5:vec3<f32> = construct %3, 3.0f
-    %6:f32 = glsl.textureOffset %4, %5, vec2<i32>(4i, 5i)
-    %x:f32 = let %6
+    %3:texture_depth_2d = load %t_s
+    %4:f32 = glsl.textureOffset %3, vec3<f32>(1.0f, 2.0f, 3.0f), vec2<i32>(4i, 5i)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5561,11 +5199,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 4u, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -5579,18 +5216,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5, 3.0f
-    %7:f32 = glsl.texture %4, %6
-    %x:f32 = let %7
+    %3:texture_depth_2d_array = load %t_s
+    %4:f32 = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 4.0f, 3.0f)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5630,11 +5262,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 4u, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -5648,18 +5279,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:texture_depth_2d_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5, 3.0f
-    %7:f32 = glsl.textureGradOffset %4, %6, vec2<f32>(0.0f), vec2<f32>(0.0f), vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %3:texture_depth_2d_array = load %t_s
+    %4:f32 = glsl.textureGradOffset %3, vec4<f32>(1.0f, 2.0f, 4.0f, 3.0f), vec2<f32>(0.0f), vec2<f32>(0.0f), vec2<i32>(4i, 5i)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5696,11 +5322,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -5714,17 +5339,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_depth_cube = load %t_s
-    %5:vec4<f32> = construct %3, 3.0f
-    %6:f32 = glsl.texture %4, %5
-    %x:f32 = let %6
+    %3:texture_depth_cube = load %t_s
+    %4:f32 = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 3.0f, 3.0f)
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5763,11 +5384,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 4u, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -5781,18 +5401,13 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %4:texture_depth_cube_array = load %t_s
-    %5:f32 = convert 4u
-    %6:vec4<f32> = construct %3, %5
-    %7:f32 = glsl.texture %4, %6, 3.0f
-    %x:f32 = let %7
+    %3:texture_depth_cube_array = load %t_s
+    %4:f32 = glsl.texture %3, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 3.0f
+    %x:f32 = let %4
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowHandleVarsWithoutBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {2, 2};
@@ -5831,11 +5446,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:ptr<handle, texture_2d<f32>, read> = access %textures, 1u
-    %6:texture_2d<f32> = load %5
-    %7:sampler = load %sampler
-    %8:vec4<f32> = textureSample %6, %7, %4
+    %4:ptr<handle, texture_2d<f32>, read> = access %textures, 1u
+    %5:texture_2d<f32> = load %4
+    %6:sampler = load %sampler
+    %7:vec4<f32> = textureSample %5, %6, vec2<f32>(1.0f, 2.0f)
     ret
   }
 }
@@ -5850,10 +5464,9 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:ptr<handle, texture_2d<f32>, read> = access %textures_sampler, 1u
-    %5:texture_2d<f32> = load %4
-    %6:vec4<f32> = glsl.texture %5, %3
+    %3:ptr<handle, texture_2d<f32>, read> = access %textures_sampler, 1u
+    %4:texture_2d<f32> = load %3
+    %5:vec4<f32> = glsl.texture %4, vec2<f32>(1.0f, 2.0f)
     ret
   }
 }
@@ -5897,11 +5510,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:binding_array<texture_2d<f32>, 3> = load %textures
-    %6:texture_2d<f32> = access %5, 1u
-    %7:sampler = load %sampler
-    %8:vec4<f32> = textureSample %6, %7, %4
+    %4:binding_array<texture_2d<f32>, 3> = load %textures
+    %5:texture_2d<f32> = access %4, 1u
+    %6:sampler = load %sampler
+    %7:vec4<f32> = textureSample %5, %6, vec2<f32>(1.0f, 2.0f)
     ret
   }
 }
@@ -5916,10 +5528,9 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:ptr<handle, texture_2d<f32>, read> = access %textures_sampler, 1u
-    %5:texture_2d<f32> = load %4
-    %6:vec4<f32> = glsl.texture %5, %3
+    %3:ptr<handle, texture_2d<f32>, read> = access %textures_sampler, 1u
+    %4:texture_2d<f32> = load %3
+    %5:vec4<f32> = glsl.texture %4, vec2<f32>(1.0f, 2.0f)
     ret
   }
 }
@@ -5969,13 +5580,12 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %5:vec2<f32> = construct 1.0f, 2.0f
-    %6:binding_array<texture_2d<f32>, 3> = load %textures
-    %7:texture_2d<f32> = access %6, 1u
-    %8:sampler = load %sampler1
-    %9:vec4<f32> = textureSample %7, %8, %5
-    %10:sampler = load %sampler2
-    %11:vec4<f32> = textureSample %7, %10, %5
+    %5:binding_array<texture_2d<f32>, 3> = load %textures
+    %6:texture_2d<f32> = access %5, 1u
+    %7:sampler = load %sampler1
+    %8:vec4<f32> = textureSample %6, %7, vec2<f32>(1.0f, 2.0f)
+    %9:sampler = load %sampler2
+    %10:vec4<f32> = textureSample %6, %9, vec2<f32>(1.0f, 2.0f)
     ret
   }
 }
@@ -5991,19 +5601,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:ptr<handle, texture_2d<f32>, read> = access %textures_sampler1, 1u
-    %6:texture_2d<f32> = load %5
-    %7:vec4<f32> = glsl.texture %6, %4
-    %8:ptr<handle, texture_2d<f32>, read> = access %textures_sampler2, 1u
-    %9:texture_2d<f32> = load %8
-    %10:vec4<f32> = glsl.texture %9, %4
+    %4:ptr<handle, texture_2d<f32>, read> = access %textures_sampler1, 1u
+    %5:texture_2d<f32> = load %4
+    %6:vec4<f32> = glsl.texture %5, vec2<f32>(1.0f, 2.0f)
+    %7:ptr<handle, texture_2d<f32>, read> = access %textures_sampler2, 1u
+    %8:texture_2d<f32> = load %7
+    %9:vec4<f32> = glsl.texture %8, vec2<f32>(1.0f, 2.0f)
     ret
   }
 }
 )";
-
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowDuplicateBindings};
 
     TexturePolyfillConfig cfg;
     cfg.placeholder_sampler_bind_point = {4, 0};
@@ -6046,12 +5653,11 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:binding_array<texture_2d<f32>, 3> = load %textures
-    %6:texture_2d<f32> = access %5, 1u
-    %7:sampler = load %sampler
-    %8:vec4<f32> = textureSample %6, %7, %4
-    %9:vec4<f32> = textureLoad %6, vec2<i32>(0i), 0i
+    %4:binding_array<texture_2d<f32>, 3> = load %textures
+    %5:texture_2d<f32> = access %4, 1u
+    %6:sampler = load %sampler
+    %7:vec4<f32> = textureSample %5, %6, vec2<f32>(1.0f, 2.0f)
+    %8:vec4<f32> = textureLoad %5, vec2<i32>(0i), 0i
     ret
   }
 }
@@ -6066,13 +5672,12 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<f32> = construct 1.0f, 2.0f
-    %4:ptr<handle, texture_2d<f32>, read> = access %textures_sampler, 1u
-    %5:texture_2d<f32> = load %4
-    %6:vec4<f32> = glsl.texture %5, %3
-    %7:ptr<handle, texture_2d<f32>, read> = access %textures_sampler, 1u
-    %8:texture_2d<f32> = load %7
-    %9:vec4<f32> = glsl.texelFetch %8, vec2<i32>(0i), 0i
+    %3:ptr<handle, texture_2d<f32>, read> = access %textures_sampler, 1u
+    %4:texture_2d<f32> = load %3
+    %5:vec4<f32> = glsl.texture %4, vec2<f32>(1.0f, 2.0f)
+    %6:ptr<handle, texture_2d<f32>, read> = access %textures_sampler, 1u
+    %7:texture_2d<f32> = load %6
+    %8:vec4<f32> = glsl.texelFetch %7, vec2<i32>(0i), 0i
     ret
   }
 }

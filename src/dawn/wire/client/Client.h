@@ -34,19 +34,19 @@
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
-#include "dawn/common/FutureUtils.h"
-#include "dawn/common/LinkedList.h"
-#include "dawn/common/NonCopyable.h"
-#include "dawn/wire/ChunkedCommandSerializer.h"
 #include "dawn/wire/Wire.h"
 #include "dawn/wire/WireClient.h"
 #include "dawn/wire/WireCmd_autogen.h"
-#include "dawn/wire/WireDeserializeAllocator.h"
-#include "dawn/wire/WireResult.h"
 #include "dawn/wire/client/ClientBase_autogen.h"
-#include "dawn/wire/client/EventManager.h"
-#include "dawn/wire/client/ObjectStore.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/FutureUtils.h"
+#include "src/dawn/common/LinkedList.h"
+#include "src/dawn/wire/ChunkedCommandSerializer.h"
+#include "src/dawn/wire/WireDeserializeAllocator.h"
+#include "src/dawn/wire/WireResult.h"
+#include "src/dawn/wire/client/EventManager.h"
+#include "src/dawn/wire/client/ObjectStore.h"
+#include "src/utils/non_copyable.h"
 
 namespace dawn::wire::client {
 
@@ -82,15 +82,14 @@ class Client : public ClientBase {
     }
 
     // ChunkedCommandHandler implementation
-    const volatile char* HandleCommands(const volatile char* commands, size_t size) override;
+    bool HandleCommands(Span<const volatile std::byte> commands) override;
 
     MemoryTransferService* GetMemoryTransferService() const { return mMemoryTransferService; }
 
-    ReservedBuffer ReserveBuffer(WGPUDevice device, const WGPUBufferDescriptor* descriptor);
-    ReservedTexture ReserveTexture(WGPUDevice device, const WGPUTextureDescriptor* descriptor);
-    ReservedSurface ReserveSurface(WGPUInstance instance,
-                                   const WGPUSurfaceCapabilities* capabilities);
-    ReservedInstance ReserveInstance(const WGPUInstanceDescriptor* descriptor);
+    ReservedBuffer ReserveBuffer(Device* device, const BufferDescriptor* descriptor);
+    ReservedTexture ReserveTexture(Device* device, const TextureDescriptor* descriptor);
+    ReservedSurface ReserveSurface(Instance* instance, const SurfaceCapabilities* capabilities);
+    ReservedInstance ReserveInstance(const InstanceDescriptor* descriptor);
 
     void ReclaimBufferReservation(const ReservedBuffer& reservation);
     void ReclaimTextureReservation(const ReservedTexture& reservation);
@@ -98,16 +97,18 @@ class Client : public ClientBase {
     void ReclaimInstanceReservation(const ReservedInstance& reservation);
 
     template <typename Cmd>
-    void SerializeCommand(const Cmd& cmd) {
-        mSerializer.SerializeCommand(cmd, *this);
+    void SerializeCommand(Cmd&& cmd) {
+        mSerializer.SerializeCommand(std::forward<Cmd>(cmd), *this);
     }
 
     template <typename Cmd, typename... Extensions>
-    void SerializeCommand(const Cmd& cmd, Extensions&&... es) {
-        mSerializer.SerializeCommand(cmd, *this, std::forward<Extensions>(es)...);
+    void SerializeCommand(Cmd&& cmd, Extensions&&... es) {
+        mSerializer.SerializeCommand(std::forward<Cmd>(cmd), *this,
+                                     std::forward<Extensions>(es)...);
     }
 
-    EventManager& GetEventManager(const ObjectHandle& instance);
+    template <typename Cmd, typename... Args>
+    void SerializeCommand(Cmd&, Args&&...) = delete;
 
     void Disconnect();
     bool IsDisconnected() const;
@@ -122,12 +123,9 @@ class Client : public ClientBase {
     }
 
     template <typename Event, typename... ReadyArgs>
-    WireResult SetFutureReady(ObjectHandle eventManager,
-                              FutureID futureID,
-                              ReadyArgs&&... readyArgs) {
-        // Validate that the event manager exists.
-        auto it = mEventManagers.find(eventManager);
-        if (it == mEventManagers.end()) {
+    WireResult SetFutureReady(ObjectId instanceId, FutureID futureID, ReadyArgs&&... readyArgs) {
+        Instance* instance = Get<Instance>(instanceId);
+        if (instance == nullptr) {
             return WireResult::FatalError;
         }
 
@@ -136,8 +134,8 @@ class Client : public ClientBase {
             return WireResult::FatalError;
         }
 
-        return GetEventManager(eventManager)
-            .SetFutureReady<Event>(futureID, std::forward<ReadyArgs>(readyArgs)...);
+        return instance->GetEventManager().SetFutureReady<Event>(
+            futureID, std::forward<ReadyArgs>(readyArgs)...);
     }
 
 #include "dawn/wire/client/ClientPrototypes_autogen.inc"
@@ -146,18 +144,19 @@ class Client : public ClientBase {
     PerObjectType<ObjectStore> mObjects;
     std::unique_ptr<MemoryTransferService> mOwnedMemoryTransferService = nullptr;
     raw_ptr<MemoryTransferService> mMemoryTransferService = nullptr;
-    // Map of instance object handles to a corresponding event manager. Note that for now because we
-    // do not have an internal refcount on the instances, i.e. we don't know when the last object
-    // associated with a particular instance is destroyed, this map is not cleaned up until the
-    // client is destroyed. This should only be a problem for users that are creating many
-    // instances. We also cannot currently store the EventManger on the Instance because
-    // spontaneous mode callbacks outlive the instance. We also can't reuse the ObjectStore for the
-    // EventManagers because we need to track old instance handles even after they are reclaimed.
-    absl::flat_hash_map<ObjectHandle, std::unique_ptr<EventManager>> mEventManagers;
     bool mDisconnected = false;
 };
 
-std::unique_ptr<MemoryTransferService> CreateInlineMemoryTransferService();
+// Right now, the Cmds are implemented with dawn::wire::* structs, but throughout the client code,
+// we are using dawn::wire::client::* structs. We don't currently generate helpers to go from
+// dawn::wire::client::* -> dawn::wire::*, but we do generate helpers to go to/from both and the C
+// API. This helper does the conversions to make that transition easier. If we ever decide to make
+// the wire Cmd explicitly use the client side structs for client commands, we could potentially
+// remove this helper.
+template <typename T>
+auto ToWireCmd(T&& value) {
+    return dawn::wire::FromAPI(ToAPI(std::forward<T>(value)));
+}
 
 }  // namespace dawn::wire::client
 

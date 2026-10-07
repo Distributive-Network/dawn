@@ -66,6 +66,12 @@ const char* str(BuiltinFn i) {
             return "atomic_load_explicit";
         case BuiltinFn::kAtomicStoreExplicit:
             return "atomic_store_explicit";
+        case BuiltinFn::kAtomicMaxExplicit:
+            return "atomic_max_explicit";
+        case BuiltinFn::kAtomicMinExplicit:
+            return "atomic_min_explicit";
+        case BuiltinFn::kMadsat:
+            return "madsat";
         case BuiltinFn::kFence:
             return "fence";
         case BuiltinFn::kGather:
@@ -126,10 +132,32 @@ const char* str(BuiltinFn i) {
             return "simdgroup_multiply";
         case BuiltinFn::kSimdgroupMultiplyAccumulate:
             return "simdgroup_multiply_accumulate";
+        case BuiltinFn::kCopyCooperativeTensor:
+            return "copy_cooperative_tensor";
+        case BuiltinFn::kFillCooperativeTensor:
+            return "fill_cooperative_tensor";
+        case BuiltinFn::kMakeTensorInline:
+            return "make_tensor_inline";
+        case BuiltinFn::kLoad:
+            return "load";
+        case BuiltinFn::kStore:
+            return "store";
+        case BuiltinFn::kRunTensorMultiply:
+            return "run_tensor_multiply";
+        case BuiltinFn::kRunTensorMultiplyAccumulate:
+            return "run_tensor_multiply_accumulate";
         case BuiltinFn::kOsLog:
             return "os_log";
         case BuiltinFn::kPointerOffset:
             return "pointer_offset";
+        case BuiltinFn::kAliasPointerOffset:
+            return "alias_pointer_offset";
+        case BuiltinFn::kVolatileZero:
+            return "volatile_zero";
+        case BuiltinFn::kResourceLoad:
+            return "resource_load";
+        case BuiltinFn::kReinterpretCast:
+            return "reinterpret_cast";
     }
     return "<unknown>";
 }
@@ -150,6 +178,11 @@ tint::core::ir::Instruction::Accesses GetSideEffects(BuiltinFn fn) {
         case BuiltinFn::kThreadgroupBarrier:
         case BuiltinFn::kSimdBallot:
         case BuiltinFn::kQuadShuffleXor:
+        case BuiltinFn::kAtomicMaxExplicit:
+        case BuiltinFn::kAtomicMinExplicit:
+        case BuiltinFn::kCopyCooperativeTensor:
+        case BuiltinFn::kRunTensorMultiply:
+        case BuiltinFn::kRunTensorMultiplyAccumulate:
             return core::ir::Instruction::Accesses{core::ir::Instruction::Access::kLoad, core::ir::Instruction::Access::kStore};
 
         case BuiltinFn::kAtomicLoadExplicit:
@@ -159,10 +192,14 @@ tint::core::ir::Instruction::Accesses GetSideEffects(BuiltinFn fn) {
         case BuiltinFn::kSample:
         case BuiltinFn::kSampleCompare:
         case BuiltinFn::kSimdgroupLoad:
+        case BuiltinFn::kResourceLoad:
+        case BuiltinFn::kLoad:
             return core::ir::Instruction::Accesses{core::ir::Instruction::Access::kLoad};
 
         case BuiltinFn::kWrite:
         case BuiltinFn::kSimdgroupStore:
+        case BuiltinFn::kFillCooperativeTensor:
+        case BuiltinFn::kStore:
             return core::ir::Instruction::Accesses{core::ir::Instruction::Access::kStore};
 
         case BuiltinFn::kDistance:
@@ -185,7 +222,12 @@ tint::core::ir::Instruction::Accesses GetSideEffects(BuiltinFn fn) {
         case BuiltinFn::kMakeDiagonalSimdgroupMatrix:
         case BuiltinFn::kMakeFilledSimdgroupMatrix:
         case BuiltinFn::kOsLog:
+        case BuiltinFn::kAliasPointerOffset:
         case BuiltinFn::kPointerOffset:
+        case BuiltinFn::kVolatileZero:
+        case BuiltinFn::kMadsat:
+        case BuiltinFn::kReinterpretCast:
+        case BuiltinFn::kMakeTensorInline:
             break;
     }
     return core::ir::Instruction::Accesses{};

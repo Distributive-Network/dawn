@@ -26,7 +26,6 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/wgsl/resolver/resolver.h"
-
 #include "src/tint/lang/wgsl/resolver/resolver_helper_test.h"
 #include "src/tint/lang/wgsl/sem/array.h"
 
@@ -64,7 +63,7 @@ TEST_F(ResolverOverrideTest, NonOverridable) {
 }
 
 TEST_F(ResolverOverrideTest, WithId) {
-    auto* a = Override("a", ty.f32(), Expr(1_f), Id(7_u));
+    auto* a = Override("a", ty.f32(), Expr(1_f), Vector{Id(7_u)});
 
     EXPECT_TRUE(r()->Resolve()) << r()->error();
 
@@ -84,10 +83,10 @@ TEST_F(ResolverOverrideTest, WithAndWithoutIds) {
 
     auto* a = Override("a", ty.f32(), Expr(1_f));
     auto* b = Override("b", ty.f16(), Expr(1_h));
-    auto* c = Override("c", ty.i32(), Expr(1_i), Id(2_u));
-    auto* d = Override("d", ty.u32(), Expr(1_u), Id(4_u));
+    auto* c = Override("c", ty.i32(), Expr(1_i), Vector{Id(2_u)});
+    auto* d = Override("d", ty.u32(), Expr(1_u), Vector{Id(4_u)});
     auto* e = Override("e", ty.f32(), Expr(1_f));
-    auto* f = Override("f", ty.f32(), Expr(1_f), Id(1_u));
+    auto* f = Override("f", ty.f32(), Expr(1_f), Vector{Id(1_u)});
 
     EXPECT_TRUE(r()->Resolve()) << r()->error();
 
@@ -101,8 +100,8 @@ TEST_F(ResolverOverrideTest, WithAndWithoutIds) {
 }
 
 TEST_F(ResolverOverrideTest, DuplicateIds) {
-    Override("a", ty.f32(), Expr(1_f), Id(Source{{12, 34}}, 7_u));
-    Override("b", ty.f32(), Expr(1_f), Id(Source{{56, 78}}, 7_u));
+    Override("a", ty.f32(), Expr(1_f), Vector{Id(Source{{12, 34}}, 7_u)});
+    Override("b", ty.f32(), Expr(1_f), Vector{Id(Source{{56, 78}}, 7_u)});
 
     EXPECT_FALSE(r()->Resolve());
 
@@ -111,7 +110,7 @@ TEST_F(ResolverOverrideTest, DuplicateIds) {
 }
 
 TEST_F(ResolverOverrideTest, IdTooLarge) {
-    Override("a", ty.f32(), Expr(1_f), Id(Source{{12, 34}}, 65536_u));
+    Override("a", ty.f32(), Expr(1_f), Vector{Id(Source{{12, 34}}, 65536_u)});
 
     EXPECT_FALSE(r()->Resolve());
 
@@ -249,7 +248,7 @@ TEST_F(ResolverOverrideTest, TransitiveReferences_ViaArraySize_Alias) {
     auto* a = Override("a", ty.i32());
     auto* b = Override("b", ty.i32(), Mul(2_a, "a"));
     Alias("arr_ty", ty.array(ty.i32(), Mul(2_a, "b")));
-    auto* arr = GlobalVar("arr", core::AddressSpace::kWorkgroup, ty("arr_ty"));
+    auto* arr = GlobalVar("arr", core::AddressSpace::kWorkgroup, ty.AsType("arr_ty"));
     Override("unused", ty.i32(), Expr(1_a));
     auto* func = Func("foo", tint::Empty, ty.void_(),
                       Vector{
@@ -293,8 +292,8 @@ TEST_F(ResolverOverrideTest, TransitiveReferences_MultipleEntryPoints) {
     auto* d = Override("d", ty.i32());
     Alias("arr_ty1", ty.array(ty.i32(), Mul("b1", "c1")));
     Alias("arr_ty2", ty.array(ty.i32(), Mul("b2", "c2")));
-    auto* arr1 = GlobalVar("arr1", core::AddressSpace::kWorkgroup, ty("arr_ty1"));
-    auto* arr2 = GlobalVar("arr2", core::AddressSpace::kWorkgroup, ty("arr_ty2"));
+    auto* arr1 = GlobalVar("arr1", core::AddressSpace::kWorkgroup, ty.AsType("arr_ty1"));
+    auto* arr2 = GlobalVar("arr2", core::AddressSpace::kWorkgroup, ty.AsType("arr_ty2"));
     Override("unused", ty.i32(), Expr(1_a));
     auto* func1 = Func("foo1", tint::Empty, ty.void_(),
                        Vector{

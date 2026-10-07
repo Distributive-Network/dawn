@@ -29,6 +29,7 @@
 #define SRC_TINT_LANG_CORE_TYPE_BINDING_ARRAY_H_
 
 #include <stdint.h>
+
 #include <string>
 #include <variant>
 
@@ -62,6 +63,9 @@ class BindingArray : public Castable<BindingArray, Type> {
     /// @returns the name for this type that closely resembles how it would be
     /// declared in WGSL.
     std::string FriendlyName() const override;
+
+    /// @returns the name for this type in an identifier safe string.
+    std::string IdentifierName() const override;
 
     /// @copydoc Type::Elements
     TypeAndCount Elements(const Type* type_if_invalid = nullptr,

@@ -28,15 +28,15 @@
 #ifndef SRC_DAWN_NATIVE_VULKAN_DESCRIPTORSETALLOCATION_H_
 #define SRC_DAWN_NATIVE_VULKAN_DESCRIPTORSETALLOCATION_H_
 
-#include "dawn/common/vulkan_platform.h"
+#include "src/dawn/common/vulkan_platform.h"
 
 namespace dawn::native::vulkan {
 
 // Contains a descriptor set along with data necessary to track its allocation.
 struct DescriptorSetAllocation {
     VkDescriptorSet set = VK_NULL_HANDLE;
-    uint32_t poolIndex;
-    uint16_t setIndex;
+    uint32_t poolIndex = 0;
+    uint16_t setIndex = 0;
 };
 
 }  // namespace dawn::native::vulkan

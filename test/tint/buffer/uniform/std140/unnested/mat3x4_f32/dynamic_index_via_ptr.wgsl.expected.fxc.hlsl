@@ -4,7 +4,7 @@ cbuffer cbuffer_m : register(b0) {
 };
 static int counter = int(0);
 int i() {
-  counter = asint((asuint(counter) + asuint(int(1))));
+  counter = asint((asuint(counter) + 1u));
   return counter;
 }
 
@@ -14,7 +14,7 @@ float3x4 v(uint start_byte_offset) {
 
 [numthreads(1, 1, 1)]
 void f() {
-  uint v_1 = (16u * min(uint(i()), 2u));
+  uint v_1 = (min(uint(i()), 2u) * 16u);
   float3x4 l_m = v(0u);
   float4 l_m_i = asfloat(m[(v_1 / 16u)]);
 }

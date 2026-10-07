@@ -27,18 +27,21 @@
 
 """CI Dawn builders using GN and a standalone Dawn checkout (instead of Chromium)."""
 
+load("@chromium-luci//args.star", "args")
 load("@chromium-luci//builder_config.star", "builder_config")
-load("@chromium-luci//builders.star", "os")
 load("@chromium-luci//ci.star", "ci")
 load("@chromium-luci//consoles.star", "consoles")
+load("@chromium-luci//gardener_rotations.star", "gardener_rotations")
 load("@chromium-luci//gn_args.star", "gn_args")
+load("@chromium-luci//gpu.star", "gpu")
+load("@chromium-luci//targets.star", "targets")
 load("//constants.star", "siso")
 
 ci.defaults.set(
     executable = "recipe:dawn/gn_v2",
     builder_group = "ci",
     bucket = "ci",
-    pool = "luci.chromium.gpu.ci",
+    pool = gpu.ci.POOL,
     triggered_by = ["primary-poller"],
     build_numbers = True,
     contact_team_email = "chrome-gpu-infra@google.com",
@@ -48,30 +51,102 @@ ci.defaults.set(
     shadow_siso_project = siso.project.DEFAULT_UNTRUSTED,
     siso_remote_jobs = siso.remote_jobs.DEFAULT,
     thin_tester_cores = 2,
-    builderless = True,
+    notifies = ["gardener-notifier"],
+    gardener_rotations = gardener_rotations.rotation("dawn", None, None),
+)
+
+targets.builder_defaults.set(
+    mixins = [
+        "chromium-tester-service-account",
+        "swarming_containment_auto",
+    ],
 )
 
 ################################################################################
 # Parent Builders                                                              #
 ################################################################################
 
-def dawn_linux_parent_builder(**kwargs):
-    kwargs.setdefault("cores", 8)
-    kwargs.setdefault("os", os.LINUX_DEFAULT)
-    ci.builder(**kwargs)
+gpu.ci.linux_builder(
+    name = "dawn-android-arm-builder-rel",
+    description_html = "Compiles release Dawn test binaries for Android/arm",
+    schedule = "triggered",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "dawn",
+            apply_configs = [
+                "dawn_android",
+                "dawn_node",
+                "dawn_wasm",
+            ],
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "dawn_base",
+            build_config = builder_config.build_config.RELEASE,
+            target_arch = builder_config.target_arch.ARM,
+            target_bits = 32,
+            target_platform = builder_config.target_platform.ANDROID,
+        ),
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "android_clang",
+            "arm",
+            "dawn_node_bindings",
+            "release_with_dchecks",
+        ],
+    ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
+    console_view_entry = consoles.console_view_entry(
+        category = "android|build|clang|rel",
+        short_name = "arm",
+    ),
+)
 
-def dawn_mac_parent_builder(**kwargs):
-    kwargs.setdefault("cpu", "arm64")
-    kwargs.setdefault("os", os.MAC_DEFAULT)
-    ci.builder(**kwargs)
+gpu.ci.linux_builder(
+    name = "dawn-android-arm64-builder-rel",
+    description_html = "Compiles release Dawn test binaries for Android/arm64",
+    schedule = "triggered",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "dawn",
+            apply_configs = [
+                "dawn_android",
+                "dawn_node",
+                "dawn_wasm",
+            ],
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "dawn_base",
+            build_config = builder_config.build_config.RELEASE,
+            target_arch = builder_config.target_arch.ARM,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.ANDROID,
+        ),
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "android_clang",
+            "arm64",
+            "dawn_node_bindings",
+            "release_with_dchecks",
+        ],
+    ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
+    console_view_entry = consoles.console_view_entry(
+        category = "android|build|clang|rel",
+        short_name = "arm64",
+    ),
+)
 
-def dawn_win_parent_builder(**kwargs):
-    kwargs.setdefault("cores", 8)
-    kwargs.setdefault("os", os.WINDOWS_DEFAULT)
-    kwargs.setdefault("ssd", None)
-    ci.builder(**kwargs)
-
-dawn_linux_parent_builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x64-builder-dbg",
     description_html = "Compile debug Dawn test binaries for Linux/x64",
     schedule = "triggered",
@@ -101,13 +176,18 @@ dawn_linux_parent_builder(
             "x64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|build|clang|dbg",
         short_name = "x64",
     ),
 )
 
-dawn_linux_parent_builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x64-builder-rel",
     description_html = "Compiles release Dawn test binaries for Linux/x64",
     schedule = "triggered",
@@ -117,6 +197,7 @@ dawn_linux_parent_builder(
             apply_configs = [
                 "dawn_node",
                 "dawn_wasm",
+                "checkout_litert_lm",
             ],
         ),
         chromium_config = builder_config.chromium_config(
@@ -137,13 +218,18 @@ dawn_linux_parent_builder(
             "x64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|build|clang|rel",
         short_name = "x64",
     ),
 )
 
-dawn_linux_parent_builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x64-builder-tsan",
     description_html = "Compiles release Dawn test binaries for Linux/x64 w/ TSAN enabled",
     schedule = "triggered",
@@ -181,7 +267,7 @@ dawn_linux_parent_builder(
     ),
 )
 
-dawn_linux_parent_builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x86-builder-dbg",
     description_html = "Compiles debug Dawn test binaries for Linux/x86",
     schedule = "triggered",
@@ -211,13 +297,18 @@ dawn_linux_parent_builder(
             "x86",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|build|clang|dbg",
         short_name = "x86",
     ),
 )
 
-dawn_linux_parent_builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x86-builder-rel",
     description_html = "Compiles release Dawn test binaries for Linux/x86",
     schedule = "triggered",
@@ -247,13 +338,18 @@ dawn_linux_parent_builder(
             "x86",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|build|clang|rel",
         short_name = "x86",
     ),
 )
 
-dawn_mac_parent_builder(
+gpu.ci.mac_builder(
     name = "dawn-mac-arm64-builder-rel",
     description_html = "Compiles release Dawn test binaries for Mac/arm64",
     schedule = "triggered",
@@ -263,6 +359,7 @@ dawn_mac_parent_builder(
             apply_configs = [
                 "dawn_node",
                 "dawn_wasm",
+                "checkout_litert_lm",
             ],
         ),
         chromium_config = builder_config.chromium_config(
@@ -282,13 +379,18 @@ dawn_mac_parent_builder(
             "release_with_dchecks",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "mac|build|clang|rel",
         short_name = "a64",
     ),
 )
 
-dawn_mac_parent_builder(
+gpu.ci.mac_builder(
     name = "dawn-mac-x64-builder-dbg",
     description_html = "Compiles debug Dawn test binaries for Mac/x64",
     schedule = "triggered",
@@ -317,13 +419,18 @@ dawn_mac_parent_builder(
             "x64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "mac|build|clang|dbg",
         short_name = "x64",
     ),
 )
 
-dawn_mac_parent_builder(
+gpu.ci.mac_builder(
     name = "dawn-mac-x64-builder-rel",
     description_html = "Compiles release Dawn test binaries for Mac/x64",
     schedule = "triggered",
@@ -352,13 +459,18 @@ dawn_mac_parent_builder(
             "x64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "mac|build|clang|rel",
         short_name = "x64",
     ),
 )
 
-dawn_win_parent_builder(
+gpu.ci.windows_builder(
     name = "dawn-win-arm64-builder-rel",
     description_html = "Compiles release Dawn test binaries for Windows/arm64",
     schedule = "triggered",
@@ -387,13 +499,18 @@ dawn_win_parent_builder(
             "arm64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|build|clang|rel",
         short_name = "a64",
     ),
 )
 
-dawn_win_parent_builder(
+gpu.ci.windows_builder(
     name = "dawn-win-x64-builder-asan",
     description_html = "Compiles release Dawn test binaries for Windows/x64 with ASAN enabled",
     schedule = "triggered",
@@ -423,13 +540,18 @@ dawn_win_parent_builder(
             "x64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|build|clang|asan",
         short_name = "x64",
     ),
 )
 
-dawn_win_parent_builder(
+gpu.ci.windows_builder(
     name = "dawn-win-x64-builder-dbg",
     description_html = "Compiles debug Dawn test binaries for Windows/x64",
     schedule = "triggered",
@@ -458,13 +580,18 @@ dawn_win_parent_builder(
             "x64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|build|clang|dbg",
         short_name = "x64",
     ),
 )
 
-dawn_win_parent_builder(
+gpu.ci.windows_builder(
     name = "dawn-win-x64-builder-msvc-dbg",
     description_html = "Compiles debug Dawn test binaries for Windows/x64 using MSVC",
     schedule = "triggered",
@@ -495,13 +622,18 @@ dawn_win_parent_builder(
             "x64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|build|msvc|dbg",
         short_name = "x64",
     ),
 )
 
-dawn_win_parent_builder(
+gpu.ci.windows_builder(
     name = "dawn-win-x64-builder-msvc-rel",
     description_html = "Compiles release Dawn test binaries for Windows/x64 using MSVC",
     schedule = "triggered",
@@ -532,13 +664,18 @@ dawn_win_parent_builder(
             "x64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|build|msvc|rel",
         short_name = "x64",
     ),
 )
 
-dawn_win_parent_builder(
+gpu.ci.windows_builder(
     name = "dawn-win-x64-builder-rel",
     description_html = "Compiles release Dawn test binaries for Windows/x64",
     schedule = "triggered",
@@ -547,6 +684,7 @@ dawn_win_parent_builder(
             config = "dawn",
             apply_configs = [
                 "dawn_node",
+                "checkout_litert_lm",
             ],
         ),
         chromium_config = builder_config.chromium_config(
@@ -567,13 +705,18 @@ dawn_win_parent_builder(
             "x64",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|build|clang|rel",
         short_name = "x64",
     ),
 )
 
-dawn_win_parent_builder(
+gpu.ci.windows_builder(
     name = "dawn-win-x86-builder-dbg",
     description_html = "Compiles debug Dawn test binaries for Windows/x86",
     schedule = "triggered",
@@ -600,13 +743,18 @@ dawn_win_parent_builder(
             "x86",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|build|clang|dbg",
         short_name = "x86",
     ),
 )
 
-dawn_win_parent_builder(
+gpu.ci.windows_builder(
     name = "dawn-win-x86-builder-rel",
     description_html = "Compiles release Dawn test binaries for Windows/x86",
     schedule = "triggered",
@@ -633,6 +781,11 @@ dawn_win_parent_builder(
             "x86",
         ],
     ),
+    targets = targets.bundle(
+        additional_compile_targets = [
+            "default",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|build|clang|rel",
         short_name = "x86",
@@ -643,13 +796,16 @@ dawn_win_parent_builder(
 # Fuzz Builders                                                                #
 ################################################################################
 
-ci.builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x64-fuzz-dbg",
     description_html = "Compiles and runs debug Dawn binaries for 'tools/run fuzz' for Linux/x64",
     schedule = "triggered",
     builder_spec = builder_config.builder_spec(
         gclient_config = builder_config.gclient_config(
             config = "dawn",
+            apply_configs = [
+                "checkout_mesa",
+            ],
         ),
         chromium_config = builder_config.chromium_config(
             config = "dawn_base",
@@ -665,24 +821,39 @@ ci.builder(
             "linux_clang",
             "non_component",
             "debug",
+            "tint_build_mesa",
             "x64",
         ],
     ),
-    cores = 8,
-    os = os.LINUX_DEFAULT,
+    targets = targets.bundle(
+        targets = [
+            "tint_fuzzer_corpus_check_tests",
+            "tint_mesa_fuzzer_corpus_check_tests",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.DEBUG,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|build|clang|dbg|fuzz",
         short_name = "x64",
     ),
 )
 
-ci.builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x64-fuzz-rel",
     description_html = "Compiles and runs release Dawn binaries for 'tools/run fuzz' for Linux/x64",
     schedule = "triggered",
     builder_spec = builder_config.builder_spec(
         gclient_config = builder_config.gclient_config(
             config = "dawn",
+            apply_configs = [
+                "checkout_mesa",
+            ],
         ),
         chromium_config = builder_config.chromium_config(
             config = "dawn_base",
@@ -698,18 +869,30 @@ ci.builder(
             "linux_clang",
             "non_component",
             "release_with_dchecks",
+            "tint_build_mesa",
             "x64",
         ],
     ),
-    cores = 8,
-    os = os.LINUX_DEFAULT,
+    targets = targets.bundle(
+        targets = [
+            "tint_fuzzer_corpus_check_tests",
+            "tint_mesa_fuzzer_corpus_check_tests",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|build|clang|rel|fuzz",
         short_name = "x64",
     ),
 )
 
-ci.builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x86-fuzz-dbg",
     description_html = "Compiles and runs debug Dawn binaries for 'tools/run fuzz' for Linux/x86",
     schedule = "triggered",
@@ -734,15 +917,25 @@ ci.builder(
             "x86",
         ],
     ),
-    cores = 8,
-    os = os.LINUX_DEFAULT,
+    targets = targets.bundle(
+        targets = [
+            "tint_fuzzer_corpus_check_tests",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.DEBUG,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|build|clang|dbg|fuzz",
         short_name = "x86",
     ),
 )
 
-ci.builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x86-fuzz-rel",
     description_html = "Compiles and runs release Dawn binaries for 'tools/run fuzz' for Linux/x86",
     schedule = "triggered",
@@ -767,23 +960,37 @@ ci.builder(
             "x86",
         ],
     ),
-    cores = 8,
-    os = os.LINUX_DEFAULT,
+    targets = targets.bundle(
+        targets = [
+            "tint_fuzzer_corpus_check_tests",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|build|clang|rel|fuzz",
         short_name = "x86",
     ),
 )
 
-ci.builder(
+gpu.ci.linux_builder(
     name = "dawn-linux-x64-sws-clusterfuzz",
     description_html = "Generates ClusterFuzz corpora using Linux/x64 binaries and data from running with SwiftShader",
     # Run daily at 5PM Pacific.
     schedule = "0 0 * * *",
     triggered_by = [],
+    gardener_rotations = args.ignore_default(None),
     builder_spec = builder_config.builder_spec(
         gclient_config = builder_config.gclient_config(
             config = "dawn",
+            apply_configs = [
+                "checkout_mesa",
+            ],
         ),
         chromium_config = builder_config.chromium_config(
             config = "dawn_base",
@@ -797,14 +1004,28 @@ ci.builder(
         configs = [
             "component",
             "dawn_swiftshader",
+            "libfuzzer",
             "linux_clang",
             "release_with_dchecks",
             "tint_build_ir_binary",
+            "tint_build_mesa",
             "x64",
         ],
     ),
-    cores = 8,
-    os = os.LINUX_DEFAULT,
+    targets = targets.bundle(
+        targets = [
+            "tint_fuzzer_corpus_generate_tests",
+            "tint_mesa_fuzzer_corpus_generate_tests",
+            "wire_trace_gtests",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|build|clang|rel|cf",
         short_name = "x64",
@@ -833,6 +1054,18 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_common_gtests",
+        ],
+        mixins = [
+            "linux_intel_uhd_630_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|test|clang|rel|x64",
         short_name = "630",
@@ -857,10 +1090,61 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_common_gtests",
+        ],
+        mixins = [
+            "linux_intel_uhd_770_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|test|clang|rel|x64",
         short_name = "770",
     ),
+)
+
+ci.thin_tester(
+    name = "dawn-linux-x64-nvidia-gtx1660-exp-rel",
+    description_html = "Tests release Dawn on Linux/x64 on NVIDIA GTX 1660 GPUs w/ experimental OS/driver configs",
+    parent = "dawn-linux-x64-builder-rel",
+    builder_spec = builder_config.builder_spec(
+        execution_mode = builder_config.execution_mode.TEST,
+        gclient_config = builder_config.gclient_config(
+            config = "dawn",
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "dawn_base",
+            build_config = builder_config.build_config.RELEASE,
+            target_arch = builder_config.target_arch.INTEL,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.LINUX,
+        ),
+        run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_common_gtests",
+            "litert_lm_benchmark",
+        ],
+        mixins = [
+            "linux_nvidia_gtx_1660_experimental",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
+    ),
+    # Uncomment this entry when this experimental tester is actually in use.
+    console_view_entry = consoles.console_view_entry(
+        category = "linux|test|clang|exp|x64",
+        short_name = "1660",
+    ),
+    list_view = "exp",
 )
 
 ci.thin_tester(
@@ -880,6 +1164,19 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.LINUX,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_common_gtests",
+            "litert_lm_benchmark",
+        ],
+        mixins = [
+            "linux_nvidia_gtx_1660_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|test|clang|rel|x64",
@@ -905,6 +1202,19 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "swiftshader_gtests",
+            "swiftshader_isolated_scripts",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.DEBUG,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|test|clang|dbg|x64",
         short_name = "sws",
@@ -928,6 +1238,19 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.LINUX,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "swiftshader_gtests",
+            "swiftshader_isolated_scripts",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|test|clang|rel|x64",
@@ -953,6 +1276,18 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "dawn_end2end_sws_tsan_gtests",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|test|clang|tsan|x64",
         short_name = "sws",
@@ -976,6 +1311,18 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.LINUX,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "swiftshader_gtests",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.DEBUG,
+        os_type = targets.os_type.LINUX,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|test|clang|dbg|x86",
@@ -1001,10 +1348,59 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "swiftshader_gtests",
+        ],
+        mixins = [
+            "gpu_linux_gce_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.LINUX,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "linux|test|clang|rel|x86",
         short_name = "sws",
     ),
+)
+
+ci.thin_tester(
+    name = "dawn-mac-arm64-apple-m2-exp-rel",
+    description_html = "Tests release Dawn on Mac/arm64 on Apple M2 devices w/ experimental OS configs",
+    parent = "dawn-mac-arm64-builder-rel",
+    builder_spec = builder_config.builder_spec(
+        execution_mode = builder_config.execution_mode.TEST,
+        gclient_config = builder_config.gclient_config(
+            config = "dawn",
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "dawn_base",
+            build_config = builder_config.build_config.RELEASE,
+            target_arch = builder_config.target_arch.ARM,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
+        ),
+        run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+        ],
+        mixins = [
+            "mac_arm64_apple_m2_retina_gpu_experimental",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.MAC,
+    ),
+    # Uncomment this entry when this experimental tester is actually in use.
+    # console_view_entry = consoles.console_view_entry(
+    #     category = "mac|test|clang|exp|arm64",
+    #     short_name = "m2",
+    # ),
+    list_view = "exp",
 )
 
 ci.thin_tester(
@@ -1024,6 +1420,19 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.MAC,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_common_gtests",
+            "litert_lm_benchmark",
+        ],
+        mixins = [
+            "mac_arm64_apple_m2_retina_gpu_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.MAC,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "mac|test|clang|rel|arm64",
@@ -1049,6 +1458,18 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_common_gtests",
+        ],
+        mixins = [
+            "mac_retina_amd_gpu_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.MAC,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "mac|test|clang|rel|x64",
         short_name = "5300m",
@@ -1072,6 +1493,18 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.MAC,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_common_gtests",
+        ],
+        mixins = [
+            "mac_retina_amd_555x_gpu_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.MAC,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "mac|test|clang|rel|x64",
@@ -1097,10 +1530,24 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_common_gtests",
+        ],
+        mixins = [
+            "mac_mini_intel_gpu_experimental",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.MAC,
+    ),
+    # Uncomment this entry when this experimental tester is actually in use.
     console_view_entry = consoles.console_view_entry(
         category = "mac|test|clang|exp|x64",
         short_name = "630",
     ),
+    list_view = "exp",
 )
 
 ci.thin_tester(
@@ -1120,6 +1567,18 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.MAC,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_common_gtests",
+        ],
+        mixins = [
+            "mac_mini_intel_gpu_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.MAC,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "mac|test|clang|rel|x64",
@@ -1145,6 +1604,19 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "swiftshader_gtests",
+            "swiftshader_isolated_scripts",
+        ],
+        mixins = [
+            "mac_mini_intel_gpu_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.DEBUG,
+        os_type = targets.os_type.MAC,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "mac|test|clang|dbg|x64",
         short_name = "sws",
@@ -1168,6 +1640,19 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.MAC,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "swiftshader_gtests",
+            "swiftshader_isolated_scripts",
+        ],
+        mixins = [
+            "mac_mini_intel_gpu_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.MAC,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "mac|test|clang|rel|x64",
@@ -1193,9 +1678,80 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_win_gtests",
+        ],
+        mixins = [
+            "win11_qualcomm_snapdragon_x_elite_stable",
+            "win_snapdragon_x_elite_gtest_args",
+        ],
+        per_test_modifications = {
+            "dawn_end2end_no_dxc_tests": targets.remove(
+                reason = "D3D12 with FXC coverage is not necessary on Qualcomm Windows.",
+            ),
+            "dawn_end2end_no_dxc_validation_layers_tests": targets.remove(
+                reason = "D3D12 with FXC coverage is not necessary on Qualcomm Windows.",
+            ),
+        },
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|rel|arm64",
         short_name = "sxe",
+    ),
+)
+
+ci.thin_tester(
+    name = "dawn-win-x64-amd-rx5500xt-rel",
+    description_html = "Tests release Dawn on Windows/x64 on AMD RX 5500 XT GPUs",
+    parent = "dawn-win-x64-builder-rel",
+    builder_spec = builder_config.builder_spec(
+        execution_mode = builder_config.execution_mode.TEST,
+        gclient_config = builder_config.gclient_config(
+            config = "dawn",
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "dawn_base",
+            build_config = builder_config.build_config.RELEASE,
+            target_arch = builder_config.target_arch.INTEL,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.WIN,
+        ),
+        run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_win_gtests",
+            # TODO(crbug.com/565837005): Temporarily enable WARP on this real
+            # hardware configuration because GCE does not have developer mode enabled.
+            targets.bundle(
+                targets = [
+                    "dawn_end2end_warp_tests",
+                ],
+                mixins = [
+                    targets.mixin(
+                        args = [
+                            "--assert-developer-mode",
+                        ],
+                    ),
+                ],
+            ),
+        ],
+        mixins = [
+            "win11_amd_rx_5500_xt_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
+    ),
+    console_view_entry = consoles.console_view_entry(
+        category = "win|test|clang|rel|x64",
+        short_name = "5500",
     ),
 )
 
@@ -1216,6 +1772,23 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.WIN,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_win_gtests",
+        ],
+        mixins = [
+            "win10_intel_uhd_630_stable",
+        ],
+        per_test_modifications = {
+            "dawn_end2end_no_dxc_validation_layers_tests": targets.remove(
+                reason = "Removed from ASan testers for capacity reasons.",
+            ),
+        },
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|asan|x64",
@@ -1241,6 +1814,18 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_win_gtests",
+        ],
+        mixins = [
+            "win10_intel_uhd_630_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|rel|x64",
         short_name = "630",
@@ -1264,6 +1849,17 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.WIN,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+        ],
+        mixins = [
+            "win10_intel_uhd_770_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|rel|x64",
@@ -1289,6 +1885,23 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_win_gtests",
+        ],
+        mixins = [
+            "win10_nvidia_gtx_1660_stable",
+        ],
+        per_test_modifications = {
+            "dawn_end2end_no_dxc_validation_layers_tests": targets.remove(
+                reason = "Removed from ASan testers for capacity reasons.",
+            ),
+        },
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|asan|x64",
         short_name = "1660",
@@ -1313,10 +1926,24 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_win_gtests",
+        ],
+        mixins = [
+            "win10_nvidia_gtx_1660_experimental",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
+    ),
+    # Uncomment this entry when this experimental tester is actually in use.
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|exp|x64",
         short_name = "1660",
     ),
+    list_view = "exp",
 )
 
 ci.thin_tester(
@@ -1336,6 +1963,19 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.WIN,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_win_gtests",
+            "litert_lm_benchmark",
+        ],
+        mixins = [
+            "win10_nvidia_gtx_1660_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|rel|x64",
@@ -1361,6 +2001,19 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "win_software_renderer_gtests",
+            "win_software_renderer_isolated_scripts",
+        ],
+        mixins = [
+            "win10_gce_gpu_pool",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.DEBUG,
+        os_type = targets.os_type.WINDOWS,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|dbg|x64",
         short_name = "sws",
@@ -1384,6 +2037,19 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.WIN,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "win_software_renderer_gtests",
+            "win_software_renderer_isolated_scripts",
+        ],
+        mixins = [
+            "win10_gce_gpu_pool",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.DEBUG,
+        os_type = targets.os_type.WINDOWS,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|msvc|dbg|x64",
@@ -1409,6 +2075,19 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "win_software_renderer_gtests",
+            "win_software_renderer_isolated_scripts",
+        ],
+        mixins = [
+            "win10_gce_gpu_pool",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|msvc|rel|x64",
         short_name = "sws",
@@ -1432,6 +2111,19 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.WIN,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "win_software_renderer_gtests",
+            "win_software_renderer_isolated_scripts",
+        ],
+        mixins = [
+            "win10_gce_gpu_pool",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|rel|x64",
@@ -1457,6 +2149,18 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_win_gtests",
+        ],
+        mixins = [
+            "win10_intel_uhd_630_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|rel|x86",
         short_name = "630",
@@ -1480,6 +2184,18 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.WIN,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "real_hardware_win_gtests",
+        ],
+        mixins = [
+            "win10_nvidia_gtx_1660_stable",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|rel|x86",
@@ -1505,6 +2221,18 @@ ci.thin_tester(
         ),
         run_tests_serially = True,
     ),
+    targets = targets.bundle(
+        targets = [
+            "win_software_renderer_gtests",
+        ],
+        mixins = [
+            "win10_gce_gpu_pool",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.DEBUG,
+        os_type = targets.os_type.WINDOWS,
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|dbg|x86",
         short_name = "sws",
@@ -1528,6 +2256,18 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.WIN,
         ),
         run_tests_serially = True,
+    ),
+    targets = targets.bundle(
+        targets = [
+            "win_software_renderer_gtests",
+        ],
+        mixins = [
+            "win10_gce_gpu_pool",
+        ],
+    ),
+    targets_settings = targets.settings(
+        browser_config = targets.browser_config.RELEASE,
+        os_type = targets.os_type.WINDOWS,
     ),
     console_view_entry = consoles.console_view_entry(
         category = "win|test|clang|rel|x86",

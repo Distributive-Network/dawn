@@ -26,8 +26,9 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <memory>
-#include "gtest/gtest.h"
+
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/utils/gtest.h"
 
 namespace dawn {
 namespace {
@@ -35,30 +36,28 @@ namespace {
 // Check Dawn is configured to crash when a raw_ptr becomes dangling.
 TEST(RawPtrTests, DanglingPointerCauseCrash) {
     std::unique_ptr<bool> owner = std::make_unique<bool>(true);
-    raw_ptr<bool> ptr = owner.get();
-    (void)ptr;  // Unused
+    raw_ptr<bool> ptr = owner.get();  // Lives until end of scope.
 
-    ASSERT_DEATH_IF_SUPPORTED(
+    DAWN_ASSERT_DEATH_IF_SUPPORTED(
         {
             owner.reset();  // DanglingRawPtrDetectedFn handler => no-op.
             ptr = nullptr;  // DanglingRawPtrReleasedFn handler => crash.
         },
-        "DanglingPointerDetector: A pointer was dangling!");
+        "(Memory was freed at:|The free stack trace wasn't recorded)(.|\n)*"
+        "Dangling raw_ptr was released at:");
 }
 
 // The flag `DisableDanglingPtrDetection` must allow a raw_ptr to dangle.
 TEST(RawPtrTests, DisableDanglingPtrDetection) {
     std::unique_ptr<bool> owner = std::make_unique<bool>(true);
-    raw_ptr<bool, DisableDanglingPtrDetection> ptr = owner.get();
-    (void)ptr;  // Unused
+    raw_ptr<bool, DisableDanglingPtrDetection> ptr = owner.get();  // Lives until end of scope.
     owner.reset();
 }
 
 // The flag `DanglingUntriaged` must allow a raw_ptr to dangle.
 TEST(RawPtrTests, DanglingUntriaged) {
     std::unique_ptr<bool> owner = std::make_unique<bool>(true);
-    raw_ptr<bool, DanglingUntriaged> ptr = owner.get();
-    (void)ptr;  // Unused
+    raw_ptr<bool, DanglingUntriaged> ptr = owner.get();  // Lives until end of scope.
     owner.reset();
 }
 

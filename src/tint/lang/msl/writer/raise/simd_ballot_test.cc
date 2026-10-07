@@ -28,7 +28,6 @@
 #include "src/tint/lang/msl/writer/raise/simd_ballot.h"
 
 #include "gtest/gtest.h"
-
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/ir/transform/helper_test.h"
 #include "src/tint/lang/core/number.h"
@@ -39,12 +38,16 @@ using namespace tint::core::number_suffixes;  // NOLINT
 namespace tint::msl::writer::raise {
 namespace {
 
-using MslWriter_SimdBallotTest = core::ir::transform::TransformTest;
+struct MslWriter_SimdBallotTest : public core::ir::transform::TransformTest {
+  protected:
+    void SetUp() override { mod.properties.Add(core::ir::Property::kAllow16BitFloats); }
+};
 
 TEST_F(MslWriter_SimdBallotTest, SimdBallot_WithUserDeclaredSubgroupSize) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     auto* subgroup_size = b.FunctionParam("user_subgroup_size", ty.u32());
     subgroup_size->SetLocation(0);
+    subgroup_size->SetInterpolation(core::Interpolation{core::InterpolationType::kFlat});
     func->SetParams({subgroup_size});
     b.Append(func->Block(), [&] {  //
         b.Call<vec4<u32>>(core::BuiltinFn::kSubgroupBallot, true);
@@ -52,7 +55,7 @@ TEST_F(MslWriter_SimdBallotTest, SimdBallot_WithUserDeclaredSubgroupSize) {
     });
 
     auto* src = R"(
-%foo = @fragment func(%user_subgroup_size:u32 [@location(0)]):void {
+%foo = @fragment func(%user_subgroup_size:u32 [@location(0), @interpolate(flat)]):void {
   $B1: {
     %3:vec4<u32> = subgroupBallot true
     ret
@@ -66,7 +69,7 @@ $B1: {  # root
   %tint_subgroup_size_mask:ptr<private, vec2<u32>, read_write> = var undef
 }
 
-%foo = @fragment func(%user_subgroup_size:u32 [@location(0)], %tint_subgroup_size:u32 [@subgroup_size]):void {
+%foo = @fragment func(%user_subgroup_size:u32 [@location(0), @interpolate(flat)], %tint_subgroup_size:u32 [@subgroup_size]):void {
   $B2: {
     %5:bool = gt %tint_subgroup_size, 32u
     %6:u32 = sub 32u, %tint_subgroup_size

@@ -28,13 +28,13 @@
 #ifndef SRC_TINT_LANG_CORE_IR_REFERENCED_MODULE_DECLS_H_
 #define SRC_TINT_LANG_CORE_IR_REFERENCED_MODULE_DECLS_H_
 
+#include "src/tint/lang/core/ir/array_count.h"
 #include "src/tint/lang/core/ir/constexpr_if.h"
 #include "src/tint/lang/core/ir/control_instruction.h"
 #include "src/tint/lang/core/ir/instruction.h"
 #include "src/tint/lang/core/ir/let.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/override.h"
-#include "src/tint/lang/core/ir/type/array_count.h"
 #include "src/tint/lang/core/ir/user_call.h"
 #include "src/tint/lang/core/ir/var.h"
 #include "src/tint/lang/core/type/array.h"
@@ -117,10 +117,16 @@ class ReferencedModuleDecls {
                 continue;
             }
             auto* ary = ptr->UnwrapPtr()->template As<core::type::Array>();
-            if (!ary) {
+            auto* buf = ptr->UnwrapPtr()->template As<core::type::Buffer>();
+            if (!ary && !buf) {
                 continue;
             }
-            auto* cnt = ary->Count()->template As<core::ir::type::ValueArrayCount>();
+            const core::ir::type::ValueArrayCount* cnt = nullptr;
+            if (ary) {
+                cnt = ary->Count()->template As<core::ir::type::ValueArrayCount>();
+            } else if (buf) {
+                cnt = buf->Count()->template As<core::ir::type::ValueArrayCount>();
+            }
             if (!cnt || cnt->value->template Is<core::ir::Constant>()) {
                 continue;
             }

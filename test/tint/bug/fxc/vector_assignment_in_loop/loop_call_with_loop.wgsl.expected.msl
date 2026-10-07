@@ -21,9 +21,8 @@ void foo(tint_module_vars_struct tint_module_vars) {
       (*tint_module_vars.v4u)[i] = 1u;
       (*tint_module_vars.v2b)[i] = true;
       {
-        i = as_type<int>((as_type<uint>(i) + as_type<uint>(1)));
+        i = as_type<int>((as_type<uint>(i) + 1u));
       }
-      continue;
     }
   }
 }
@@ -42,11 +41,10 @@ kernel void v() {
       } else {
         break;
       }
-      foo(tint_module_vars);
+      (foo(tint_module_vars));
       {
-        i = as_type<int>((as_type<uint>(i) + as_type<uint>(1)));
+        i = as_type<int>((as_type<uint>(i) + 1u));
       }
-      continue;
     }
   }
 }

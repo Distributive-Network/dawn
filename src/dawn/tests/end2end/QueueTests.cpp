@@ -25,13 +25,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <array>
 #include <vector>
 
-#include "dawn/common/Math.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/TestUtils.h"
-#include "dawn/utils/TextureUtils.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/TestUtils.h"
+#include "src/dawn/utils/TextureUtils.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/span.h"
 
 namespace dawn {
 namespace {
@@ -135,7 +137,7 @@ TEST_P(QueueWriteBufferTests, ManyWriteBuffer) {
     // this test to take forever. Skip it when VVLs are enabled.
     DAWN_SUPPRESS_TEST_IF(IsVulkan() && IsBackendValidationEnabled());
 
-    constexpr uint64_t kSize = 4000 * 1000;
+    constexpr uint64_t kSize = 4000ULL * 1000;
     constexpr uint32_t kElements = 250 * 250;
     wgpu::BufferDescriptor descriptor;
     descriptor.size = kSize;
@@ -153,7 +155,7 @@ TEST_P(QueueWriteBufferTests, ManyWriteBuffer) {
 
 // Test using WriteBuffer for lots of data
 TEST_P(QueueWriteBufferTests, LargeWriteBuffer) {
-    constexpr uint64_t kSize = 4000 * 1000;
+    constexpr uint64_t kSize = 4000ULL * 1000;
     constexpr uint32_t kElements = 1000 * 1000;
     wgpu::BufferDescriptor descriptor;
     descriptor.size = kSize;
@@ -172,8 +174,8 @@ TEST_P(QueueWriteBufferTests, LargeWriteBuffer) {
 
 // Test using WriteBuffer for super large data block
 TEST_P(QueueWriteBufferTests, SuperLargeWriteBuffer) {
-    constexpr uint64_t kSize = 12000 * 1000;
-    constexpr uint64_t kElements = 3000 * 1000;
+    constexpr uint64_t kSize = 12000ULL * 1000;
+    constexpr uint64_t kElements = 3000ULL * 1000;
     wgpu::BufferDescriptor descriptor;
     descriptor.size = kSize;
     descriptor.usage = wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
@@ -185,6 +187,26 @@ TEST_P(QueueWriteBufferTests, SuperLargeWriteBuffer) {
     }
 
     queue.WriteBuffer(buffer, 0, expectedData.data(), kElements * sizeof(uint32_t));
+
+    EXPECT_BUFFER_U32_RANGE_EQ(expectedData.data(), buffer, 0, kElements);
+}
+
+// Test using WriteBuffer for large data where size > 4MiB and is not a multiple of 8.
+// Regression test for issue where DynamicUploader's large allocation path did not trim mappedData.
+TEST_P(QueueWriteBufferTests, LargeWriteBufferNonMultipleOf8) {
+    constexpr uint64_t kSize = 4ULL * 1024 * 1024 + 4;
+    constexpr uint64_t kElements = kSize / sizeof(uint32_t);
+    wgpu::BufferDescriptor descriptor;
+    descriptor.size = kSize;
+    descriptor.usage = wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+    wgpu::Buffer buffer = device.CreateBuffer(&descriptor);
+
+    std::vector<uint32_t> expectedData(kElements);
+    for (uint32_t i = 0; i < kElements; ++i) {
+        expectedData[i] = i;
+    }
+
+    queue.WriteBuffer(buffer, 0, expectedData.data(), kSize);
 
     EXPECT_BUFFER_U32_RANGE_EQ(expectedData.data(), buffer, 0, kElements);
 }
@@ -227,17 +249,18 @@ TEST_P(QueueWriteBufferTests, WriteUniformBufferWithVariousOffsetAndSizeAlignmen
     wgpu::Buffer buffer = device.CreateBuffer(&descriptor);
 
     constexpr size_t kElementCount = 16;
-    uint32_t data[kElementCount] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    std::array<uint32_t, kElementCount> data = {1, 2,  3,  4,  5,  6,  7,  8,
+                                                9, 10, 11, 12, 13, 14, 15, 16};
     constexpr size_t kElementBytes = sizeof(data[0]);
-    queue.WriteBuffer(buffer, 0, data, sizeof(data));
-    EXPECT_BUFFER_U32_RANGE_EQ(data, buffer, 0, kElementCount);
+    queue.WriteBuffer(buffer, 0, data.data(), sizeof(data));
+    EXPECT_BUFFER_U32_RANGE_EQ(data.data(), buffer, 0, kElementCount);
 
     // Alignments: offset -- 4, size -- 4
     size_t offset = 1;
     data[offset] = 100;
     size_t size = kElementBytes;
     queue.WriteBuffer(buffer, offset * kElementBytes, &data[offset], size);
-    EXPECT_BUFFER_U32_RANGE_EQ(data, buffer, 0, kElementCount);
+    EXPECT_BUFFER_U32_RANGE_EQ(data.data(), buffer, 0, kElementCount);
 
     // Alignments: offset -- 16, size -- 16
     offset = 4;
@@ -247,7 +270,7 @@ TEST_P(QueueWriteBufferTests, WriteUniformBufferWithVariousOffsetAndSizeAlignmen
     data[offset + 3] = 104;
     size = 4 * kElementBytes;
     queue.WriteBuffer(buffer, offset * kElementBytes, &data[offset], size);
-    EXPECT_BUFFER_U32_RANGE_EQ(data, buffer, 0, kElementCount);
+    EXPECT_BUFFER_U32_RANGE_EQ(data.data(), buffer, 0, kElementCount);
 
     // Alignments: offset -- 4, size -- 16
     offset = 10;
@@ -256,14 +279,14 @@ TEST_P(QueueWriteBufferTests, WriteUniformBufferWithVariousOffsetAndSizeAlignmen
     data[offset + 2] = 107;
     data[offset + 3] = 108;
     queue.WriteBuffer(buffer, offset * kElementBytes, &data[offset], size);
-    EXPECT_BUFFER_U32_RANGE_EQ(data, buffer, 0, kElementCount);
+    EXPECT_BUFFER_U32_RANGE_EQ(data.data(), buffer, 0, kElementCount);
 
     // Alignments: offset -- 16, size -- 4
     offset = 12;
     data[offset] = 109;
     size = kElementBytes;
     queue.WriteBuffer(buffer, offset * kElementBytes, &data[offset], size);
-    EXPECT_BUFFER_U32_RANGE_EQ(data, buffer, 0, kElementCount);
+    EXPECT_BUFFER_U32_RANGE_EQ(data.data(), buffer, 0, kElementCount);
 }
 
 DAWN_INSTANTIATE_TEST(QueueWriteBufferTests,
@@ -286,7 +309,7 @@ DAWN_TEST_PARAM_STRUCT(WriteTextureFormatParams, TextureFormat);
 struct TextureSpec {
     wgpu::Origin3D copyOrigin;
     wgpu::Extent3D textureSize;
-    uint32_t level;
+    uint32_t level = 0;
 };
 
 struct DataSpec {
@@ -296,11 +319,11 @@ struct DataSpec {
     uint32_t rowsPerImage;
 };
 
-void PackTextureData(const uint8_t* srcData,
+void PackTextureData(dawn::Span<const uint8_t> srcData,
                      uint32_t width,
                      uint32_t height,
                      uint32_t srcBytesPerRow,
-                     uint8_t* dstData,
+                     dawn::Span<uint8_t> dstData,
                      uint32_t dstBytesPerRow,
                      uint32_t bytesPerTexel) {
     for (uint64_t y = 0; y < height; ++y) {
@@ -315,8 +338,8 @@ void PackTextureData(const uint8_t* srcData,
     }
 }
 
-void FillData(uint8_t* data, size_t count) {
-    for (size_t i = 0; i < count; ++i) {
+void FillData(Span<uint8_t> data) {
+    for (size_t i = 0; i < data.size(); ++i) {
         data[i] = static_cast<uint8_t>(i % 253);
     }
 }
@@ -349,11 +372,11 @@ class QueueWriteTextureTests : public DawnTestWithParams<WriteTextureFormatParam
                     wgpu::TextureViewDimension::Undefined) {
         // Create data of size `size` and populate it
         std::vector<uint8_t> data(dataSpec.size);
-        FillData(data.data(), data.size());
+        FillData(data);
 
         // Create a texture that is `width` x `height` with (`level` + 1) mip levels.
         wgpu::TextureDescriptor descriptor = {};
-        wgpu::TextureBindingViewDimensionDescriptor textureBindingViewDimensionDesc;
+        wgpu::TextureBindingViewDimension textureBindingViewDimensionDesc;
         if (IsCompatibilityMode() &&
             bindingViewDimension != wgpu::TextureViewDimension::Undefined) {
             textureBindingViewDimensionDesc.textureBindingViewDimension = bindingViewDimension;
@@ -398,9 +421,11 @@ class QueueWriteTextureTests : public DawnTestWithParams<WriteTextureFormatParam
             // Pack the data in the specified copy region to have the same
             // format as the expected texture data.
             std::vector<uint8_t> expected(byteSizeLastLayer, 0);
-            PackTextureData(data.data() + dataOffset, copySize.width, copySize.height,
-                            dataSpec.bytesPerRow, expected.data(), copySize.width * bytesPerTexel,
-                            bytesPerTexel);
+            if (copySize.width > 0 && copySize.height > 0) {
+                PackTextureData(dawn::Span<const uint8_t>(data).subspan(dataOffset), copySize.width,
+                                copySize.height, dataSpec.bytesPerRow, expected,
+                                copySize.width * bytesPerTexel, bytesPerTexel);
+            }
 
             EXPECT_TEXTURE_EQ(expected.data(), texture,
                               {textureSpec.copyOrigin.x, textureSpec.copyOrigin.y, slice},
@@ -541,6 +566,9 @@ TEST_P(QueueWriteTextureTests, VaryingArrayWriteSize) {
 
 // Test writing to varying mips
 TEST_P(QueueWriteTextureTests, TextureWriteToMip) {
+    // TODO(crbug.com/540087398): NPOT mipmapped depth/stencil textures disallowed due to driver bug
+    DAWN_SUPPRESS_TEST_IF(IsImgTec());
+
     constexpr uint32_t kWidth = 259;
     constexpr uint32_t kHeight = 127;
 
@@ -634,6 +662,8 @@ TEST_P(QueueWriteTextureTests, VaryingBytesPerRow) {
 // Test with bytesPerRow greater than needed for cube textures.
 // Made for testing compat behavior.
 TEST_P(QueueWriteTextureTests, VaryingBytesPerRowCube) {
+    // TODO(crbug.com/40238674): Fails on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsImgTec());
     auto format = GetParam().mTextureFormat;
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
@@ -643,6 +673,8 @@ TEST_P(QueueWriteTextureTests, VaryingBytesPerRowCube) {
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsIntel() && IsAndroid());
     // TODO(crbug.com/dawn/42241333): diagnose stencil8 failure on Angle Swiftshader
     DAWN_SUPPRESS_TEST_IF(format == wgpu::TextureFormat::Stencil8 && IsANGLESwiftShader());
+    // Fails on Xclipse with ANGLE Vulkan.
+    DAWN_SUPPRESS_TEST_IF(IsSamsung() && IsOpenGLES() && IsANGLE());
 
     // TODO(383765096): D3D11 doesn't allow calling Gather() on R8_UINT
     DAWN_SUPPRESS_TEST_IF(format == wgpu::TextureFormat::Stencil8 && IsD3D11() &&
@@ -705,6 +737,9 @@ TEST_P(QueueWriteTextureTests, VaryingArrayBytesPerRow) {
 
     // TODO(383779503): reading stencil texture is too slow on D3D11.
     DAWN_SUPPRESS_TEST_IF(IsD3D11() && GetParam().mTextureFormat == wgpu::TextureFormat::Stencil8);
+
+    // TODO(crbug.com/548007733): Flakily failing on Xclipse with GLES + ANGLE.
+    DAWN_SUPPRESS_TEST_IF(IsSamsung() && IsOpenGLES() && IsANGLE());
 
     constexpr uint32_t kWidth = 257;
     constexpr uint32_t kHeight = 129;
@@ -816,7 +851,7 @@ class QueueWriteTextureSimpleTests : public DawnTest {
         constexpr wgpu::TextureFormat kFormat = wgpu::TextureFormat::RGBA8Unorm;
         constexpr uint32_t kPixelSize = 4;
 
-        std::vector<uint32_t> data(width * height);
+        std::vector<uint32_t> data(static_cast<size_t>(width) * height);
         for (size_t i = 0; i < data.size(); i++) {
             data[i] = 0xFFFFFFFF;
         }
@@ -833,8 +868,8 @@ class QueueWriteTextureSimpleTests : public DawnTest {
             utils::CreateTexelCopyBufferLayout(0, width * kPixelSize);
         wgpu::Extent3D copyExtent = {width, height, 1};
         device.GetQueue().WriteTexture(&texelCopyTextureInfo, data.data(),
-                                       width * height * kPixelSize, &texelCopyBufferLayout,
-                                       &copyExtent);
+                                       static_cast<size_t>(width) * height * kPixelSize,
+                                       &texelCopyBufferLayout, &copyExtent);
 
         EXPECT_TEXTURE_EQ(data.data(), texture, {0, 0}, {width, height});
     }
@@ -876,7 +911,7 @@ TEST_P(QueueWriteTextureSimpleTests, WriteStencilAspectWithSourceOffsetUnaligned
     wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
 
     constexpr wgpu::Extent3D kWriteSize = {1, 1, 1};
-    constexpr uint8_t kData[] = {1, 2};
+    constexpr std::array<uint8_t, 2> kData = {1, 2};
     constexpr uint32_t kBytesPerRowForWriteTexture = 1u;
 
     std::vector<uint8_t> expectedData(8, 0);
@@ -889,8 +924,8 @@ TEST_P(QueueWriteTextureSimpleTests, WriteStencilAspectWithSourceOffsetUnaligned
             utils::CreateTexelCopyBufferLayout(kDataOffset1, kBytesPerRowForWriteTexture);
         wgpu::TexelCopyTextureInfo texelCopyTextureInfo = utils::CreateTexelCopyTextureInfo(
             dstTexture1, 0, {0, 0, 0}, wgpu::TextureAspect::StencilOnly);
-        queue.WriteTexture(&texelCopyTextureInfo, kData, sizeof(kData), &texelCopyBufferLayout,
-                           &kWriteSize);
+        queue.WriteTexture(&texelCopyTextureInfo, kData.data(), kData.size(),
+                           &texelCopyBufferLayout, &kWriteSize);
 
         constexpr uint32_t kOutputBufferOffset1 = 0u;
         wgpu::TexelCopyBufferInfo texelCopyBufferInfo = utils::CreateTexelCopyBufferInfo(
@@ -910,8 +945,8 @@ TEST_P(QueueWriteTextureSimpleTests, WriteStencilAspectWithSourceOffsetUnaligned
             utils::CreateTexelCopyBufferLayout(kDataOffset2, kBytesPerRowForWriteTexture);
         wgpu::TexelCopyTextureInfo texelCopyTextureInfo = utils::CreateTexelCopyTextureInfo(
             dstTexture2, 0, {0, 0, 0}, wgpu::TextureAspect::StencilOnly);
-        queue.WriteTexture(&texelCopyTextureInfo, kData, sizeof(kData), &texelCopyBufferLayout,
-                           &kWriteSize);
+        queue.WriteTexture(&texelCopyTextureInfo, kData.data(), kData.size(),
+                           &texelCopyBufferLayout, &kWriteSize);
 
         constexpr uint32_t kOutputBufferOffset2 = 4u;
         wgpu::TexelCopyBufferInfo texelCopyBufferInfo = utils::CreateTexelCopyBufferInfo(

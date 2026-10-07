@@ -28,16 +28,12 @@
 #include "src/tint/lang/glsl/writer/raise/builtin_polyfill.h"
 
 #include <utility>
+#include <vector>
 
 #include "src/tint/lang/core/fluent_types.h"  // IWYU pragma: export
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
-#include "src/tint/lang/core/type/depth_multisampled_texture.h"
-#include "src/tint/lang/core/type/depth_texture.h"
-#include "src/tint/lang/core/type/multisampled_texture.h"
-#include "src/tint/lang/core/type/sampled_texture.h"
-#include "src/tint/lang/core/type/storage_texture.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/glsl/builtin_fn.h"
 #include "src/tint/lang/glsl/ir/builtin_call.h"
 #include "src/tint/lang/glsl/ir/member_builtin_call.h"
@@ -66,30 +62,70 @@ struct State {
 
     /// Process the module.
     void Process() {
-        Vector<core::ir::CoreBuiltinCall*, 4> call_worklist;
+        std::vector<std::function<void()>> call_worklist;
+        call_worklist.reserve(128);
+
         for (auto* inst : ir.Instructions()) {
             if (auto* call = inst->As<core::ir::CoreBuiltinCall>()) {
                 switch (call->Func()) {
                     case core::BuiltinFn::kAbs:
+                        call_worklist.push_back([this, call] { Abs(call); });
+                        break;
                     case core::BuiltinFn::kAll:
+                        call_worklist.push_back([this, call] { All(call); });
+                        break;
                     case core::BuiltinFn::kAny:
+                        call_worklist.push_back([this, call] { Any(call); });
+                        break;
                     case core::BuiltinFn::kArrayLength:
+                        call_worklist.push_back([this, call] { ArrayLength(call); });
+                        break;
                     case core::BuiltinFn::kAtomicCompareExchangeWeak:
+                        call_worklist.push_back([this, call] { AtomicCompareExchangeWeak(call); });
+                        break;
                     case core::BuiltinFn::kAtomicSub:
+                        call_worklist.push_back([this, call] { AtomicSub(call); });
+                        break;
                     case core::BuiltinFn::kAtomicLoad:
+                        call_worklist.push_back([this, call] { AtomicLoad(call); });
+                        break;
                     case core::BuiltinFn::kCountOneBits:
+                        call_worklist.push_back([this, call] { CountOneBits(call); });
+                        break;
                     case core::BuiltinFn::kDot:
+                        call_worklist.push_back([this, call] { Dot(call); });
+                        break;
                     case core::BuiltinFn::kExtractBits:
+                        call_worklist.push_back([this, call] { ExtractBits(call); });
+                        break;
                     case core::BuiltinFn::kFma:
+                        call_worklist.push_back([this, call] { FMA(call); });
+                        break;
                     case core::BuiltinFn::kFrexp:
+                        call_worklist.push_back([this, call] { Frexp(call); });
+                        break;
                     case core::BuiltinFn::kInsertBits:
+                        call_worklist.push_back([this, call] { InsertBits(call); });
+                        break;
                     case core::BuiltinFn::kModf:
+                        call_worklist.push_back([this, call] { Modf(call); });
+                        break;
                     case core::BuiltinFn::kQuantizeToF16:
+                        call_worklist.push_back([this, call] { QuantizeToF16(call); });
+                        break;
                     case core::BuiltinFn::kSelect:
+                        call_worklist.push_back([this, call] { Select(call); });
+                        break;
                     case core::BuiltinFn::kStorageBarrier:
                     case core::BuiltinFn::kTextureBarrier:
                     case core::BuiltinFn::kWorkgroupBarrier:
-                        call_worklist.Push(call);
+                        call_worklist.push_back([this, call] { Barrier(call); });
+                        break;
+                    case core::BuiltinFn::kAddSat:
+                        call_worklist.push_back([this, call] { AddSat(call); });
+                        break;
+                    case core::BuiltinFn::kMulSat:
+                        call_worklist.push_back([this, call] { MulSat(call); });
                         break;
                     default:
                         break;
@@ -99,64 +135,8 @@ struct State {
         }
 
         // Replace the builtin calls that we found
-        for (auto* call : call_worklist) {
-            switch (call->Func()) {
-                case core::BuiltinFn::kAbs:
-                    Abs(call);
-                    break;
-                case core::BuiltinFn::kAll:
-                    All(call);
-                    break;
-                case core::BuiltinFn::kAny:
-                    Any(call);
-                    break;
-                case core::BuiltinFn::kArrayLength:
-                    ArrayLength(call);
-                    break;
-                case core::BuiltinFn::kAtomicCompareExchangeWeak:
-                    AtomicCompareExchangeWeak(call);
-                    break;
-                case core::BuiltinFn::kAtomicSub:
-                    AtomicSub(call);
-                    break;
-                case core::BuiltinFn::kAtomicLoad:
-                    AtomicLoad(call);
-                    break;
-                case core::BuiltinFn::kCountOneBits:
-                    CountOneBits(call);
-                    break;
-                case core::BuiltinFn::kDot:
-                    Dot(call);
-                    break;
-                case core::BuiltinFn::kExtractBits:
-                    ExtractBits(call);
-                    break;
-                case core::BuiltinFn::kFma:
-                    FMA(call);
-                    break;
-                case core::BuiltinFn::kFrexp:
-                    Frexp(call);
-                    break;
-                case core::BuiltinFn::kInsertBits:
-                    InsertBits(call);
-                    break;
-                case core::BuiltinFn::kModf:
-                    Modf(call);
-                    break;
-                case core::BuiltinFn::kQuantizeToF16:
-                    QuantizeToF16(call);
-                    break;
-                case core::BuiltinFn::kSelect:
-                    Select(call);
-                    break;
-                case core::BuiltinFn::kStorageBarrier:
-                case core::BuiltinFn::kTextureBarrier:
-                case core::BuiltinFn::kWorkgroupBarrier:
-                    Barrier(call);
-                    break;
-                default:
-                    TINT_IR_UNREACHABLE(ir);
-            }
+        for (auto& cb : call_worklist) {
+            cb();
         }
     }
 
@@ -209,7 +189,7 @@ struct State {
         b.InsertBefore(call, [&] {
             auto* len = b.MemberCall<glsl::ir::MemberBuiltinCall>(ty.i32(), BuiltinFn::kLength,
                                                                   call->Args()[0]);
-            b.ConvertWithResult(call->DetachResult(), len->Result());
+            b.ConvertReplaceResult(call->DetachResult(), len->Result());
         });
         call->Destroy();
     }
@@ -232,9 +212,9 @@ struct State {
                     auto* v = b.Multiply(lhs, rhs);
 
                     if (ret != nullptr) {
-                        ret = b.Add(ret, v)->Result();
+                        ret = b.Add(ret, v);
                     } else {
-                        ret = v->Result();
+                        ret = v;
                     }
                 }
 
@@ -276,7 +256,7 @@ struct State {
             auto* i32_type = result_type->Element(1);
             auto* result = b.Var(ty.ptr(function, result_type));
             auto* exp = b.Access(ty.ptr(function, i32_type), result, u32(1));
-            auto args = Vector<core::ir::Value*, 2>{call->Args()[0], exp->Result()};
+            auto args = Vector<core::ir::Value*, 2>{call->Args()[0], exp};
             auto* res =
                 b.Call<glsl::ir::BuiltinCall>(float_type, glsl::BuiltinFn::kFrexp, std::move(args));
             b.Store(b.Access(ty.ptr(function, float_type), result, u32(0)), res);
@@ -295,7 +275,7 @@ struct State {
             auto* element_type = result_type->Element(0);
             auto* result = b.Var(ty.ptr(function, result_type));
             auto* whole = b.Access(ty.ptr(function, element_type), result, u32(1));
-            auto args = Vector<core::ir::Value*, 2>{call->Args()[0], whole->Result()};
+            auto args = Vector<core::ir::Value*, 2>{call->Args()[0], whole};
             auto* res = b.Call<glsl::ir::BuiltinCall>(element_type, glsl::BuiltinFn::kModf,
                                                       std::move(args));
             b.Store(b.Access(ty.ptr(function, element_type), result, u32(0)), res);
@@ -337,7 +317,7 @@ struct State {
 
         b.InsertBefore(call, [&] {
             auto* mul = b.Multiply(args[0], args[1]);
-            b.AddWithResult(call->DetachResult(), mul, args[2]);
+            b.AddReplaceResult(call->DetachResult(), mul, args[2]);
         });
         call->Destroy();
     }
@@ -373,12 +353,11 @@ struct State {
 
             auto* swap = b.Call<glsl::ir::BuiltinCall>(
                 type, glsl::BuiltinFn::kAtomicCompSwap,
-                Vector<core::ir::Value*, 3>{dest, bitcast_cmp_value->Result(),
-                                            bitcast_value->Result()});
+                Vector<core::ir::Value*, 3>{dest, bitcast_cmp_value, bitcast_value});
 
             auto* exchanged = b.Equal(swap, compare_value);
 
-            auto* result = b.Construct(result_type, swap, exchanged)->Result();
+            auto* result = b.Construct(result_type, swap, exchanged);
             call->Result()->ReplaceAllUsesWith(result);
         });
         call->Destroy();
@@ -389,8 +368,8 @@ struct State {
             auto args = call->Args();
 
             if (args[1]->Type()->Is<core::type::I32>()) {
-                b.CallWithResult(call->DetachResult(), core::BuiltinFn::kAtomicAdd, args[0],
-                                 b.Negation(args[1]));
+                b.CallReplaceResult(call->DetachResult(), core::BuiltinFn::kAtomicAdd, args[0],
+                                    b.Negation(args[1]));
             } else {
                 // Negating a u32 isn't possible in the IR, so pass a fake GLSL function and
                 // handle in the printer.
@@ -407,7 +386,7 @@ struct State {
         // value
         b.InsertBefore(call, [&] {
             auto args = call->Args();
-            b.CallWithResult(
+            b.CallReplaceResult(
                 call->DetachResult(), core::BuiltinFn::kAtomicOr, args[0],
                 b.Zero(args[0]->Type()->UnwrapPtr()->As<core::type::Atomic>()->Type()));
         });
@@ -445,7 +424,7 @@ struct State {
         b.InsertBefore(call, [&] {
             core::ir::Value* cond = args[2];
             if (val_ty->Is<core::type::Vector>() && !bool_ty->Is<core::type::Vector>()) {
-                cond = b.Construct(ty.MatchWidth(ty.bool_(), val_ty), cond)->Result();
+                cond = b.Construct(ty.MatchWidth(ty.bool_(), val_ty), cond);
             }
 
             b.CallWithResult<glsl::ir::BuiltinCall>(call->DetachResult(), glsl::BuiltinFn::kMix,
@@ -467,8 +446,8 @@ struct State {
                 auto* v2 = ty.vec2(inner_ty);
 
                 auto pack_unpack = [&](core::ir::Value* item) {
-                    auto* r = b.Call(ty.u32(), core::BuiltinFn::kPack2X16Float, item)->Result();
-                    return b.Call(v2, core::BuiltinFn::kUnpack2X16Float, r)->Result();
+                    auto* r = b.Call(ty.u32(), core::BuiltinFn::kPack2X16Float, item);
+                    return b.Call(v2, core::BuiltinFn::kUnpack2X16Float, r);
                 };
 
                 if (auto* vec = type->As<core::type::Vector>()) {
@@ -478,31 +457,31 @@ struct State {
                             break;
                         }
                         case 3: {
-                            core::ir::Value* lhs = b.Swizzle(v2, val, {0, 1})->Result();
+                            core::ir::Value* lhs = b.Swizzle(v2, val, {0, 1});
                             lhs = pack_unpack(lhs);
 
-                            core::ir::Value* rhs = b.Swizzle(v2, val, {2, 2})->Result();
+                            core::ir::Value* rhs = b.Swizzle(v2, val, {2, 2});
                             rhs = pack_unpack(rhs);
-                            rhs = b.Swizzle(inner_ty, rhs, {0})->Result();
+                            rhs = b.Swizzle(inner_ty, rhs, {0});
 
-                            ret = b.Construct(type, lhs, rhs)->Result();
+                            ret = b.Construct(type, lhs, rhs);
                             break;
                         }
                         default: {
-                            core::ir::Value* lhs = b.Swizzle(v2, val, {0, 1})->Result();
+                            core::ir::Value* lhs = b.Swizzle(v2, val, {0, 1});
                             lhs = pack_unpack(lhs);
 
-                            core::ir::Value* rhs = b.Swizzle(v2, val, {2, 3})->Result();
+                            core::ir::Value* rhs = b.Swizzle(v2, val, {2, 3});
                             rhs = pack_unpack(rhs);
 
-                            ret = b.Construct(type, lhs, rhs)->Result();
+                            ret = b.Construct(type, lhs, rhs);
                             break;
                         }
                     }
                 } else {
-                    ret = b.Construct(v2, val)->Result();
+                    ret = b.Construct(v2, val);
                     ret = pack_unpack(ret);
-                    ret = b.Swizzle(type, ret, {0})->Result();
+                    ret = b.Swizzle(type, ret, {0});
                 }
                 b.Return(f, ret);
             });
@@ -520,14 +499,46 @@ struct State {
         });
         call->Destroy();
     }
+
+    void AddSat(core::ir::BuiltinCall* call) {
+        auto* type = call->Result()->Type();
+        b.InsertBefore(call, [&] {
+            auto* var = b.Var(ty.ptr(function, type));
+            auto* glsl_call = b.Call<glsl::ir::BuiltinCall>(type, glsl::BuiltinFn::kUaddCarry,
+                                                            call->Args()[0], call->Args()[1], var);
+            auto* carry = b.Load(var);
+            auto* eq = b.Equal(carry, b.Zero(type));
+            core::ir::Value* sat = (type->Is<core::type::Vector>() ? b.Splat(type, u32(0xffffffff))
+                                                                   : b.Constant(u32(0xffffffff)));
+            b.CallWithResult<glsl::ir::BuiltinCall>(call->DetachResult(), glsl::BuiltinFn::kMix,
+                                                    sat, glsl_call, eq);
+        });
+        call->Destroy();
+    }
+
+    void MulSat(core::ir::BuiltinCall* call) {
+        auto* type = call->Result()->Type();
+        b.InsertBefore(call, [&] {
+            auto* msb = b.Var(ty.ptr(function, type));
+            auto* lsb = b.Var(ty.ptr(function, type));
+            b.Call<glsl::ir::BuiltinCall>(ty.void_(), glsl::BuiltinFn::kUmulExtended,
+                                          call->Args()[0], call->Args()[1], msb, lsb);
+            auto* upper = b.Load(msb);
+            auto* eq = b.Equal(upper, b.Zero(type));
+            core::ir::Value* sat = (type->Is<core::type::Vector>() ? b.Splat(type, u32(0xffffffff))
+                                                                   : b.Constant(u32(0xffffffff)));
+            auto* lower = b.Load(lsb);
+            b.CallWithResult<glsl::ir::BuiltinCall>(call->DetachResult(), glsl::BuiltinFn::kMix,
+                                                    sat, lower, eq);
+        });
+        call->Destroy();
+    }
 };
 
 }  // namespace
 
 Result<SuccessType> BuiltinPolyfill(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(ValidateAndDumpIfNeeded(
-        ir, "glsl.BuiltinPolyfill",
-        core::ir::Capabilities{core::ir::Capability::kAllowDuplicateBindings}));
+    AssertValid(ir, "before glsl.BuiltinPolyfill");
 
     State{ir}.Process();
 

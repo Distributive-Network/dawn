@@ -25,10 +25,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/tests/unittests/wire/WireTest.h"
-
-#include "dawn/utils/WGPUHelpers.h"
 #include "dawn/wire/WireClient.h"
+#include "src/dawn/tests/unittests/wire/WireTest.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/gtest.h"
 
 namespace dawn::wire {
 namespace {
@@ -90,11 +90,7 @@ class WireConfusionDeathTest : public WireOne,
             WireTwo::GetWireClient()->Disconnect();
         }
         if (expectDeath) {
-#if defined(DAWN_ENABLE_ASSERTS)
-            EXPECT_DEATH(lambda(), "forClient == mClient");
-#else
-            EXPECT_DEATH(lambda(), "");
-#endif
+            DAWN_EXPECT_DEATH_IF_SUPPORTED(lambda(), "forClient == mClient");
         } else {
             lambda();
         }

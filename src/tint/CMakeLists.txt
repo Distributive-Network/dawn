@@ -74,11 +74,12 @@ function(tint_core_compile_options TARGET)
   target_compile_definitions(${TARGET} PUBLIC -DTINT_BUILD_WGSL_READER=$<BOOL:${TINT_BUILD_WGSL_READER}>)
   target_compile_definitions(${TARGET} PUBLIC -DTINT_BUILD_WGSL_WRITER=$<BOOL:${TINT_BUILD_WGSL_WRITER}>)
   target_compile_definitions(${TARGET} PUBLIC -DTINT_BUILD_NULL_WRITER=$<BOOL:${TINT_BUILD_NULL_WRITER}>)
-  target_compile_definitions(${TARGET} PUBLIC -DTINT_BUILD_TINTD=$<BOOL:${TINT_BUILD_TINTD}>)
-  target_compile_definitions(${TARGET} PUBLIC -DTINT_ENABLE_IR_VALIDATION=$<BOOL:${TINT_ENABLE_IR_VALIDATION}>)
+    target_compile_definitions(${TARGET} PUBLIC -DTINT_ENABLE_IR_DUMPING=$<BOOL:${TINT_ENABLE_IR_DUMPING}>)
+  target_compile_definitions(${TARGET} PUBLIC -DTINT_ENABLE_IR_VALIDATION_ASSERTS=$<BOOL:${TINT_ENABLE_IR_VALIDATION_ASSERTS}>)
 
   if(TINT_BUILD_FUZZERS)
     target_compile_options(${TARGET} PRIVATE "-fsanitize=fuzzer")
+    target_compile_definitions(${TARGET} PUBLIC -DTINT_BUILD_FUZZER_VULKAN_SUPPORT=$<BOOL:${TINT_BUILD_FUZZER_VULKAN_SUPPORT}>)
   endif()
 
   common_compile_options(${TARGET})
@@ -92,7 +93,6 @@ function(tint_default_compile_options TARGET)
   set(COMMON_GNU_OPTIONS
     -Wall
     -Wextra
-    -Wno-documentation-unknown-command
     -Wno-padded
     -Wno-switch-enum
     -Wno-unknown-pragmas
@@ -105,6 +105,8 @@ function(tint_default_compile_options TARGET)
     -Wno-c++98-compat
     -Wno-c++98-compat-pedantic
     -Wno-deprecated-copy-with-dtor
+    -Wno-documentation
+    -Wno-documentation-unknown-command
     -Wno-format-pedantic
     -Wno-poison-system-directories
     -Wno-return-std-move-in-c++11
@@ -112,10 +114,12 @@ function(tint_default_compile_options TARGET)
     -Wno-unknown-warning-option
     -Wno-used-but-marked-unused
     -Weverything
-    -Wunsafe-buffer-usage
-    -Wno-unsafe-buffer-usage-in-libc-call
+    -Wno-unsafe-buffer-usage
     -Wno-covered-switch-default
     -Wno-c2y-extensions
+    -Wno-lifetime-safety-intra-tu-suggestions
+    -Wno-lifetime-safety-cross-tu-suggestions
+    -Wno-lifetime-safety-invalidation
   )
 
   if(COMPILER_IS_GNU)
@@ -147,11 +151,12 @@ function(tint_default_compile_options TARGET)
       /wd4018 # '>=': signed/unsigned mismatch (Comes from protobuf library)
       /wd4068 # unknown pragma
       /wd4127 # conditional expression is constant
+      /wd4201 # nonstandard extension used: nameless struct/union (Comes from protobuf library)
       /wd4244 # 'conversion' conversion from 'type1' to 'type2', possible loss of data
       /wd4267 # 'var' : conversion from 'size_t' to 'type', possible loss of data
       /wd4324 # 'struct_name' : structure was padded due to __declspec(align())
-      /wd4459 # declaration of 'identifier' hides global declaration
       /wd4458 # declaration of 'identifier' hides class member
+      /wd4459 # declaration of 'identifier' hides global declaration
       /wd4514 # 'function' : unreferenced inline function has been removed
       /wd4571 # catch(...) semantics changed since Visual C++ 7.1; structured exceptions (SEH) are no longer caught
       /wd4625 # 'derived class' : copy constructor was implicitly defined as deleted because a base class copy constructor is inaccessible or deleted
@@ -415,7 +420,9 @@ function(tint_add_target TARGET KIND)
   elseif(${KIND} STREQUAL cmd)
     add_executable(${TARGET})
     tint_default_compile_options(${TARGET})
-    install(TARGETS "${TARGET}")
+    if (TINT_ENABLE_INSTALL)
+      install(TARGETS "${TARGET}")
+    endif()
   elseif(${KIND} STREQUAL test_cmd)
     add_executable(${TARGET})
     tint_test_cmd_compile_options(${TARGET})
@@ -526,15 +533,11 @@ function(tint_target_add_external_dependencies TARGET KIND)
     elseif(${DEPENDENCY} STREQUAL "dl")
       target_link_libraries(${TARGET} PRIVATE ${CMAKE_DL_LIBS})
     elseif(${DEPENDENCY} STREQUAL "dxc-include")
-      target_include_directories(${TARGET} PRIVATE "${DAWN_THIRD_PARTY_DIR}/dxc/include")
+      target_include_directories(${TARGET} PRIVATE "${DAWN_THIRD_PARTY_DIR}/directx-shader-compiler/src/include")
     elseif(${DEPENDENCY} STREQUAL "dxcompiler-for-fuzzer")
       if(TINT_BUILD_FUZZERS AND DAWN_USE_BUILT_DXC) # TODO: and target arch is not x86
         target_link_libraries(${TARGET} PRIVATE dxcompiler)
       endif()
-    elseif(${DEPENDENCY} STREQUAL "jsoncpp")
-      target_link_libraries(${TARGET} PRIVATE jsoncpp_static)
-    elseif(${DEPENDENCY} STREQUAL "langsvr")
-      target_link_libraries(${TARGET} PRIVATE langsvr)
     elseif(${DEPENDENCY} STREQUAL "glslang")
       target_link_libraries(${TARGET} PRIVATE glslang)
       if(NOT MSVC)
@@ -557,6 +560,11 @@ function(tint_target_add_external_dependencies TARGET KIND)
       target_link_libraries(${TARGET} PRIVATE gmock)
     elseif(${DEPENDENCY} STREQUAL "libprotobuf-mutator")
       target_link_libraries(${TARGET} PRIVATE libprotobuf-mutator)
+    elseif(${DEPENDENCY} STREQUAL "mesa")
+      if (NOT TINT_BUILD_MESA)
+        message(FATAL_ERROR "unexpected external dependency ${DEPENDENCY} w/o enabling TINT_BUILD_MESA")
+      endif()
+      add_dependencies(${TARGET} mesa)
     elseif(${DEPENDENCY} STREQUAL "metal")
       find_library(CoreGraphicsFramework CoreGraphics REQUIRED)
       find_library(FoundationFramework Foundation REQUIRED)
@@ -583,12 +591,21 @@ function(tint_target_add_external_dependencies TARGET KIND)
     elseif(${DEPENDENCY} STREQUAL "thread")
       find_package(Threads REQUIRED)
       target_link_libraries(${TARGET} PRIVATE Threads::Threads)
+    elseif(${DEPENDENCY} STREQUAL "vulkan-headers")
+      target_link_libraries(${TARGET} PRIVATE Vulkan::Headers)
+    elseif(${DEPENDENCY} STREQUAL "libvulkan")
+      if (NOT TINT_BUILD_FUZZER_VULKAN_SUPPORT)
+        message(FATAL_ERROR "unexpected external dependency ${DEPENDENCY} w/o enabling TINT_BUILD_FUZZER_VULKAN_SUPPORT")
+      endif()
+      target_link_libraries(${TARGET} PRIVATE Vulkan::Loader)
     elseif(${DEPENDENCY} STREQUAL "winsock")
       target_link_libraries(${TARGET} PRIVATE ws2_32)
     elseif(${DEPENDENCY} STREQUAL "src_utils")
       target_link_libraries(${TARGET} PRIVATE dawn_shared_utils)
     elseif(${DEPENDENCY} STREQUAL "src_utils_chromium_test_compat")
       target_link_libraries(${TARGET} PRIVATE dawn_shared_utils_chromium_test_compat)
+    elseif(${DEPENDENCY} STREQUAL "src_utils_crash_handler")
+      target_link_libraries(${TARGET} PRIVATE dawn_crash_handler)
     else()
       message(FATAL_ERROR "unhandled external dependency ${DEPENDENCY}")
     endif()
@@ -689,21 +706,6 @@ if (DAWN_BUILD_PROTOBUF)
     target_link_libraries(${PROTO_TARGET} PUBLIC libprotobuf)
   endforeach()
 endif()
-
-################################################################################
-# tintd (VSCode WGSL language server)
-################################################################################
-if(TINT_BUILD_TINTD)
-  # Copy all the files out of cmd/tintd/vscode to {build}/vscode
-  set(VSCODE_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmd/tintd/vscode")
-  set(VSCODE_DST_DIR "${DAWN_BUILD_GEN_DIR}/vscode")
-
-  file(GLOB VSCODE_ASSETS RELATIVE "${VSCODE_SRC_DIR}" "${VSCODE_SRC_DIR}/*")
-  foreach(FILE ${VSCODE_ASSETS})
-    configure_file("${VSCODE_SRC_DIR}/${FILE}" "${VSCODE_DST_DIR}/${FILE}" COPYONLY)
-  endforeach()
-  set_target_properties(tint_cmd_tintd_cmd PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${VSCODE_DST_DIR}")
-endif(TINT_BUILD_TINTD)
 
 
 ################################################################################

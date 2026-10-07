@@ -25,13 +25,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/d3d/PhysicalDeviceD3D.h"
+#include "src/dawn/native/d3d/PhysicalDeviceD3D.h"
 
 #include <string>
 #include <utility>
 
-#include "dawn/common/WindowsUtils.h"
-#include "dawn/native/d3d/BackendD3D.h"
+#include "src/dawn/common/WindowsUtils.h"
+#include "src/dawn/native/d3d/BackendD3D.h"
+#include "src/utils/numeric.h"
 
 namespace dawn::native::d3d {
 
@@ -48,8 +49,12 @@ IDXGIAdapter3* PhysicalDevice::GetHardwareAdapter() const {
     return mHardwareAdapter.Get();
 }
 
-Backend* PhysicalDevice::GetBackend() const {
+Backend* PhysicalDevice::GetBackendBase() const {
     return mBackend;
+}
+
+const LUID& PhysicalDevice::GetAdapterLUID() const {
+    return mAdapterLUID;
 }
 
 ResultOrError<PhysicalDeviceSurfaceCapabilities> PhysicalDevice::GetSurfaceCapabilities(
@@ -91,6 +96,7 @@ MaybeError PhysicalDevice::InitializeImpl() {
     mDeviceId = adapterDesc.DeviceId;
     mVendorId = adapterDesc.VendorId;
     mName = WCharToUTF8(adapterDesc.Description);
+    mAdapterLUID = adapterDesc.AdapterLuid;
 
     if (adapterDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
         mAdapterType = wgpu::AdapterType::CPU;
@@ -103,7 +109,7 @@ MaybeError PhysicalDevice::InitializeImpl() {
     LARGE_INTEGER umdVersion;
     if (GetHardwareAdapter()->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umdVersion) !=
         DXGI_ERROR_UNSUPPORTED) {
-        uint64_t encodedVersion = umdVersion.QuadPart;
+        uint64_t encodedVersion = sign_cast(umdVersion.QuadPart);
         uint16_t mask = 0xFFFF;
         mDriverVersion = {static_cast<uint16_t>((encodedVersion >> 48) & mask),
                           static_cast<uint16_t>((encodedVersion >> 32) & mask),

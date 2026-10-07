@@ -25,10 +25,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/DisplayEGL.h"
+#include "src/dawn/native/opengl/DisplayEGL.h"
 
 #include <string>
 #include <utility>
+
+#include "absl/container/flat_hash_set.h"
+#include "absl/strings/str_split.h"
 
 namespace dawn::native::opengl {
 
@@ -82,12 +85,13 @@ MaybeError DisplayEGL::InitializeWithDynamicLoading(const char* libName,
                                                     std::span<const std::string> searchPaths) {
     std::string err;
     if (!mLib.Valid() && !mLib.Open(libName, searchPaths, &err)) {
-        return DAWN_VALIDATION_ERROR("Failed to load %s: \"%s\".", libName, err.c_str());
+        return DAWN_FORMAT_UNRECOVERABLE_ERROR("Failed to load %s: \"%s\".", libName, err.c_str());
     }
 
     EGLGetProcProc getProc = reinterpret_cast<EGLGetProcProc>(mLib.GetProc("eglGetProcAddress"));
     if (!getProc) {
-        return DAWN_VALIDATION_ERROR("Couldn't get \"eglGetProcAddress\" from %s.", libName);
+        return DAWN_FORMAT_UNRECOVERABLE_ERROR("Couldn't get \"eglGetProcAddress\" from %s.",
+                                               libName);
     }
 
     return InitializeWithProcAndDisplay(getProc, EGL_NO_DISPLAY);
@@ -99,18 +103,30 @@ MaybeError DisplayEGL::InitializeWithProcAndDisplay(EGLGetProcProc getProc, EGLD
 
     mDisplay = display;
     if (mDisplay == EGL_NO_DISPLAY) {
-        mDisplay = egl.GetDisplay(EGL_DEFAULT_DISPLAY);
+        mDisplay = egl->GetDisplay(EGL_DEFAULT_DISPLAY);
     }
     if (mDisplay == EGL_NO_DISPLAY) {
-        return DAWN_VALIDATION_ERROR("Couldn't create the default EGL display.");
+        return DAWN_UNRECOVERABLE_ERROR("Couldn't create the default EGL display.");
     }
 
     DAWN_TRY(mFunctions.LoadDisplayProcs(mDisplay));
 
     // We require at least EGL 1.4.
     DAWN_INVALID_IF(
-        egl.GetMajorVersion() < 1 || (egl.GetMajorVersion() == 1 && egl.GetMinorVersion() < 4),
-        "EGL version (%u.%u) must be at least 1.4", egl.GetMajorVersion(), egl.GetMinorVersion());
+        egl->GetMajorVersion() < 1 || (egl->GetMajorVersion() == 1 && egl->GetMinorVersion() < 4),
+        "EGL version (%u.%u) must be at least 1.4", egl->GetMajorVersion(), egl->GetMinorVersion());
+
+    // Verify that the EGL display supports the requested client API. While this is not strictly
+    // necessary, it does prevent flaky EGL_BAD_PARAMETER logs which can be red herrings when
+    // debugging test failures.
+    const char* rawClientAPIs = egl->QueryString(mDisplay, EGL_CLIENT_APIS);
+    if (rawClientAPIs != nullptr) {
+        absl::flat_hash_set<std::string_view> clientAPIs = absl::StrSplit(rawClientAPIs, " ");
+        const char* targetAPI = (mApiEnum == EGL_OPENGL_API) ? "OpenGL" : "OpenGL_ES";
+        DAWN_INVALID_IF(!clientAPIs.contains(targetAPI),
+                        "EGL display does not support requested client API '%s' (supported: %s).",
+                        targetAPI, rawClientAPIs);
+    }
 
     return {};
 }
@@ -134,7 +150,7 @@ absl::Span<const wgpu::TextureFormat> DisplayEGL::GetPotentialSurfaceFormats() c
         wgpu::TextureFormat::RGBA8Unorm, wgpu::TextureFormat::RGBA8UnormSrgb,
         wgpu::TextureFormat::RGB10A2Unorm, wgpu::TextureFormat::RGBA16Float};
 
-    if (egl.HasExt(EGLExt::NoConfigContext)) {
+    if (egl->HasExt(EGLExt::NoConfigContext)) {
         return {kFormatsWithNoConfigContext};
     }
     return {kFormatWhenConfigRequired};
@@ -155,7 +171,7 @@ EGLConfig DisplayEGL::ChooseConfig(EGLint surfaceType,
 
     switch (color) {
         case wgpu::TextureFormat::RGBA8UnormSrgb:
-            if (!egl.HasExt(EGLExt::GLColorspace)) {
+            if (!egl->HasExt(EGLExt::GLColorspace)) {
                 return kNoConfig;
             }
             [[fallthrough]];
@@ -174,7 +190,7 @@ EGLConfig DisplayEGL::ChooseConfig(EGLint surfaceType,
             break;
 
         case wgpu::TextureFormat::RGBA16Float:
-            if (!egl.HasExt(EGLExt::PixelFormatFloat)) {
+            if (!egl->HasExt(EGLExt::PixelFormatFloat)) {
                 return kNoConfig;
             }
             AddAttrib(EGL_RED_SIZE, 16);
@@ -208,7 +224,7 @@ EGLConfig DisplayEGL::ChooseConfig(EGLint surfaceType,
 
     EGLConfig config = EGL_NO_CONFIG_KHR;
     EGLint numConfigs = 0;
-    if (egl.ChooseConfig(mDisplay, attribs.data(), &config, 1, &numConfigs) == EGL_FALSE ||
+    if (egl->ChooseConfig(mDisplay, attribs.data(), &config, 1, &numConfigs) == EGL_FALSE ||
         numConfigs == 0) {
         return kNoConfig;
     }

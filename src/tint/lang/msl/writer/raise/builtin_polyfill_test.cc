@@ -41,6 +41,7 @@
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
+#include "src/tint/lang/msl/ir/builtin_call.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
 using namespace tint::core::number_suffixes;  // NOLINT
@@ -48,7 +49,10 @@ using namespace tint::core::number_suffixes;  // NOLINT
 namespace tint::msl::writer::raise {
 namespace {
 
-using MslWriter_BuiltinPolyfillTest = core::ir::transform::TransformTest;
+struct MslWriter_BuiltinPolyfillTest : public core::ir::transform::TransformTest {
+  protected:
+    void SetUp() override { mod.properties.Add(core::ir::Property::kAllow16BitFloats); }
+};
 
 TEST_F(MslWriter_BuiltinPolyfillTest, AtomicAdd_Workgroup_I32) {
     auto* a = b.FunctionParam<ptr<workgroup, atomic<i32>>>("a");
@@ -1621,11 +1625,10 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureDimensions_2d_WithI32Lod) {
     auto* expect = R"(
 %foo = func(%t:texture_2d<f32>):vec2<u32> {
   $B1: {
-    %3:u32 = convert 3i
-    %4:u32 = %t.get_width %3
-    %5:u32 = %t.get_height %3
-    %6:vec2<u32> = construct %4, %5
-    ret %6
+    %3:u32 = %t.get_width 3u
+    %4:u32 = %t.get_height 3u
+    %5:vec2<u32> = construct %3, %4
+    ret %5
   }
 }
 )";
@@ -2349,10 +2352,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSample) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleBias) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t = b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()));
     auto* s = b.FunctionParam("s", ty.sampler());
     auto* coords = b.FunctionParam("coords", ty.vec2f());
@@ -2391,10 +2390,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleBias) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleBias_Array) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t =
         b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32()));
     auto* s = b.FunctionParam("s", ty.sampler());
@@ -2473,10 +2468,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleCompare) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleCompareLevel) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t = b.FunctionParam("t", ty.depth_texture(core::type::TextureDimension::k2d));
     auto* s = b.FunctionParam("s", ty.comparison_sampler());
     auto* coords = b.FunctionParam("coords", ty.vec2f());
@@ -2516,10 +2507,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleCompareLevel) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleCompareLevel_WithOffset) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t = b.FunctionParam("t", ty.depth_texture(core::type::TextureDimension::k2d));
     auto* s = b.FunctionParam("s", ty.comparison_sampler());
     auto* coords = b.FunctionParam("coords", ty.vec2f());
@@ -2560,10 +2547,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleCompareLevel_WithOffset) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleGrad_2d) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t = b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()));
     auto* s = b.FunctionParam("s", ty.sampler());
     auto* coords = b.FunctionParam("coords", ty.vec2f());
@@ -2643,10 +2626,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureGather_2dArray) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleGrad_2dArray) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t =
         b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32()));
     auto* s = b.FunctionParam("s", ty.sampler());
@@ -2690,10 +2669,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleGrad_2dArray) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleGrad_3d) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t = b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::k3d, ty.f32()));
     auto* s = b.FunctionParam("s", ty.sampler());
     auto* coords = b.FunctionParam("coords", ty.vec3f());
@@ -2734,10 +2709,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleGrad_3d) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleGrad_Cube) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t =
         b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::kCube, ty.f32()));
     auto* s = b.FunctionParam("s", ty.sampler());
@@ -2779,10 +2750,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleGrad_Cube) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleGrad_WithOffset) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t = b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()));
     auto* s = b.FunctionParam("s", ty.sampler());
     auto* coords = b.FunctionParam("coords", ty.vec2f());
@@ -2861,10 +2828,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleLevel_1d) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleLevel_2d) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t = b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::k2d, ty.f32()));
     auto* s = b.FunctionParam("s", ty.sampler());
     auto* coords = b.FunctionParam("coords", ty.vec2f());
@@ -2903,10 +2866,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleLevel_2d) {
 }
 
 TEST_F(MslWriter_BuiltinPolyfillTest, TextureSampleLevel_Array) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* t =
         b.FunctionParam("t", ty.sampled_texture(core::type::TextureDimension::k2dArray, ty.f32()));
     auto* s = b.FunctionParam("s", ty.sampler());
@@ -3399,7 +3358,7 @@ TEST_F(MslWriter_BuiltinPolyfillTest, Pack2x16Float) {
 %foo = func(%input:vec2<f32>):u32 {
   $B1: {
     %3:vec2<f16> = convert %input
-    %4:u32 = bitcast %3
+    %4:u32 = bitcast<u32> %3
     ret %4
   }
 }
@@ -3433,7 +3392,7 @@ TEST_F(MslWriter_BuiltinPolyfillTest, Unpack2x16Float) {
     auto* expect = R"(
 %foo = func(%input:u32):vec2<f32> {
   $B1: {
-    %3:vec2<f16> = bitcast %input
+    %3:vec2<f16> = bitcast<vec2<f16>> %input
     %4:vec2<f32> = convert %3
     ret %4
   }
@@ -3599,15 +3558,16 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Storage_F32) {
     auto* func = b.Function("foo", mat);
     func->SetParams({p});
     b.Append(func->Block(), [&] {
-        auto* call = b.CallExplicit(mat, core::BuiltinFn::kSubgroupMatrixLoad, Vector{mat}, p, 64_u,
-                                    false, 32_u);
+        auto* call = b.CallExplicit(
+            mat, core::BuiltinFn::kSubgroupMatrixLoad,
+            Vector<core::ir::TemplateParameter, 2>{mat, core::Majorness::kRowMajor}, p, 64_u, 32_u);
         b.Return(func, call);
     });
 
     auto* src = R"(
 %foo = func(%p:ptr<storage, array<f32, 256>, read_write>):subgroup_matrix_result<f32, 8, 8> {
   $B1: {
-    %3:subgroup_matrix_result<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_result<f32, 8, 8>> %p, 64u, false, 32u
+    %3:subgroup_matrix_result<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_result<f32, 8, 8>, row_major> %p, 64u, 32u
     ret %3
   }
 }
@@ -3628,7 +3588,136 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Storage_F32) {
 }
 )";
 
-    capabilities.Add(core::ir::Capability::kAllow64BitIntegers);
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_SignedOffsetAndStride) {
+    auto* mat = ty.subgroup_matrix_result(ty.f32(), 8, 8);
+    auto* p = b.FunctionParam<ptr<storage, array<f32, 256>>>("p");
+    auto* func = b.Function("foo", mat);
+    auto* offset = b.FunctionParam("offset", ty.i32());
+    auto* stride = b.FunctionParam("stride", ty.i32());
+    func->SetParams({p, offset, stride});
+    b.Append(func->Block(), [&] {
+        auto* call =
+            b.CallExplicit(mat, core::BuiltinFn::kSubgroupMatrixLoad,
+                           Vector<core::ir::TemplateParameter, 2>{mat, core::Majorness::kRowMajor},
+                           p, offset, stride);
+        b.Return(func, call);
+    });
+
+    auto* src = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>, %offset:i32, %stride:i32):subgroup_matrix_result<f32, 8, 8> {
+  $B1: {
+    %5:subgroup_matrix_result<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_result<f32, 8, 8>, row_major> %p, %offset, %stride
+    ret %5
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>, %offset:i32, %stride:i32):subgroup_matrix_result<f32, 8, 8> {
+  $B1: {
+    %5:u32 = bitcast<u32> %stride
+    %6:ptr<storage, f32, read_write> = access %p, %offset
+    %7:u64 = msl.convert %5
+    %8:ptr<function, subgroup_matrix_result<f32, 8, 8>, read_write> = var undef
+    %9:subgroup_matrix_result<f32, 8, 8> = load %8
+    %10:void = msl.simdgroup_load %9, %6, %7, vec2<u64>(0u64), false
+    %11:subgroup_matrix_result<f32, 8, 8> = load %8
+    ret %11
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Storage_F32_ColMajorTemplate) {
+    auto* mat = ty.subgroup_matrix_result(ty.f32(), 8, 8);
+    auto* p = b.FunctionParam<ptr<storage, array<f32, 256>>>("p");
+    auto* func = b.Function("foo", mat);
+    func->SetParams({p});
+    b.Append(func->Block(), [&] {
+        auto* call = b.CallExplicit(
+            mat, core::BuiltinFn::kSubgroupMatrixLoad,
+            Vector<core::ir::TemplateParameter, 2>{mat, core::Majorness::kColMajor}, p, 64_u, 32_u);
+        b.Return(func, call);
+    });
+
+    auto* src = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>):subgroup_matrix_result<f32, 8, 8> {
+  $B1: {
+    %3:subgroup_matrix_result<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_result<f32, 8, 8>, col_major> %p, 64u, 32u
+    ret %3
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>):subgroup_matrix_result<f32, 8, 8> {
+  $B1: {
+    %3:ptr<storage, f32, read_write> = access %p, 64u
+    %4:u64 = msl.convert 32u
+    %5:ptr<function, subgroup_matrix_result<f32, 8, 8>, read_write> = var undef
+    %6:subgroup_matrix_result<f32, 8, 8> = load %5
+    %7:void = msl.simdgroup_load %6, %3, %4, vec2<u64>(0u64), true
+    %8:subgroup_matrix_result<f32, 8, 8> = load %5
+    ret %8
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Storage_F32_RowMajorTemplate) {
+    auto* mat = ty.subgroup_matrix_result(ty.f32(), 8, 8);
+    auto* p = b.FunctionParam<ptr<storage, array<f32, 256>>>("p");
+    auto* func = b.Function("foo", mat);
+    func->SetParams({p});
+    b.Append(func->Block(), [&] {
+        auto* call = b.CallExplicit(
+            mat, core::BuiltinFn::kSubgroupMatrixLoad,
+            Vector<core::ir::TemplateParameter, 2>{mat, core::Majorness::kRowMajor}, p, 64_u, 32_u);
+        b.Return(func, call);
+    });
+
+    auto* src = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>):subgroup_matrix_result<f32, 8, 8> {
+  $B1: {
+    %3:subgroup_matrix_result<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_result<f32, 8, 8>, row_major> %p, 64u, 32u
+    ret %3
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>):subgroup_matrix_result<f32, 8, 8> {
+  $B1: {
+    %3:ptr<storage, f32, read_write> = access %p, 64u
+    %4:u64 = msl.convert 32u
+    %5:ptr<function, subgroup_matrix_result<f32, 8, 8>, read_write> = var undef
+    %6:subgroup_matrix_result<f32, 8, 8> = load %5
+    %7:void = msl.simdgroup_load %6, %3, %4, vec2<u64>(0u64), false
+    %8:subgroup_matrix_result<f32, 8, 8> = load %5
+    ret %8
+  }
+}
+)";
+
     BuiltinPolyfillConfig config;
     Run(BuiltinPolyfill, config);
 
@@ -3641,15 +3730,16 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Workgroup_F16) {
     auto* func = b.Function("foo", mat);
     func->SetParams({p});
     b.Append(func->Block(), [&] {
-        auto* call = b.CallExplicit(mat, core::BuiltinFn::kSubgroupMatrixLoad, Vector{mat}, p, 64_u,
-                                    false, 32_u);
+        auto* call = b.CallExplicit(
+            mat, core::BuiltinFn::kSubgroupMatrixLoad,
+            Vector<core::ir::TemplateParameter, 2>{mat, core::Majorness::kRowMajor}, p, 64_u, 32_u);
         b.Return(func, call);
     });
 
     auto* src = R"(
 %foo = func(%p:ptr<workgroup, array<f16, 256>, read_write>):subgroup_matrix_result<f16, 8, 8> {
   $B1: {
-    %3:subgroup_matrix_result<f16, 8, 8> = subgroupMatrixLoad<subgroup_matrix_result<f16, 8, 8>> %p, 64u, false, 32u
+    %3:subgroup_matrix_result<f16, 8, 8> = subgroupMatrixLoad<subgroup_matrix_result<f16, 8, 8>, row_major> %p, 64u, 32u
     ret %3
   }
 }
@@ -3670,7 +3760,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Workgroup_F16) {
 }
 )";
 
-    capabilities.Add(core::ir::Capability::kAllow64BitIntegers);
     BuiltinPolyfillConfig config;
     Run(BuiltinPolyfill, config);
 
@@ -3683,14 +3772,16 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Storage_F32) {
     auto* func = b.Function("foo", ty.void_());
     func->SetParams({p, m});
     b.Append(func->Block(), [&] {
-        b.Call<void>(core::BuiltinFn::kSubgroupMatrixStore, p, 64_u, m, false, 32_u);
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, p, 64_u,
+                       m, 32_u);
         b.Return(func);
     });
 
     auto* src = R"(
 %foo = func(%p:ptr<storage, array<f32, 256>, read_write>, %m:subgroup_matrix_result<f32, 8, 8>):void {
   $B1: {
-    %4:void = subgroupMatrixStore %p, 64u, %m, false, 32u
+    %4:void = subgroupMatrixStore<row_major> %p, 64u, %m, 32u
     ret
   }
 }
@@ -3708,7 +3799,126 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Storage_F32) {
 }
 )";
 
-    capabilities.Add(core::ir::Capability::kAllow64BitIntegers);
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_SignedOffsetAndStride) {
+    auto* p = b.FunctionParam<ptr<storage, array<f32, 256>>>("p");
+    auto* m = b.FunctionParam("m", ty.subgroup_matrix_result(ty.f32(), 8, 8));
+    auto* func = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.i32());
+    auto* stride = b.FunctionParam("stride", ty.i32());
+    func->SetParams({p, m, offset, stride});
+    b.Append(func->Block(), [&] {
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, p,
+                       offset, m, stride);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>, %m:subgroup_matrix_result<f32, 8, 8>, %offset:i32, %stride:i32):void {
+  $B1: {
+    %6:void = subgroupMatrixStore<row_major> %p, %offset, %m, %stride
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>, %m:subgroup_matrix_result<f32, 8, 8>, %offset:i32, %stride:i32):void {
+  $B1: {
+    %6:u32 = bitcast<u32> %stride
+    %7:ptr<storage, f32, read_write> = access %p, %offset
+    %8:u64 = msl.convert %6
+    %9:void = msl.simdgroup_store %m, %7, %8, vec2<u64>(0u64), false
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Storage_F32_ColMajorTemplate) {
+    auto* p = b.FunctionParam<ptr<storage, array<f32, 256>>>("p");
+    auto* m = b.FunctionParam("m", ty.subgroup_matrix_result(ty.f32(), 8, 8));
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({p, m});
+    b.Append(func->Block(), [&] {
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kColMajor}, p, 64_u,
+                       m, 32_u);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>, %m:subgroup_matrix_result<f32, 8, 8>):void {
+  $B1: {
+    %4:void = subgroupMatrixStore<col_major> %p, 64u, %m, 32u
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>, %m:subgroup_matrix_result<f32, 8, 8>):void {
+  $B1: {
+    %4:ptr<storage, f32, read_write> = access %p, 64u
+    %5:u64 = msl.convert 32u
+    %6:void = msl.simdgroup_store %m, %4, %5, vec2<u64>(0u64), true
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Storage_F32_RowMajorTemplate) {
+    auto* p = b.FunctionParam<ptr<storage, array<f32, 256>>>("p");
+    auto* m = b.FunctionParam("m", ty.subgroup_matrix_result(ty.f32(), 8, 8));
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({p, m});
+    b.Append(func->Block(), [&] {
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, p, 64_u,
+                       m, 32_u);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>, %m:subgroup_matrix_result<f32, 8, 8>):void {
+  $B1: {
+    %4:void = subgroupMatrixStore<row_major> %p, 64u, %m, 32u
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:ptr<storage, array<f32, 256>, read_write>, %m:subgroup_matrix_result<f32, 8, 8>):void {
+  $B1: {
+    %4:ptr<storage, f32, read_write> = access %p, 64u
+    %5:u64 = msl.convert 32u
+    %6:void = msl.simdgroup_store %m, %4, %5, vec2<u64>(0u64), false
+    ret
+  }
+}
+)";
+
     BuiltinPolyfillConfig config;
     Run(BuiltinPolyfill, config);
 
@@ -3721,14 +3931,16 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Workgroup_F16) {
     auto* func = b.Function("foo", ty.void_());
     func->SetParams({p, m});
     b.Append(func->Block(), [&] {
-        b.Call<void>(core::BuiltinFn::kSubgroupMatrixStore, p, 64_u, m, false, 32_u);
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, p, 64_u,
+                       m, 32_u);
         b.Return(func);
     });
 
     auto* src = R"(
 %foo = func(%p:ptr<workgroup, array<f16, 256>, read_write>, %m:subgroup_matrix_result<f16, 8, 8>):void {
   $B1: {
-    %4:void = subgroupMatrixStore %p, 64u, %m, false, 32u
+    %4:void = subgroupMatrixStore<row_major> %p, 64u, %m, 32u
     ret
   }
 }
@@ -3746,7 +3958,6 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Workgroup_F16) {
 }
 )";
 
-    capabilities.Add(core::ir::Capability::kAllow64BitIntegers);
     BuiltinPolyfillConfig config;
     Run(BuiltinPolyfill, config);
 
@@ -3761,7 +3972,7 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixMultiply_F32) {
     func->SetParams({left, right});
     b.Append(func->Block(), [&] {
         auto* call = b.CallExplicit(result, core::BuiltinFn::kSubgroupMatrixMultiply,
-                                    Vector{ty.f32()}, left, right);
+                                    Vector<core::ir::TemplateParameter, 1>{ty.f32()}, left, right);
         b.Return(func, call);
     });
 
@@ -3801,7 +4012,7 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixMultiply_F16) {
     func->SetParams({left, right});
     b.Append(func->Block(), [&] {
         auto* call = b.CallExplicit(result, core::BuiltinFn::kSubgroupMatrixMultiply,
-                                    Vector{ty.f16()}, left, right);
+                                    Vector<core::ir::TemplateParameter, 1>{ty.f16()}, left, right);
         b.Return(func, call);
     });
 
@@ -3994,13 +4205,12 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixScalarSubtract) {
     %4:ptr<function, subgroup_matrix_result<f32, 8, 8>, read_write> = var undef
     %5:subgroup_matrix_left<f32, 8, 8> = msl.convert<subgroup_matrix_left<f32, 8, 8>> %3
     %6:subgroup_matrix_right<f32, 8, 8> = msl.make_diagonal_simdgroup_matrix<subgroup_matrix_right<f32, 8, 8>> 1.0f
-    %7:f32 = negation 3.0f
-    %8:subgroup_matrix_result<f32, 8, 8> = msl.make_filled_simdgroup_matrix<subgroup_matrix_result<f32, 8, 8>> %7
-    %9:subgroup_matrix_result<f32, 8, 8> = load %4
-    %10:void = msl.simdgroup_multiply_accumulate %9, %5, %6, %8
-    %11:subgroup_matrix_result<f32, 8, 8> = load %4
-    %12:subgroup_matrix_result<f32, 8, 8> = msl.convert<subgroup_matrix_result<f32, 8, 8>> %11
-    %r:subgroup_matrix_result<f32, 8, 8> = let %12
+    %7:subgroup_matrix_result<f32, 8, 8> = msl.make_filled_simdgroup_matrix<subgroup_matrix_result<f32, 8, 8>> -3.0f
+    %8:subgroup_matrix_result<f32, 8, 8> = load %4
+    %9:void = msl.simdgroup_multiply_accumulate %8, %5, %6, %7
+    %10:subgroup_matrix_result<f32, 8, 8> = load %4
+    %11:subgroup_matrix_result<f32, 8, 8> = msl.convert<subgroup_matrix_result<f32, 8, 8>> %10
+    %r:subgroup_matrix_result<f32, 8, 8> = let %11
     ret
   }
 }
@@ -4009,6 +4219,1180 @@ TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixScalarSubtract) {
     BuiltinPolyfillConfig config;
     Run(BuiltinPolyfill, config);
 
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, Tanh_f32) {
+    auto* arg = b.FunctionParam("arg", ty.f32());
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({arg});
+    b.Append(func->Block(), [&] {
+        b.Let("r", b.Call(ty.f32(), core::BuiltinFn::kTanh, arg));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%foo = func(%arg:f32):void {
+  $B1: {
+    %3:f32 = tanh %arg
+    %r:f32 = let %3
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = src;
+
+    BuiltinPolyfillConfig config{
+        .polyfill_tanh_f16 = true,
+    };
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, Tanh_NoFlag_f16) {
+    auto* arg = b.FunctionParam("arg", ty.f16());
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({arg});
+    b.Append(func->Block(), [&] {
+        b.Let("r", b.Call(ty.f16(), core::BuiltinFn::kTanh, arg));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%foo = func(%arg:f16):void {
+  $B1: {
+    %3:f16 = tanh %arg
+    %r:f16 = let %3
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = src;
+
+    BuiltinPolyfillConfig config{
+        .polyfill_tanh_f16 = false,
+    };
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, Tanh_f16) {
+    auto* arg = b.FunctionParam("arg", ty.f16());
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({arg});
+    b.Append(func->Block(), [&] {
+        b.Let("r", b.Call(ty.f16(), core::BuiltinFn::kTanh, arg));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%foo = func(%arg:f16):void {
+  $B1: {
+    %3:f16 = tanh %arg
+    %r:f16 = let %3
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%arg:f16):void {
+  $B1: {
+    %3:f32 = convert %arg
+    %4:f32 = tanh %3
+    %5:f16 = convert %4
+    %r:f16 = let %5
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config{
+        .polyfill_tanh_f16 = true,
+    };
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, Tanh_vec2_f16) {
+    auto* arg = b.FunctionParam("arg", ty.vec2<f16>());
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({arg});
+    b.Append(func->Block(), [&] {
+        b.Let("r", b.Call(ty.vec2(ty.f16()), core::BuiltinFn::kTanh, arg));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%foo = func(%arg:vec2<f16>):void {
+  $B1: {
+    %3:vec2<f16> = tanh %arg
+    %r:vec2<f16> = let %3
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%arg:vec2<f16>):void {
+  $B1: {
+    %3:vec2<f32> = convert %arg
+    %4:vec2<f32> = tanh %3
+    %5:vec2<f16> = convert %4
+    %r:vec2<f16> = let %5
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config{
+        .polyfill_tanh_f16 = true,
+    };
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, AtomicStoreMin) {
+    mod.properties.Add(core::ir::Property::kAllow64BitIntegers);
+    auto* var = b.Var(ty.ptr(storage, ty.atomic(ty.u64())));
+    var->SetBindingPoint(0, 0);
+    mod.root_block->Append(var);
+    auto* arg1 = b.FunctionParam("arg1", ty.vec2u());
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({arg1});
+
+    b.Append(func->Block(), [&] {
+        b.Call(ty.void_(), core::BuiltinFn::kAtomicStoreMin, var, b.Bitcast(ty.u64(), arg1));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %1:ptr<storage, atomic<u64>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%arg1:vec2<u32>):void {
+  $B2: {
+    %4:u64 = bitcast<u64> %arg1
+    %5:void = atomicStoreMin %1, %4
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %1:ptr<storage, atomic<u64>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%arg1:vec2<u32>):void {
+  $B2: {
+    %4:u64 = bitcast<u64> %arg1
+    %5:void = msl.atomic_min_explicit %1, %4, 0u
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, AtomicStoreMax) {
+    mod.properties.Add(core::ir::Property::kAllow64BitIntegers);
+    auto* var = b.Var(ty.ptr(storage, ty.atomic(ty.u64())));
+    var->SetBindingPoint(0, 0);
+    mod.root_block->Append(var);
+    auto* arg1 = b.FunctionParam("arg1", ty.vec2u());
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({arg1});
+
+    b.Append(func->Block(), [&] {
+        b.Call(ty.void_(), core::BuiltinFn::kAtomicStoreMax, var, b.Bitcast(ty.u64(), arg1));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %1:ptr<storage, atomic<u64>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%arg1:vec2<u32>):void {
+  $B2: {
+    %4:u64 = bitcast<u64> %arg1
+    %5:void = atomicStoreMax %1, %4
+    ret
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %1:ptr<storage, atomic<u64>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%arg1:vec2<u32>):void {
+  $B2: {
+    %4:u64 = bitcast<u64> %arg1
+    %5:void = msl.atomic_max_explicit %1, %4, 0u
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, FirstLeadingBit_u32) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* p = b.FunctionParam("p", ty.u32());
+    foo->SetParams({p});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.u32(), core::BuiltinFn::kFirstLeadingBit, p);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%p:u32):void {
+  $B1: {
+    %3:u32 = firstLeadingBit %p
+    %res:u32 = let %3
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:u32):void {
+  $B1: {
+    %3:u32 = countLeadingZeros %p
+    %4:u32 = sub 31u, %3
+    %res:u32 = let %4
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, FirstLeadingBit_vec2u) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* p = b.FunctionParam("p", ty.vec2u());
+    foo->SetParams({p});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.vec2u(), core::BuiltinFn::kFirstLeadingBit, p);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%p:vec2<u32>):void {
+  $B1: {
+    %3:vec2<u32> = firstLeadingBit %p
+    %res:vec2<u32> = let %3
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:vec2<u32>):void {
+  $B1: {
+    %3:vec2<u32> = countLeadingZeros %p
+    %4:vec2<u32> = sub vec2<u32>(31u), %3
+    %res:vec2<u32> = let %4
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, FirstLeadingBit_i32) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* p = b.FunctionParam("p", ty.i32());
+    foo->SetParams({p});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.i32(), core::BuiltinFn::kFirstLeadingBit, p);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%p:i32):void {
+  $B1: {
+    %3:i32 = firstLeadingBit %p
+    %res:i32 = let %3
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:i32):void {
+  $B1: {
+    %3:u32 = bitcast<u32> %p
+    %4:u32 = complement %3
+    %5:bool = lt %3, 2147483648u
+    %6:u32 = select %4, %3, %5
+    %7:u32 = countLeadingZeros %6
+    %8:u32 = sub 31u, %7
+    %9:i32 = bitcast<i32> %8
+    %res:i32 = let %9
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, FirstLeadingBit_vec3i) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* p = b.FunctionParam("p", ty.vec3i());
+    foo->SetParams({p});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.vec3i(), core::BuiltinFn::kFirstLeadingBit, p);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%p:vec3<i32>):void {
+  $B1: {
+    %3:vec3<i32> = firstLeadingBit %p
+    %res:vec3<i32> = let %3
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:vec3<i32>):void {
+  $B1: {
+    %3:vec3<u32> = bitcast<vec3<u32>> %p
+    %4:vec3<u32> = complement %3
+    %5:vec3<bool> = lt %3, vec3<u32>(2147483648u)
+    %6:vec3<u32> = select %4, %3, %5
+    %7:vec3<u32> = countLeadingZeros %6
+    %8:vec3<u32> = sub vec3<u32>(31u), %7
+    %9:vec3<i32> = bitcast<vec3<i32>> %8
+    %res:vec3<i32> = let %9
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, FirstTrailingBit_u32) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* p = b.FunctionParam("p", ty.u32());
+    foo->SetParams({p});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.u32(), core::BuiltinFn::kFirstTrailingBit, p);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%p:u32):void {
+  $B1: {
+    %3:u32 = firstTrailingBit %p
+    %res:u32 = let %3
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:u32):void {
+  $B1: {
+    %3:u32 = countTrailingZeros %p
+    %4:bool = eq %p, 0u
+    %5:u32 = select %3, 4294967295u, %4
+    %res:u32 = let %5
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, FirstTrailingBit_vec2u) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* p = b.FunctionParam("p", ty.vec2u());
+    foo->SetParams({p});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.vec2u(), core::BuiltinFn::kFirstTrailingBit, p);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%p:vec2<u32>):void {
+  $B1: {
+    %3:vec2<u32> = firstTrailingBit %p
+    %res:vec2<u32> = let %3
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:vec2<u32>):void {
+  $B1: {
+    %3:vec2<u32> = countTrailingZeros %p
+    %4:vec2<bool> = eq %p, vec2<u32>(0u)
+    %5:vec2<u32> = select %3, vec2<u32>(4294967295u), %4
+    %res:vec2<u32> = let %5
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, FirstTrailingBit_i32) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* p = b.FunctionParam("p", ty.i32());
+    foo->SetParams({p});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.i32(), core::BuiltinFn::kFirstTrailingBit, p);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%p:i32):void {
+  $B1: {
+    %3:i32 = firstTrailingBit %p
+    %res:i32 = let %3
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:i32):void {
+  $B1: {
+    %3:i32 = countTrailingZeros %p
+    %4:bool = eq %p, 0i
+    %5:i32 = select %3, -1i, %4
+    %res:i32 = let %5
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, FirstTrailingBit_vec3i) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* p = b.FunctionParam("p", ty.vec3i());
+    foo->SetParams({p});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.vec3i(), core::BuiltinFn::kFirstTrailingBit, p);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%p:vec3<i32>):void {
+  $B1: {
+    %3:vec3<i32> = firstTrailingBit %p
+    %res:vec3<i32> = let %3
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%p:vec3<i32>):void {
+  $B1: {
+    %3:vec3<i32> = countTrailingZeros %p
+    %4:vec3<bool> = eq %p, vec3<i32>(0i)
+    %5:vec3<i32> = select %3, vec3<i32>(-1i), %4
+    %res:vec3<i32> = let %5
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, InsertBits) {
+    auto* arg = b.FunctionParam<u32>("arg");
+    auto* newbits = b.FunctionParam<u32>("newbits");
+    auto* offset = b.FunctionParam<u32>("offset");
+    auto* count = b.FunctionParam<u32>("count");
+    auto* func = b.Function("foo", ty.u32());
+    func->SetParams({arg, newbits, offset, count});
+    b.Append(func->Block(), [&] {
+        auto* result = b.Call<u32>(core::BuiltinFn::kInsertBits, arg, newbits, offset, count);
+        b.Return(func, result);
+    });
+
+    auto* src = R"(
+%foo = func(%arg:u32, %newbits:u32, %offset:u32, %count:u32):u32 {
+  $B1: {
+    %6:u32 = insertBits %arg, %newbits, %offset, %count
+    ret %6
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%arg:u32, %newbits:u32, %offset:u32, %count:u32):u32 {
+  $B1: {
+    %6:u32 = min %offset, 31u
+    %7:u32 = insertBits %arg, %newbits, %6, %count
+    ret %7
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Mat_F16_Array_U32) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f16(), 8, 8);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* ptr = b.FunctionParam("ptr", ty.ptr(storage, ty.runtime_array(ty.u32())));
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({ptr, offset, stride});
+    b.Append(foo->Block(), [&] {
+        b.CallExplicit(mat_ty, core::BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<core::ir::TemplateParameter, 2>{mat_ty, core::Majorness::kColMajor},
+                       ptr, offset, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%ptr:ptr<storage, array<u32>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:subgroup_matrix_left<f16, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<f16, 8, 8>, col_major> %ptr, %offset, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%ptr:ptr<storage, array<u32>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:u32 = mul %offset, 4u
+    %6:ptr<storage, f16, read_write> = msl.pointer_offset<f16> %ptr, %5
+    %7:u32 = mul %stride, 2u
+    %8:u64 = msl.convert %7
+    %9:ptr<function, subgroup_matrix_left<f16, 8, 8>, read_write> = var undef
+    %10:subgroup_matrix_left<f16, 8, 8> = load %9
+    %11:void = msl.simdgroup_load %10, %6, %8, vec2<u64>(0u64), true
+    %12:subgroup_matrix_left<f16, 8, 8> = load %9
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Mat_F16_Array_Vec2U) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f16(), 8, 8);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* ptr = b.FunctionParam("ptr", ty.ptr(storage, ty.runtime_array(ty.vec2u())));
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({ptr, offset, stride});
+    b.Append(foo->Block(), [&] {
+        b.CallExplicit(mat_ty, core::BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<core::ir::TemplateParameter, 2>{mat_ty, core::Majorness::kColMajor},
+                       ptr, offset, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%ptr:ptr<storage, array<vec2<u32>>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:subgroup_matrix_left<f16, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<f16, 8, 8>, col_major> %ptr, %offset, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%ptr:ptr<storage, array<vec2<u32>>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:u32 = mul %offset, 8u
+    %6:ptr<storage, f16, read_write> = msl.pointer_offset<f16> %ptr, %5
+    %7:u32 = mul %stride, 4u
+    %8:u64 = msl.convert %7
+    %9:ptr<function, subgroup_matrix_left<f16, 8, 8>, read_write> = var undef
+    %10:subgroup_matrix_left<f16, 8, 8> = load %9
+    %11:void = msl.simdgroup_load %10, %6, %8, vec2<u64>(0u64), true
+    %12:subgroup_matrix_left<f16, 8, 8> = load %9
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Mat_F16_Array_Vec3U) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f16(), 8, 8);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* ptr = b.FunctionParam("ptr", ty.ptr(storage, ty.runtime_array(ty.vec3u())));
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({ptr, offset, stride});
+    b.Append(foo->Block(), [&] {
+        auto* elide = b.CallExplicit<msl::ir::BuiltinCall>(
+            ty.ptr(storage, ty.runtime_array(ty.vec4u())), msl::BuiltinFn::kPointerOffset,
+            Vector<core::ir::TemplateParameter, 1>{ty.runtime_array(ty.vec4u())}, ptr, 0_u);
+        b.CallExplicit(mat_ty, core::BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<core::ir::TemplateParameter, 2>{mat_ty, core::Majorness::kColMajor},
+                       elide, offset, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%ptr:ptr<storage, array<vec3<u32>>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:ptr<storage, array<vec4<u32>>, read_write> = msl.pointer_offset<array<vec4<u32>>> %ptr, 0u
+    %6:subgroup_matrix_left<f16, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<f16, 8, 8>, col_major> %5, %offset, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%ptr:ptr<storage, array<vec3<u32>>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:u32 = mul %offset, 16u
+    %6:ptr<storage, f16, read_write> = msl.pointer_offset<f16> %ptr, %5
+    %7:u32 = mul %stride, 8u
+    %8:u64 = msl.convert %7
+    %9:ptr<function, subgroup_matrix_left<f16, 8, 8>, read_write> = var undef
+    %10:subgroup_matrix_left<f16, 8, 8> = load %9
+    %11:void = msl.simdgroup_load %10, %6, %8, vec2<u64>(0u64), true
+    %12:subgroup_matrix_left<f16, 8, 8> = load %9
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Mat_F16_Array_Vec3U_Aliased) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f16(), 8, 8);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* ptr = b.FunctionParam("ptr", ty.ptr(storage, ty.runtime_array(ty.vec3u())));
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({ptr, offset, stride});
+    b.Append(foo->Block(), [&] {
+        auto* elide = b.CallExplicit<msl::ir::BuiltinCall>(
+            ty.ptr(storage, ty.runtime_array(ty.vec4u())), msl::BuiltinFn::kAliasPointerOffset,
+            Vector<core::ir::TemplateParameter, 1>{ty.runtime_array(ty.vec4u())}, ptr, 0_u);
+        b.CallExplicit(mat_ty, core::BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<core::ir::TemplateParameter, 2>{mat_ty, core::Majorness::kColMajor},
+                       elide, offset, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%ptr:ptr<storage, array<vec3<u32>>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:ptr<storage, array<vec4<u32>>, read_write> = msl.alias_pointer_offset<array<vec4<u32>>> %ptr, 0u
+    %6:subgroup_matrix_left<f16, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<f16, 8, 8>, col_major> %5, %offset, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%ptr:ptr<storage, array<vec3<u32>>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:u32 = mul %offset, 16u
+    %6:ptr<storage, f16, read_write> = msl.alias_pointer_offset<f16> %ptr, %5
+    %7:u32 = mul %stride, 8u
+    %8:u64 = msl.convert %7
+    %9:ptr<function, subgroup_matrix_left<f16, 8, 8>, read_write> = var undef
+    %10:subgroup_matrix_left<f16, 8, 8> = load %9
+    %11:void = msl.simdgroup_load %10, %6, %8, vec2<u64>(0u64), true
+    %12:subgroup_matrix_left<f16, 8, 8> = load %9
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Mat_F16_Array_Vec4U) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f16(), 8, 8);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* ptr = b.FunctionParam("ptr", ty.ptr(storage, ty.runtime_array(ty.vec4u())));
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({ptr, offset, stride});
+    b.Append(foo->Block(), [&] {
+        b.CallExplicit(mat_ty, core::BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<core::ir::TemplateParameter, 2>{mat_ty, core::Majorness::kColMajor},
+                       ptr, offset, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%ptr:ptr<storage, array<vec4<u32>>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:subgroup_matrix_left<f16, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<f16, 8, 8>, col_major> %ptr, %offset, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%ptr:ptr<storage, array<vec4<u32>>, read_write>, %offset:u32, %stride:u32):void {
+  $B1: {
+    %5:u32 = mul %offset, 16u
+    %6:ptr<storage, f16, read_write> = msl.pointer_offset<f16> %ptr, %5
+    %7:u32 = mul %stride, 8u
+    %8:u64 = msl.convert %7
+    %9:ptr<function, subgroup_matrix_left<f16, 8, 8>, read_write> = var undef
+    %10:subgroup_matrix_left<f16, 8, 8> = load %9
+    %11:void = msl.simdgroup_load %10, %6, %8, vec2<u64>(0u64), true
+    %12:subgroup_matrix_left<f16, 8, 8> = load %9
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Mat_F32_Array_Vec2H) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f32(), 8, 8);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* ptr = b.FunctionParam("ptr", ty.ptr(workgroup, ty.runtime_array(ty.vec2h())));
+    auto* offset = b.FunctionParam("offset", ty.i32());
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* stride = b.FunctionParam("stride", ty.i32());
+    foo->SetParams({ptr, offset, m, stride});
+    b.Append(foo->Block(), [&] {
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, ptr,
+                       offset, m, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%ptr:ptr<workgroup, array<vec2<f16>>, read_write>, %offset:i32, %m:subgroup_matrix_left<f32, 8, 8>, %stride:i32):void {
+  $B1: {
+    %6:void = subgroupMatrixStore<row_major> %ptr, %offset, %m, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%ptr:ptr<workgroup, array<vec2<f16>>, read_write>, %offset:i32, %m:subgroup_matrix_left<f32, 8, 8>, %stride:i32):void {
+  $B1: {
+    %6:u32 = bitcast<u32> %stride
+    %7:u32 = bitcast<u32> %offset
+    %8:u32 = mul %7, 4u
+    %9:ptr<workgroup, f32, read_write> = msl.pointer_offset<f32> %ptr, %8
+    %10:u32 = mul %6, 1u
+    %11:u64 = msl.convert %10
+    %12:void = msl.simdgroup_store %m, %9, %11, vec2<u64>(0u64), false
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Mat_F32_Array_Vec3H) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f32(), 8, 8);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* ptr = b.FunctionParam("ptr", ty.ptr(workgroup, ty.runtime_array(ty.vec3h())));
+    auto* offset = b.FunctionParam("offset", ty.i32());
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* stride = b.FunctionParam("stride", ty.i32());
+    foo->SetParams({ptr, offset, m, stride});
+    b.Append(foo->Block(), [&] {
+        auto* elide = b.CallExplicit<msl::ir::BuiltinCall>(
+            ty.ptr(workgroup, ty.runtime_array(ty.vec4h())), msl::BuiltinFn::kPointerOffset,
+            Vector<core::ir::TemplateParameter, 1>{ty.runtime_array(ty.vec4h())}, ptr, 0_u);
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, elide,
+                       offset, m, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%ptr:ptr<workgroup, array<vec3<f16>>, read_write>, %offset:i32, %m:subgroup_matrix_left<f32, 8, 8>, %stride:i32):void {
+  $B1: {
+    %6:ptr<workgroup, array<vec4<f16>>, read_write> = msl.pointer_offset<array<vec4<f16>>> %ptr, 0u
+    %7:void = subgroupMatrixStore<row_major> %6, %offset, %m, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%ptr:ptr<workgroup, array<vec3<f16>>, read_write>, %offset:i32, %m:subgroup_matrix_left<f32, 8, 8>, %stride:i32):void {
+  $B1: {
+    %6:u32 = bitcast<u32> %stride
+    %7:u32 = bitcast<u32> %offset
+    %8:u32 = mul %7, 8u
+    %9:ptr<workgroup, f32, read_write> = msl.pointer_offset<f32> %ptr, %8
+    %10:u32 = mul %6, 2u
+    %11:u64 = msl.convert %10
+    %12:void = msl.simdgroup_store %m, %9, %11, vec2<u64>(0u64), false
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Mat_F32_Array_Vec3H_Aliased) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f32(), 8, 8);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* ptr = b.FunctionParam("ptr", ty.ptr(workgroup, ty.runtime_array(ty.vec3h())));
+    auto* offset = b.FunctionParam("offset", ty.i32());
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* stride = b.FunctionParam("stride", ty.i32());
+    foo->SetParams({ptr, offset, m, stride});
+    b.Append(foo->Block(), [&] {
+        auto* elide = b.CallExplicit<msl::ir::BuiltinCall>(
+            ty.ptr(workgroup, ty.runtime_array(ty.vec4h())), msl::BuiltinFn::kAliasPointerOffset,
+            Vector<core::ir::TemplateParameter, 1>{ty.runtime_array(ty.vec4h())}, ptr, 0_u);
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, elide,
+                       offset, m, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%ptr:ptr<workgroup, array<vec3<f16>>, read_write>, %offset:i32, %m:subgroup_matrix_left<f32, 8, 8>, %stride:i32):void {
+  $B1: {
+    %6:ptr<workgroup, array<vec4<f16>>, read_write> = msl.alias_pointer_offset<array<vec4<f16>>> %ptr, 0u
+    %7:void = subgroupMatrixStore<row_major> %6, %offset, %m, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%ptr:ptr<workgroup, array<vec3<f16>>, read_write>, %offset:i32, %m:subgroup_matrix_left<f32, 8, 8>, %stride:i32):void {
+  $B1: {
+    %6:u32 = bitcast<u32> %stride
+    %7:u32 = bitcast<u32> %offset
+    %8:u32 = mul %7, 8u
+    %9:ptr<workgroup, f32, read_write> = msl.alias_pointer_offset<f32> %ptr, %8
+    %10:u32 = mul %6, 2u
+    %11:u64 = msl.convert %10
+    %12:void = msl.simdgroup_store %m, %9, %11, vec2<u64>(0u64), false
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Mat_F32_Array_Vec4H) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f32(), 8, 8);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* ptr = b.FunctionParam("ptr", ty.ptr(workgroup, ty.runtime_array(ty.vec4h())));
+    auto* offset = b.FunctionParam("offset", ty.i32());
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* stride = b.FunctionParam("stride", ty.i32());
+    foo->SetParams({ptr, offset, m, stride});
+    b.Append(foo->Block(), [&] {
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, ptr,
+                       offset, m, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%ptr:ptr<workgroup, array<vec4<f16>>, read_write>, %offset:i32, %m:subgroup_matrix_left<f32, 8, 8>, %stride:i32):void {
+  $B1: {
+    %6:void = subgroupMatrixStore<row_major> %ptr, %offset, %m, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%ptr:ptr<workgroup, array<vec4<f16>>, read_write>, %offset:i32, %m:subgroup_matrix_left<f32, 8, 8>, %stride:i32):void {
+  $B1: {
+    %6:u32 = bitcast<u32> %stride
+    %7:u32 = bitcast<u32> %offset
+    %8:u32 = mul %7, 8u
+    %9:ptr<workgroup, f32, read_write> = msl.pointer_offset<f32> %ptr, %8
+    %10:u32 = mul %6, 2u
+    %11:u64 = msl.convert %10
+    %12:void = msl.simdgroup_store %m, %9, %11, vec2<u64>(0u64), false
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, MulSat_U32) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("lhs", ty.u32());
+    auto* rhs = b.FunctionParam("rhs", ty.u32());
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        b.Call(ty.u32(), core::BuiltinFn::kMulSat, lhs, rhs);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%lhs:u32, %rhs:u32):void {
+  $B1: {
+    %4:u32 = mulSat %lhs, %rhs
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%lhs:u32, %rhs:u32):void {
+  $B1: {
+    %4:u32 = msl.madsat %lhs, %rhs, 0u
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, MulSat_Vec4U) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("lhs", ty.vec4u());
+    auto* rhs = b.FunctionParam("rhs", ty.vec4u());
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        b.Call(ty.vec4u(), core::BuiltinFn::kMulSat, lhs, rhs);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%lhs:vec4<u32>, %rhs:vec4<u32>):void {
+  $B1: {
+    %4:vec4<u32> = mulSat %lhs, %rhs
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%lhs:vec4<u32>, %rhs:vec4<u32>):void {
+  $B1: {
+    %4:vec4<u32> = msl.madsat %lhs, %rhs, vec4<u32>(0u)
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, AddSat_MulSat_U32) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* x = b.FunctionParam("x", ty.u32());
+    auto* y = b.FunctionParam("y", ty.u32());
+    auto* z = b.FunctionParam("z", ty.u32());
+    foo->SetParams({x, y, z});
+    b.Append(foo->Block(), [&] {
+        auto* mul = b.Call(ty.u32(), core::BuiltinFn::kMulSat, x, y);
+        b.Call(ty.u32(), core::BuiltinFn::kAddSat, mul, z);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%x:u32, %y:u32, %z:u32):void {
+  $B1: {
+    %5:u32 = mulSat %x, %y
+    %6:u32 = addSat %5, %z
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%x:u32, %y:u32, %z:u32):void {
+  $B1: {
+    %5:u32 = msl.madsat %x, %y, %z
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(MslWriter_BuiltinPolyfillTest, AddSat_MulSat_Vec2U) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* x = b.FunctionParam("x", ty.vec2u());
+    auto* y = b.FunctionParam("y", ty.vec2u());
+    auto* z = b.FunctionParam("z", ty.vec2u());
+    foo->SetParams({x, y, z});
+    b.Append(foo->Block(), [&] {
+        auto* mul = b.Call(ty.vec2u(), core::BuiltinFn::kMulSat, x, y);
+        b.Call(ty.vec2u(), core::BuiltinFn::kAddSat, z, mul);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%x:vec2<u32>, %y:vec2<u32>, %z:vec2<u32>):void {
+  $B1: {
+    %5:vec2<u32> = mulSat %x, %y
+    %6:vec2<u32> = addSat %z, %5
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%x:vec2<u32>, %y:vec2<u32>, %z:vec2<u32>):void {
+  $B1: {
+    %5:vec2<u32> = msl.madsat %x, %y, %z
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 

@@ -30,11 +30,14 @@
 
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/utils/compiler.h"
+#include "src/utils/span.h"
 
 namespace dawn::native {
 
@@ -43,9 +46,32 @@ namespace dawn::native {
 // ownership of the container and release its memory on destruction.
 class Blob {
   public:
+    // Creates a blob of the given size.
+    static Blob Create(size_t size);
+
+    // Takes ownership of the original blob, creating a new one with subspan of the original using
+    // `offset` and optionally `extent`.
+    static Blob Create(Blob&& original, size_t offset, size_t extent = std::dynamic_extent);
+
+    template <typename T>
+    static Blob Create(std::vector<T> vec)
+        requires(std::is_fundamental_v<T> || std::is_same_v<T, std::byte>)
+    {
+        // Move the vector into a new allocation so we can destruct it in the deleter.
+        auto* wrapped_vec = new std::vector<T>(std::move(vec));
+
+        uint8_t* data = reinterpret_cast<uint8_t*>(wrapped_vec->data());
+        size_t size = wrapped_vec->size() * sizeof(T);
+
+        return DAWN_UNSAFE_TODO(
+            Blob::UnsafeCreateWithDeleter(data, size, [wrapped_vec] { delete wrapped_vec; }));
+    }
+
     // This function is used to create Blob with actual data.
     // Make sure the creation and deleter handles the data ownership and lifetime correctly.
-    static Blob UnsafeCreateWithDeleter(uint8_t* data, size_t size, std::function<void()> deleter);
+    DAWN_UNSAFE_BUFFER_USAGE static Blob UnsafeCreateWithDeleter(uint8_t* data,
+                                                                 size_t size,
+                                                                 std::function<void()> deleter);
 
     Blob();
     ~Blob();
@@ -57,8 +83,10 @@ class Blob {
     Blob& operator=(Blob&&);
 
     bool Empty() const;
-    const uint8_t* Data() const;
-    uint8_t* Data();
+    dawn::Span<const std::byte> Data() const;
+    dawn::Span<std::byte> Data();
+    const std::byte* DataPtr() const;
+    std::byte* DataPtr();
     size_t Size() const;
 
     bool operator==(const Blob& other) const;
@@ -66,27 +94,11 @@ class Blob {
   private:
     // The constructor should be responsible to take ownership of |data| and releases ownership by
     // calling |deleter|. The deleter function is called at ~Blob() and during std::move.
-    explicit Blob(uint8_t* data, size_t size, std::function<void()> deleter);
+    Blob(dawn::Span<std::byte> data, std::function<void()> deleter);
 
-    raw_ptr<uint8_t> mData;
-    size_t mSize;
+    dawn::Span<std::byte> mData;
     std::function<void()> mDeleter;
 };
-
-Blob CreateBlob(size_t size);
-
-template <typename T>
-Blob CreateBlob(std::vector<T> vec)
-    requires std::is_fundamental_v<T>
-{
-    // Move the vector into a new allocation so we can destruct it in the deleter.
-    auto* wrapped_vec = new std::vector<T>(std::move(vec));
-
-    uint8_t* data = reinterpret_cast<uint8_t*>(wrapped_vec->data());
-    size_t size = wrapped_vec->size() * sizeof(T);
-
-    return Blob::UnsafeCreateWithDeleter(data, size, [wrapped_vec] { delete wrapped_vec; });
-}
 
 }  // namespace dawn::native
 

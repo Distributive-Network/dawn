@@ -32,16 +32,16 @@
 #include <string>
 #include <vector>
 
-#include "dawn/native/BackendConnection.h"
-
 #include "absl/container/flat_hash_map.h"
-#include "dawn/common/DynamicLib.h"
-#include "dawn/common/Ref.h"
-#include "dawn/common/RefCounted.h"
-#include "dawn/common/ityp_array.h"
-#include "dawn/native/vulkan/PhysicalDeviceVk.h"
-#include "dawn/native/vulkan/VulkanFunctions.h"
-#include "dawn/native/vulkan/VulkanInfo.h"
+#include "partition_alloc/pointers/raw_ptr_exclusion.h"
+#include "src/dawn/common/DynamicLib.h"
+#include "src/dawn/common/Ref.h"
+#include "src/dawn/common/RefCounted.h"
+#include "src/dawn/common/ityp_array.h"
+#include "src/dawn/native/BackendConnection.h"
+#include "src/dawn/native/vulkan/PhysicalDeviceVk.h"
+#include "src/dawn/native/vulkan/VulkanFunctions.h"
+#include "src/dawn/native/vulkan/VulkanInfo.h"
 
 namespace dawn::native::vulkan {
 
@@ -50,9 +50,9 @@ namespace dawn::native::vulkan {
 // VulkanExtensions.h/cpp and VulkanFunctions.h/cpp.
 // Vulkan 1.1 is required due to poor quality of some Vulkan 1.0 drivers.
 // See crbug.com/850881, crbug.com/863086, crbug.com/1465064, crbug.com/346990068
-static constexpr uint32_t kRequiredVulkanVersion = VK_API_VERSION_1_1;
+inline constexpr uint32_t kRequiredVulkanVersion = VK_API_VERSION_1_1;
 
-enum class ICD {
+enum class ICD : uint8_t {
     None,
     SwiftShader,
 };
@@ -99,7 +99,7 @@ class VulkanInstance : public RefCounted {
 
     VkDebugUtilsMessengerEXT mDebugUtilsMessenger = VK_NULL_HANDLE;
 
-    std::vector<VkPhysicalDevice> mVkPhysicalDevices;
+    RAW_PTR_EXCLUSION std::vector<VkPhysicalDevice> mVkPhysicalDevices;
 
     // Devices keep the VulkanInstance alive, so as long as devices remove themselves from this
     // map on destruction the pointers it contains should remain valid.

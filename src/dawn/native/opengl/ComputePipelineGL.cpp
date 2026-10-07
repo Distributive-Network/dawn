@@ -25,9 +25,17 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/ComputePipelineGL.h"
+#include "src/dawn/native/opengl/ComputePipelineGL.h"
 
-#include "dawn/native/opengl/DeviceGL.h"
+#include <set>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "src/dawn/native/TintUtils.h"
+#include "src/dawn/native/opengl/DeviceGL.h"
+#include "src/dawn/native/opengl/UtilsGL.h"
+#include "tint/tint.h"
 
 namespace dawn::native::opengl {
 
@@ -42,18 +50,42 @@ ComputePipeline::~ComputePipeline() = default;
 
 void ComputePipeline::DestroyImpl(DestroyReason reason) {
     ComputePipelineBase::DestroyImpl(reason);
-    DeleteProgram(ToBackend(GetDevice())->GetGL());
+    IgnoreErrors(
+        ToBackend(GetDevice())
+            ->EnqueueDestroyGL(this, &ComputePipeline::GetProgramHandle, reason,
+                               [](const OpenGLFunctions& gl, GLuint program) -> MaybeError {
+                                   DAWN_GL_TRY_IGNORE_ERRORS(gl, DeleteProgram(program));
+                                   return {};
+                               }));
 }
 
-MaybeError ComputePipeline::InitializeImpl() {
-    return InitializeBase(ToBackend(GetDevice())->GetGL(), ToBackend(GetLayout()), GetAllStages(),
-                          /* usesVertexIndex */ false, /* usesInstanceIndex */ false,
-                          /* usesFragDepth */ false, /* bgraSwizzleAttributes */ {});
+ResultOrError<Extent3D> ComputePipeline::InitializeImpl() {
+    auto layout = ToBackend(GetLayout());
+    Extent3D workgroupSize;
+    std::set<CombinedSampler> combinedSamplers;
+    std::unordered_map<SingleShaderStage, std::string> shaders;
+    DAWN_TRY(InitializeShaders(
+        ToBackend(GetDevice())->GetGL(false), layout, GetAllStages(), mImmediateMask,
+        /* bgraSwizzleAttributes */ {}, &workgroupSize, &combinedSamplers, &shaders));
+
+    DAWN_TRY(ToBackend(GetDevice())
+                 ->EnqueueGL([self = Ref<ComputePipeline>(this), combinedSamplers,
+                              shaders](const OpenGLFunctions& gl) -> MaybeError {
+                     return self->InitializeBase(gl, ToBackend(self->GetLayout()),
+                                                 self->GetAllStages(), self->mImmediateMask,
+                                                 combinedSamplers, shaders);
+                 }));
+
+    return workgroupSize;
 }
 
 MaybeError ComputePipeline::ApplyNow(const OpenGLFunctions& gl) {
     DAWN_TRY(PipelineGL::ApplyNow(gl, ToBackend(GetLayout())));
     return {};
+}
+
+GLuint ComputePipeline::GetProgramHandle() const {
+    return mProgram;
 }
 
 }  // namespace dawn::native::opengl

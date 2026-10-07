@@ -18,12 +18,11 @@ void compute_main_inner(uint tint_local_index) {
       {
         v = (v_1 + 1u);
       }
-      continue;
     }
   }
   GroupMemoryBarrierWithGroupSync();
   uint v_3 = 0u;
-  InterlockedExchange(wg[1u], 1u, v_3);
+  InterlockedExchange(wg[int(1)], 1u, v_3);
 }
 
 [numthreads(1, 1, 1)]

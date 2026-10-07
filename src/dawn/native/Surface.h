@@ -31,17 +31,15 @@
 #include <memory>
 #include <string>
 
-#include "dawn/native/Error.h"
-#include "dawn/native/Forward.h"
-#include "dawn/native/ObjectBase.h"
 #include "partition_alloc/pointers/raw_ptr.h"
-
-#include "dawn/native/dawn_platform.h"
-
-#include "dawn/common/Platform.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/Forward.h"
+#include "src/dawn/native/ObjectBase.h"
+#include "src/dawn/native/dawn_platform.h"
+#include "src/utils/platform.h"
 
 #if defined(DAWN_USE_WINDOWS_UI)
-#include "dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/native/d3d/d3d_platform.h"
 #endif  // defined(DAWN_USE_WINDOWS_UI)
 
 // Forward declare IUnknown
@@ -56,14 +54,14 @@ struct PhysicalDeviceSurfaceCapabilities;
 // Adapter surface capabilities are cached by the surface
 class AdapterSurfaceCapCache;
 
-ResultOrError<UnpackedPtr<SurfaceDescriptor>> ValidateSurfaceDescriptor(
+ResultOrValError<UnpackedPtr<SurfaceDescriptor>> ValidateSurfaceDescriptor(
     InstanceBase* instance,
     const SurfaceDescriptor* rawDescriptor);
 
-MaybeError ValidateSurfaceConfiguration(DeviceBase* device,
-                                        const PhysicalDeviceSurfaceCapabilities& capabilities,
-                                        const SurfaceConfiguration* config,
-                                        const Surface* surface);
+MaybeValError ValidateSurfaceConfiguration(DeviceBase* device,
+                                           const PhysicalDeviceSurfaceCapabilities& capabilities,
+                                           const SurfaceConfiguration* config,
+                                           const Surface* surface);
 
 // A surface is a sum types of all the kind of windows Dawn supports. The OS-specific types
 // aren't used because they would cause compilation errors on other OSes (or require
@@ -78,6 +76,7 @@ class Surface final : public ErrorMonad {
 
     // These are valid to call on all Surfaces.
     enum class Type {
+        Undefined,
         AndroidWindow,
         MetalLayer,
         WaylandSurface,
@@ -116,9 +115,15 @@ class Surface final : public ErrorMonad {
 
     // Valid to call if the type is WindowsXlib
     void* GetXDisplay() const;
-    uint32_t GetXWindow() const;
+    uint64_t GetXWindow() const;
 
     const std::string& GetLabel() const;
+
+    // Called by `swapChain` when its device is destroyed while it is still attached to this
+    // surface. The swapchain is detached and the surface drops it. If it was the current
+    // swapchain the surface becomes unconfigured, as if Unconfigure() had been called, except
+    // that the swapchain cannot be recycled.
+    void DetachSwapChain(SwapChainBase* swapChain);
 
     // Dawn API
     void APIConfigure(const SurfaceConfiguration* config);
@@ -133,13 +138,13 @@ class Surface final : public ErrorMonad {
     ~Surface() override;
 
     MaybeError Configure(const SurfaceConfiguration* config);
-    MaybeError Unconfigure();
+    MaybeValError Unconfigure();
 
-    MaybeError GetCapabilities(AdapterBase* adapter, SurfaceCapabilities* capabilities) const;
+    MaybeValError GetCapabilities(AdapterBase* adapter, SurfaceCapabilities* capabilities) const;
     MaybeError GetCurrentTexture(SurfaceTexture* surfaceTexture) const;
 
     Ref<InstanceBase> mInstance;
-    Type mType;
+    Type mType = Type::Undefined;
     std::string mLabel;
 
     // The surface has an associated device *if and only if* it is configured.
@@ -182,7 +187,7 @@ class Surface final : public ErrorMonad {
 
     // Xlib
     raw_ptr<void> mXDisplay = nullptr;
-    uint32_t mXWindow = 0;
+    uint64_t mXWindow = 0;
 };
 
 // Not defined in webgpu_absl_format.h/cpp because you can't forward-declare a nested type.

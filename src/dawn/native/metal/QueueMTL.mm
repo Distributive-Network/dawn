@@ -25,21 +25,26 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/metal/QueueMTL.h"
+#include "src/dawn/native/metal/QueueMTL.h"
 
-#include "dawn/common/FutureUtils.h"
-#include "dawn/common/Math.h"
-#include "dawn/native/Buffer.h"
-#include "dawn/native/CommandValidation.h"
-#include "dawn/native/Commands.h"
-#include "dawn/native/DynamicUploader.h"
-#include "dawn/native/Instance.h"
+#include "absl/strings/str_format.h"
 #include "dawn/native/MetalBackend.h"
-#include "dawn/native/PhysicalDevice.h"
-#include "dawn/native/metal/CommandBufferMTL.h"
-#include "dawn/native/metal/DeviceMTL.h"
 #include "dawn/platform/DawnPlatform.h"
-#include "dawn/platform/tracing/TraceEvent.h"
+#include "src/dawn/common/FutureUtils.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/native/Buffer.h"
+#include "src/dawn/native/CallbackTaskManager.h"
+#include "src/dawn/native/CommandValidation.h"
+#include "src/dawn/native/Commands.h"
+#include "src/dawn/native/Device.h"
+#include "src/dawn/native/DynamicUploader.h"
+#include "src/dawn/native/ErrorInjector.h"
+#include "src/dawn/native/Instance.h"
+#include "src/dawn/native/PhysicalDevice.h"
+#include "src/dawn/native/metal/CommandBufferMTL.h"
+#include "src/dawn/native/metal/DeviceMTL.h"
+#include "src/dawn/platform/tracing/TraceEvent.h"
+#include "src/utils/compiler.h"
 
 namespace dawn::native::metal {
 
@@ -48,8 +53,7 @@ class CommandsScheduledEvent : public EventManager::TrackedEvent {
   public:
     // It's important to use AllowSpontaneous for these events since we don't want to leak them if
     // the client forgets about the associated future and never calls WaitAny on it.
-    CommandsScheduledEvent()
-        : TrackedEvent(wgpu::CallbackMode::AllowSpontaneous, AcquireRef(new WaitListEvent())) {}
+    CommandsScheduledEvent() : TrackedEvent(wgpu::CallbackMode::AllowSpontaneous, false) {}
 
   private:
     void Complete(EventCompletionType completionType) override {
@@ -72,7 +76,6 @@ void Queue::DestroyImpl(DestroyReason reason) {
     // Forget all pending commands.
     mCommandContext.AcquireCommands();
     UpdateCommandsScheduledEvents(kMaxExecutionSerial);
-    UpdateCommandsCompletedEvents(kMaxExecutionSerial);
     mLastSubmittedCommands->Reset();
     mCommandQueue = nullptr;
     mSharedFence = nullptr;
@@ -96,12 +99,17 @@ MaybeError Queue::Initialize() {
             id<MTLLogState> mtlLogState = [mtlDevice newLogStateWithDescriptor:logStateDesc
                                                                          error:&error];
             if (error != nil) {
-                return DAWN_INTERNAL_ERROR("Error creating MTLLogState:" +
-                                           std::string([error.localizedDescription UTF8String]));
+                return DAWN_UNRECOVERABLE_ERROR(
+                    "Error creating MTLLogState:" +
+                    std::string([error.localizedDescription UTF8String]));
             }
-            [mtlLogState addLogHandler:^(NSString* substring, NSString* category, MTLLogLevel level,
-                                         NSString* message) {
-                GetDevice()->EmitLog([message UTF8String]);
+            // NOTE: If TSan errors are ever seen here, see the solution in addCompletedHandler.
+            [mtlLogState addLogHandler:[deviceRef = GetWeakRef(GetDevice())](
+                                           NSString* substring, NSString* category,
+                                           MTLLogLevel level, NSString* message) {
+                if (auto device = deviceRef.Promote()) {
+                    device->EmitLog([message UTF8String]);
+                }
             }];
 
             MTLCommandQueueDescriptor* mtlQueueDescriptor = [MTLCommandQueueDescriptor new];
@@ -117,12 +125,12 @@ MaybeError Queue::Initialize() {
     }
 
     if (mCommandQueue == nil) {
-        return DAWN_INTERNAL_ERROR("Failed to allocate MTLCommandQueue.");
+        return DAWN_UNRECOVERABLE_ERROR("Failed to allocate MTLCommandQueue.");
     }
 
     mMtlSharedEvent.Acquire([mtlDevice newSharedEvent]);
     if (mMtlSharedEvent == nil) {
-        return DAWN_INTERNAL_ERROR("Failed to create MTLSharedEvent.");
+        return DAWN_UNRECOVERABLE_ERROR("Failed to create MTLSharedEvent.");
     }
     DAWN_TRY_ASSIGN(mSharedFence, GetOrCreateSharedFence());
 
@@ -139,19 +147,6 @@ void Queue::UpdateCommandsScheduledEvents(ExecutionSerial scheduledSerial) {
     });
     for (auto& event : readyEvents) {
         GetDevice()->GetInstance()->GetEventManager()->SetFutureReady(event.Get());
-    }
-}
-
-void Queue::UpdateCommandsCompletedEvents(ExecutionSerial completedSerial) {
-    std::vector<Ref<WaitListEvent>> readyEvents;
-    mCommandsCompletedEvents.Use([&](auto events) {
-        for (auto& event : events->IterateUpTo(completedSerial)) {
-            readyEvents.emplace_back(std::move(event));
-        }
-        events->ClearUpTo(completedSerial);
-    });
-    for (auto& event : readyEvents) {
-        event->Signal();
     }
 }
 
@@ -214,12 +209,32 @@ CommandRecordingContext* Queue::GetPendingCommandContext(SubmitMode submitMode) 
     return &mCommandContext;
 }
 
+MaybeError Queue::CheckExecutionError() const {
+    return mExecutionError.Use([](auto executionError) -> MaybeError {
+        if (executionError->has_value()) {
+            return DAWN_UNRECOVERABLE_ERROR(executionError->value());
+        }
+        return {};
+    });
+}
+
+void Queue::SetExecutionError(std::string error) {
+    mExecutionError.Use([&](auto executionError) {
+        if (!executionError->has_value()) {
+            *executionError = std::move(error);
+        }
+    });
+}
+
 MaybeError Queue::SubmitPendingCommandBuffer() {
+    // Ensure that if there's been an error, we never try to submit anything. This is also where
+    // we propagate the device loss and error message from a Metal command buffer execution error
+    // (for example when this is called by Tick(), which happens even if nothing is pending).
+    DAWN_TRY(CheckExecutionError());
+
     if (!mCommandContext.NeedsSubmit()) {
         return {};
     }
-
-    auto platform = GetDevice()->GetPlatform();
 
     // Acquire the pending command buffer, which is retained. It must be released later.
     NSPRef<id<MTLCommandBuffer>> pendingCommands = mCommandContext.AcquireCommands();
@@ -229,34 +244,89 @@ MaybeError Queue::SubmitPendingCommandBuffer() {
     mLastSubmittedCommands.Use(
         [&](auto lastSubmittedCommands) { *lastSubmittedCommands = pendingCommands; });
 
-    // Make a local copy of the pointer to the commands because it's not clear how ObjC blocks
-    // handle types with copy / move constructors being referenced in the block.
-    id<MTLCommandBuffer> pendingCommandsPointer = pendingCommands.Get();
-
     // Update the completed serial once the completed handler is fired. Make a local copy of the
     // pending command serial so it is captured by value.
     ExecutionSerial pendingSerial = GetPendingCommandSerial();
 
-    [*pendingCommands addScheduledHandler:^(id<MTLCommandBuffer>) {
-        this->mLastSubmittedCommands.Use([&](auto lastSubmittedCommands) {
-            if (*lastSubmittedCommands == pendingCommandsPointer) {
+    // These callbacks run on a thread internal to the Metal driver, so they must be thread-safe.
+    //
+    // - Hold a strong-ref to the queue in the callbacks. While technically it is already guaranteed
+    //   that the queue won't be freed until it's finished executing, that's somewhat fragile and
+    //   it's safer to just be explicit about it. We assume the callbacks will get called eventually
+    //   and thus not leak.
+    auto ScheduledHandler = [queue = Ref<Queue>(this),
+                             pendingSerial](id<MTLCommandBuffer> commandBuffer) {
+        DAWN_TSAN_ACQUIRE(commandBuffer);  // See DAWN_TSAN_RELEASE below.
+
+        queue->mLastSubmittedCommands.Use([&](auto lastSubmittedCommands) {
+            if (*lastSubmittedCommands == commandBuffer) {
                 *lastSubmittedCommands = nullptr;
             }
         });
-        this->UpdateCommandsScheduledEvents(pendingSerial);
-    }];
+        queue->UpdateCommandsScheduledEvents(pendingSerial);  // Thread-safe.
+    };
+    auto CompletedHandler = [queue = Ref<Queue>(this),
+                             pendingSerial](id<MTLCommandBuffer> commandBuffer) {
+        DAWN_TSAN_ACQUIRE(commandBuffer);  // See DAWN_TSAN_RELEASE below.
 
-    // This ObjC block runs on a different thread.
-    [*pendingCommands addCompletedHandler:^(id<MTLCommandBuffer>) {
-        TRACE_EVENT_ASYNC_END0(platform, GPUWork, "DeviceMTL::SubmitPendingCommandBuffer",
-                               uint64_t(pendingSerial));
+        TRACE_EVENT_END(DAWN_TRACE_CATEGORY("gpu_work"),
+                        perfetto::NamedTrack("DeviceMTL::CommandBuffer", uint64_t{pendingSerial}));
 
-        this->UpdateCompletedSerialTo(pendingSerial);
-        this->UpdateCommandsCompletedEvents(pendingSerial);
-    }];
+        DeviceBase* device = queue->GetDevice();  // Thread-safe (immutable data).
 
-    TRACE_EVENT_ASYNC_BEGIN0(platform, GPUWork, "DeviceMTL::SubmitPendingCommandBuffer",
-                             uint64_t(pendingSerial));
+        {
+            // Make sure we didn't disconnect the device before it finished executing.
+            // This is just a safety check to make sure we didn't mess up the state of the device
+            // somehow while it was still executing. It doesn't need to be in the same critical
+            // section with the SetDisconnectingIfAlive and UpdateCompletedSerialTo.
+            auto deviceState = device->GetState();  // Thread-safe.
+            DAWN_CHECK(deviceState == DeviceBase::State::Alive ||
+                       deviceState == DeviceBase::State::Disconnecting);
+        }
+
+        MTLCommandBufferStatus status =
+            INJECT_ERROR_OR_RUN(commandBuffer.status, MTLCommandBufferStatusError);
+        if (status == MTLCommandBufferStatusError) [[unlikely]] {
+            NSError* error = commandBuffer.error;
+            std::string message =
+                error ? absl::StrFormat("Metal command buffer failed: %s (domain=%s, code=%ld)",
+                                        [[error localizedDescription] UTF8String],
+                                        [[error domain] UTF8String], error.code)
+                      : "Metal command buffer failed (with unspecified error)";
+            queue->SetExecutionError(message);  // Thread-safe.
+
+            // Since we're not holding any lock here, we need to set the device as lost immediately
+            // *before* updating the serial (as well as before any subsequent command buffers update
+            // the serial). Otherwise, Dawn may assume that since the serial was advanced, the
+            // command buffer actually completed doing its work.
+            device->SetDisconnectingIfAlive();  // Thread-safe.
+        }
+
+        queue->UpdateCompletedSerialTo(QueuePriority::Lowest, pendingSerial);  // Thread-safe.
+    };
+
+    [*pendingCommands addScheduledHandler:std::move(ScheduledHandler)];
+    [*pendingCommands addCompletedHandler:std::move(CompletedHandler)];
+
+    // TSan has trouble tracking these callbacks, probably because they pass through uninstrumented
+    // driver code. To prove to TSan that the callback object is initialized before it's executed,
+    // insert a __tsan_release() here (after initialization of the driver's copies of the handlers)
+    // to pair with the __tsan_acquire() in the callbacks (which happens before the callback code
+    // attempts to access any of the captured data).
+    //
+    // For the synchronization address, we use the command buffer itself since the driver takes care
+    // of that one for us, and it happens to have the correct scope/lifetime for this annotation. If
+    // this weren't the case, we would need to find some other address to sync on, itself captured
+    // as a raw pointer in the callback (because for some reason if the callback is not trivially
+    // copyable then the lambda object itself internally points these at an allocation that isn't
+    // synchronized).
+    //
+    // This issue has been specifically observed in Skia TSan builds, but not in dawn_end2end_tests
+    // (perhaps because Skia has a different API usage pattern?).
+    DAWN_TSAN_RELEASE(pendingCommands.Get());
+
+    TRACE_EVENT_BEGIN(DAWN_TRACE_CATEGORY("gpu_work"), "DeviceMTL::SubmitPendingCommandBuffer",
+                      perfetto::NamedTrack("DeviceMTL::CommandBuffer", uint64_t{pendingSerial}));
 
     DAWN_ASSERT(mSharedFence);
     [*pendingCommands encodeSignalEvent:mSharedFence->GetMTLSharedEvent()
@@ -281,15 +351,16 @@ ResultOrError<Ref<SharedFence>> Queue::GetOrCreateSharedFence() {
     return SharedFence::Create(ToBackend(GetDevice()), "Internal MTLSharedEvent", &desc);
 }
 
-MaybeError Queue::SubmitImpl(uint32_t commandCount, CommandBufferBase* const* commands) {
+MaybeError Queue::SubmitImpl(Span<CommandBufferBase* const> commands) {
     @autoreleasepool {
         CommandRecordingContext* commandContext = GetPendingCommandContext();
 
-        TRACE_EVENT_BEGIN0(GetDevice()->GetPlatform(), Recording, "CommandBufferMTL::FillCommands");
-        for (uint32_t i = 0; i < commandCount; ++i) {
-            DAWN_TRY(ToBackend(commands[i])->FillCommands(commandContext));
+        {
+            TRACE_EVENT(DAWN_TRACE_CATEGORY("recording"), "CommandBufferMTL::FillCommands");
+            for (CommandBufferBase* commandBuffer : commands) {
+                DAWN_TRY(ToBackend(commandBuffer)->FillCommands(commandContext));
+            }
         }
-        TRACE_EVENT_END0(GetDevice()->GetPlatform(), Recording, "CommandBufferMTL::FillCommands");
 
         DAWN_TRY(SubmitPendingCommandBuffer());
 
@@ -315,27 +386,6 @@ void Queue::ForceEventualFlushOfCommands() {
     if (mCommandContext.WasUsed()) {
         mCommandContext.SetNeedsSubmit();
     }
-}
-
-ResultOrError<ExecutionSerial> Queue::WaitForQueueSerialImpl(ExecutionSerial waitSerial,
-                                                             Nanoseconds timeout) {
-    Ref<WaitListEvent> completionEvent = AcquireRef(new WaitListEvent());
-    mCommandsCompletedEvents.Use([&](auto events) {
-        // Now that we hold the lock, check against completed serial before inserting. This serial
-        // may have just completed. If it did, mark the event complete. Also check for device loss.
-        // Otherwise, we could enqueue the event after mCommandsCompletedEvents has been flushed for
-        // device loss, and it'll never get cleaned up.
-        if (GetDevice()->GetState() == DeviceBase::State::Disconnected ||
-            GetDevice()->GetState() == DeviceBase::State::Destroyed ||
-            waitSerial <= GetCompletedCommandSerial()) {
-            completionEvent->Signal();
-        } else {
-            // Insert the event into the list which will be signaled inside Metal's queue
-            // completion handler.
-            events->Enqueue(completionEvent, waitSerial);
-        }
-    });
-    return completionEvent->Wait(timeout) ? waitSerial : kWaitSerialTimeout;
 }
 
 }  // namespace dawn::native::metal

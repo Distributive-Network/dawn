@@ -29,9 +29,7 @@
 #define SRC_TINT_LANG_WGSL_RESOLVER_VALIDATOR_H_
 
 #include <cstdint>
-#include <set>
 #include <string>
-#include <utility>
 
 #include "src/tint/lang/core/evaluation_stage.h"
 #include "src/tint/lang/core/type/input_attachment.h"
@@ -40,45 +38,30 @@
 #include "src/tint/lang/wgsl/ast/pipeline_stage.h"
 #include "src/tint/lang/wgsl/program/program_builder.h"
 #include "src/tint/lang/wgsl/resolver/sem_helper.h"
+#include "src/tint/lang/wgsl/sem/member_accessor_expression.h"
 #include "src/tint/utils/containers/hashmap.h"
 #include "src/tint/utils/containers/scope_stack.h"
 #include "src/tint/utils/containers/vector.h"
 #include "src/tint/utils/diagnostic/source.h"
 #include "src/tint/utils/math/hash.h"
-#include "src/tint/utils/text/styled_text.h"
 
 // Forward declarations
 namespace tint::ast {
-class IndexAccessorExpression;
-class BinaryExpression;
-class BitcastExpression;
 class CallExpression;
-class CallStatement;
-class CaseStatement;
-class ForLoopStatement;
 class Function;
-class IdentifierExpression;
-class LoopStatement;
-class MemberAccessorExpression;
 class ReturnStatement;
 class SwitchStatement;
-class UnaryOpExpression;
 class Variable;
-class WhileStatement;
 }  // namespace tint::ast
 namespace tint::sem {
 class Array;
-class BlockStatement;
 class BreakIfStatement;
 class BuiltinFn;
 class Call;
-class CaseStatement;
 class ForLoopStatement;
 class IfStatement;
 class LoopStatement;
-class Materialize;
 class Statement;
-class SwitchStatement;
 class WhileStatement;
 }  // namespace tint::sem
 namespace tint::core::type {
@@ -86,24 +69,6 @@ class Atomic;
 }  // namespace tint::core::type
 
 namespace tint::resolver {
-
-/// TypeAndAddressSpace is a pair of type and address space
-struct TypeAndAddressSpace {
-    /// The type
-    const core::type::Type* type;
-    /// The address space
-    core::AddressSpace address_space;
-
-    /// Equality operator
-    /// @param other the other TypeAndAddressSpace to compare this TypeAndAddressSpace to
-    /// @returns true if the type and address space of this TypeAndAddressSpace is equal to @p other
-    bool operator==(const TypeAndAddressSpace& other) const {
-        return type == other.type && address_space == other.address_space;
-    }
-
-    /// @returns the hash value of this object
-    tint::HashCode HashCode() const { return Hash(type, address_space); }
-};
 
 /// DiagnosticFilterStack is a scoped stack of diagnostic filters.
 using DiagnosticFilterStack = ScopeStack<wgsl::DiagnosticRule, wgsl::DiagnosticSeverity>;
@@ -128,13 +93,11 @@ class Validator {
     /// @param enabled_extensions all the extensions declared in current module
     /// @param allowed_features the allowed extensions and features
     /// @param atomic_composite_info atomic composite info of the module
-    /// @param valid_type_storage_layouts a set of validated type layouts by address space
     Validator(ProgramBuilder* builder,
               SemHelper& helper,
               const wgsl::Extensions& enabled_extensions,
               const wgsl::AllowedFeatures& allowed_features,
-              const Hashmap<const core::type::Type*, const Source*, 8>& atomic_composite_info,
-              Hashset<TypeAndAddressSpace, 8>& valid_type_storage_layouts);
+              const Hashmap<const core::type::Type*, const Source*, 8>& atomic_composite_info);
     ~Validator();
 
     /// @returns an error diagnostic
@@ -563,10 +526,15 @@ class Validator {
     /// @returns true on success, false otherwise
     bool QuadBroadcast(const sem::Call* call) const;
 
-    /// Validates a bufferView builtin function
+    /// Validates a bufferView or bufferArrayView builtin function
     /// @param call the builtin call to validate
     /// @returns true on success, false otherwise
     bool BufferView(const sem::Call* call) const;
+
+    /// Validate subgroupMatrixLoad and subgroupMatrixStore builtin functions
+    /// @param call the builtin call to validate
+    /// @returns true on success, false otherwise
+    bool SubgroupMatrixLoadStore(const sem::Call* call) const;
 
     /// Validates an optional builtin function and its required extensions and language features.
     /// @param call the builtin call to validate
@@ -604,14 +572,11 @@ class Validator {
                             const char* use,
                             DiagnosticDuplicates allow_duplicates) const;
 
-    /// Validates a address space layout
-    /// @param type the type to validate
-    /// @param sc the address space
-    /// @param source the source of the type
-    /// @returns true on success, false otherwise
-    bool AddressSpaceLayout(const core::type::Type* type,
-                            core::AddressSpace sc,
-                            Source source) const;
+    /// Validates a swizzle assignment
+    /// @param lhs the lhs swizzle to validate
+    /// @param source the source of the swizzle
+    /// @returns true on success, false otherwise.
+    bool SwizzleAssignment(const sem::Swizzle* lhs, const Source& source) const;
 
   private:
     /// @param ty the type to check
@@ -664,6 +629,18 @@ class Validator {
     bool CheckNoMultipleModuleScopeVarsOfAddressSpace(sem::Function* entry_point,
                                                       core::AddressSpace space) const;
 
+    /// Validates the offset argument of a subgroupMatrixLoad or subgroupMatrixStore call.
+    /// @param fn the builtin function symbol
+    /// @param p_arg the pointer argument
+    /// @param offset_arg the offset argument
+    /// @param majorness_template indicates which variant of the builtin is used
+    /// @returns true on success, false if an error was raised.
+    /// TODO(b/529415904): remove this when deprecated load/store variants are removed.
+    bool CheckSubgroupMatrixOpOffset(const sem::BuiltinFn* fn,
+                                     const sem::ValueExpression* p_arg,
+                                     const sem::ValueExpression* offset_arg,
+                                     bool majorness_template) const;
+
     SymbolTable& symbols_;
     diag::List& diagnostics_;
     SemHelper& sem_;
@@ -671,7 +648,6 @@ class Validator {
     const wgsl::Extensions& enabled_extensions_;
     const wgsl::AllowedFeatures& allowed_features_;
     const Hashmap<const core::type::Type*, const Source*, 8>& atomic_composite_info_;
-    Hashset<TypeAndAddressSpace, 8>& valid_type_storage_layouts_;
 };
 
 }  // namespace tint::resolver

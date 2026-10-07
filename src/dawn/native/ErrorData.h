@@ -35,7 +35,7 @@
 #include <vector>
 
 #include "absl/strings/str_format.h"
-#include "dawn/common/Compiler.h"
+#include "src/dawn/common/Compiler.h"
 
 namespace wgpu {
 enum class ErrorType : uint32_t;
@@ -50,17 +50,17 @@ enum class InternalErrorType : uint32_t;
 
 class [[nodiscard]] ErrorData {
   public:
-    [[nodiscard]] static std::unique_ptr<ErrorData> Create(InternalErrorType type,
-                                                           std::string message,
-                                                           const char* file,
-                                                           const char* function,
-                                                           int line);
+    [[nodiscard]] static ErrorData Create(InternalErrorType type,
+                                          std::string message,
+                                          const char* file,
+                                          const char* function,
+                                          int line);
     ErrorData(InternalErrorType type, std::string message);
 
     struct BacktraceRecord {
-        const char* file;
-        const char* function;
-        int line;
+        const char* file = nullptr;
+        const char* function = nullptr;
+        int line = 0;
     };
     void AppendBacktrace(const char* file, const char* function, int line);
     void AppendContext(std::string context);
@@ -88,6 +88,7 @@ class [[nodiscard]] ErrorData {
     }
 
     InternalErrorType GetType() const;
+    void SetType(InternalErrorType type) { mType = type; }
     const std::string& GetMessage() const;
     const std::vector<BacktraceRecord>& GetBacktrace() const;
     const std::vector<std::string>& GetContexts() const;
@@ -97,7 +98,7 @@ class [[nodiscard]] ErrorData {
     std::string GetFormattedMessage() const;
 
   private:
-    InternalErrorType mType;
+    InternalErrorType mType = {};
     std::string mMessage;
     std::vector<BacktraceRecord> mBacktrace;
     std::vector<std::string> mContexts;

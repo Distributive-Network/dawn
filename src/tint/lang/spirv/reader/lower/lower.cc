@@ -29,7 +29,7 @@
 
 #include "src/tint/lang/core/ir/transform/dead_code_elimination.h"
 #include "src/tint/lang/core/ir/transform/remove_terminator_args.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/spirv/reader/lower/atomics.h"
 #include "src/tint/lang/spirv/reader/lower/builtins.h"
 #include "src/tint/lang/spirv/reader/lower/decompose_strided_array.h"
@@ -65,13 +65,10 @@ Result<SuccessType> Lower(core::ir::Module& mod) {
     // `||` statements.
     TINT_CHECK_RESULT(core::ir::transform::RemoveTerminatorArgs(mod));
 
-    TINT_CHECK_RESULT(
-        core::ir::ValidateAndDumpIfNeeded(mod, "spirv.Lower",
-                                          core::ir::Capabilities{
-                                              core::ir::Capability::kAllowMultipleEntryPoints,
-                                              core::ir::Capability::kAllowOverrides,
-                                          },
-                                          "after"));
+    // All SPIR-V types should have been removed by the transforms above.
+    mod.properties.Remove(core::ir::Property::kAllowNonCoreTypes);
+
+    core::ir::AssertValid(mod, "after spirv.Lower");
 
     return Success;
 }

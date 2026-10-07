@@ -28,8 +28,8 @@
 #ifndef SRC_DAWN_NATIVE_COPYTEXTUREFORBROWSERHELPER_H_
 #define SRC_DAWN_NATIVE_COPYTEXTUREFORBROWSERHELPER_H_
 
-#include "dawn/native/Error.h"
-#include "dawn/native/ObjectBase.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/ObjectBase.h"
 
 namespace dawn::native {
 class DeviceBase;
@@ -37,17 +37,17 @@ struct Extent3D;
 struct TexelCopyTextureInfo;
 struct CopyTextureForBrowserOptions;
 
-MaybeError ValidateCopyTextureForBrowser(DeviceBase* device,
-                                         const TexelCopyTextureInfo* source,
-                                         const TexelCopyTextureInfo* destination,
-                                         const Extent3D* copySize,
-                                         const CopyTextureForBrowserOptions* options);
+MaybeValError ValidateCopyTextureForBrowser(DeviceBase* device,
+                                            const TexelCopyTextureInfo* source,
+                                            const TexelCopyTextureInfo* destination,
+                                            const Extent3D* copySize,
+                                            const CopyTextureForBrowserOptions* options);
 
-MaybeError ValidateCopyExternalTextureForBrowser(DeviceBase* device,
-                                                 const ImageCopyExternalTexture* source,
-                                                 const TexelCopyTextureInfo* destination,
-                                                 const Extent3D* copySize,
-                                                 const CopyTextureForBrowserOptions* options);
+MaybeValError ValidateCopyExternalTextureForBrowser(DeviceBase* device,
+                                                    const ImageCopyExternalTexture* source,
+                                                    const TexelCopyTextureInfo* destination,
+                                                    const Extent3D* copySize,
+                                                    const CopyTextureForBrowserOptions* options);
 
 MaybeError DoCopyTextureForBrowser(DeviceBase* device,
                                    const TexelCopyTextureInfo* source,

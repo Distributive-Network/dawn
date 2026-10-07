@@ -26,6 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/type/matrix.h"
+
 #include "src/tint/lang/core/type/f32.h"
 #include "src/tint/lang/core/type/helper_test.h"
 #include "src/tint/lang/core/type/i32.h"
@@ -83,6 +84,13 @@ TEST_F(MatrixTest, FriendlyName) {
     Vector c{&i32, 3};
     Matrix m{&c, 2};
     EXPECT_EQ(m.FriendlyName(), "mat2x3<i32>");
+}
+
+TEST_F(MatrixTest, IdentifierName) {
+    I32 i32;
+    Vector c{&i32, 3};
+    Matrix m{&c, 2};
+    EXPECT_EQ(m.IdentifierName(), "mat2x3_i32");
 }
 
 TEST_F(MatrixTest, Clone) {

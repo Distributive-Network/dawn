@@ -34,25 +34,30 @@
 #include <string>
 #include <vector>
 
-#include "dawn/wire/client/ObjectBase.h"
+#include "src/dawn/wire/client/ObjectBase.h"
 
 namespace dawn::wire::client {
 
+class Device;
+
 class ShaderModule final : public ObjectWithEventsBase {
   public:
+    static ShaderModule* Create(Device* device, const ShaderModuleDescriptor* descriptor);
+
     using ObjectWithEventsBase::ObjectWithEventsBase;
 
     ObjectType GetObjectType() const override;
 
-    WGPUFuture APIGetCompilationInfo(const WGPUCompilationInfoCallbackInfo& callbackInfo);
+    Future APIGetCompilationInfo(const WGPUCompilationInfoCallbackInfo& callbackInfo);
 
   private:
     friend class Client;
     class CompilationInfoEvent;
 
-    std::optional<WGPUCompilationInfo> mCompilationInfo;
+    std::optional<CompilationInfo> mCompilationInfo;
     std::vector<std::string> mMessageStrings;
-    std::vector<WGPUCompilationMessage> mMessages;
+    std::vector<CompilationMessage> mMessages;
+    std::vector<DawnCompilationMessageUtf16> mUtf16s;
 };
 
 }  // namespace dawn::wire::client

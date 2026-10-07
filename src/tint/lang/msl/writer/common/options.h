@@ -34,46 +34,44 @@
 
 #include "src/tint/api/common/binding_point.h"
 #include "src/tint/api/common/bindings.h"
+#include "src/tint/api/common/resource_table_config.h"
 #include "src/tint/api/common/substitute_overrides_config.h"
 #include "src/tint/api/common/vertex_pulling_config.h"
-#include "src/tint/utils/reflection.h"
+#include "src/tint/utils/reflection/reflection.h"
 
 namespace tint::msl::writer {
 
-/// Options used to specify a mapping of binding points to indices into a UBO
-/// from which to load buffer sizes.
-/// TODO(crbug.com/366291600): Remove ubo_binding after switch to immediates.
+/// Options used to load buffer sizes from immediate data.
 struct ArrayLengthOptions {
-    /// The MSL binding point to use to generate a uniform buffer from which to read buffer sizes.
-    std::optional<uint32_t> ubo_binding{};
-
     /// The offset in immediate block for buffer sizes.
     std::optional<uint32_t> buffer_sizes_offset{};
 
     /// The mapping from the storage buffer binding points in WGSL binding-point space to the index
-    /// into the uniform buffer where the length of the buffer is stored.
+    /// into the immediate data where the length of the buffer is stored.
     std::unordered_map<BindingPoint, uint32_t> bindpoint_to_size_index{};
 
     /// Reflect the fields of this class so that it can be used by tint::ForeachField()
-    TINT_REFLECT(ArrayLengthOptions, ubo_binding, buffer_sizes_offset, bindpoint_to_size_index);
-    TINT_REFLECT_EQUALS(ArrayLengthOptions);
+    TINT_REFLECT(ArrayLengthOptions, buffer_sizes_offset, bindpoint_to_size_index);
     TINT_REFLECT_HASH_CODE(ArrayLengthOptions);
+
+    bool operator==(const ArrayLengthOptions&) const = default;
 };
 
 /// Information to configure an argument buffer
 struct ArgumentBufferInfo {
     /// The buffer ID to use for this argument buffer
-    uint32_t id;
+    uint32_t id = 0;
 
     /// The buffer ID to use for the dynamic buffer if needed
     std::optional<uint32_t> dynamic_buffer_id{};
 
-    /// Dynamic offsets map. The map is binding number -> offset index
+    /// Dynamic offsets map. The map is BindingIndex -> dynamic offsets array index
     std::unordered_map<uint32_t, uint32_t> binding_info_to_offset_index{};
 
     TINT_REFLECT(ArgumentBufferInfo, id, dynamic_buffer_id, binding_info_to_offset_index);
-    TINT_REFLECT_EQUALS(ArgumentBufferInfo);
     TINT_REFLECT_HASH_CODE(ArgumentBufferInfo);
+
+    bool operator==(const ArgumentBufferInfo&) const = default;
 };
 
 /// Configuration options used for generating MSL.
@@ -86,8 +84,9 @@ struct Options {
 
         /// Reflect the fields of this class so that it can be used by tint::ForeachField()
         TINT_REFLECT(RangeOffsets, min, max);
-        TINT_REFLECT_EQUALS(RangeOffsets);
         TINT_REFLECT_HASH_CODE(RangeOffsets);
+
+        bool operator==(const RangeOffsets&) const = default;
     };
 
     /// The set of options which control workarounds for driver issues.
@@ -115,15 +114,37 @@ struct Options {
         /// Set to `true` to polyfill `unpack2x16unorm()`.
         bool polyfill_unpack_2x16_unorm = false;
 
+        /// Set to `true` to polyfill tanh with an f16 value
+        bool polyfill_tanh_f16 = false;
+
+        /// Set to `true` to replace bool types in workgroup storage with u32.
+        bool replace_workgroup_bool_with_u32 = false;
+
+        /// Set to `true` to collapse nested subgroupMin and subgroupMax operations.
+        bool collapse_subgroup_min_max = false;
+
+        /// Set to `true` to work around a driver bug with u32 divide and modulo operations.
+        bool fix_u32_div_mod = false;
+
+        /// Set to `true` to polyfill dynamic component stores on boolean vectors with a branchless
+        /// select-based whole vector write operation.
+        bool polyfill_bool_vec_dynamic_store = false;
+
         TINT_REFLECT(Workarounds,
                      scalarize_max_min_clamp,
                      disable_module_constant_f16,
                      polyfill_subgroup_broadcast_f16,
                      polyfill_clamp_float,
                      polyfill_unpack_2x16_snorm,
-                     polyfill_unpack_2x16_unorm);
-        TINT_REFLECT_EQUALS(Workarounds);
+                     polyfill_unpack_2x16_unorm,
+                     polyfill_tanh_f16,
+                     replace_workgroup_bool_with_u32,
+                     collapse_subgroup_min_max,
+                     fix_u32_div_mod,
+                     polyfill_bool_vec_dynamic_store);
         TINT_REFLECT_HASH_CODE(Workarounds);
+
+        bool operator==(const Workarounds&) const = default;
     };
 
     /// Any options which are controlled by the current Metal version.
@@ -136,9 +157,14 @@ struct Options {
         /// Set to `true` to disable demote to helper transform
         bool disable_demote_to_helper = false;
 
-        TINT_REFLECT(Extensions, disable_demote_to_helper);
-        TINT_REFLECT_EQUALS(Extensions);
+        /// Set to `true` to enable the use of Metal Tensors for subgroup matrix.
+        /// TODO(553457231): Enable in fuzzers when implementation is complete.
+        bool enable_tensors = false;
+
+        TINT_REFLECT(Extensions, disable_demote_to_helper, enable_tensors);
         TINT_REFLECT_HASH_CODE(Extensions);
+
+        bool operator==(const Extensions&) const = default;
     };
 
     /// Constructor
@@ -197,8 +223,8 @@ struct Options {
     /// Index of pixel_local structure member index to attachment index
     std::unordered_map<uint32_t, uint32_t> pixel_local_attachments;
 
-    /// Options used to specify a mapping of binding points to indices into a UBO
-    /// or immediate block from which to load buffer sizes.
+    /// Options used to specify a mapping of binding points to indices into the immediate block
+    /// from which to load buffer sizes.
     ArrayLengthOptions array_length_from_constants = {};
 
     /// The optional vertex pulling configuration.
@@ -213,8 +239,14 @@ struct Options {
     /// Offsets of the minDepth and maxDepth push constants.
     std::optional<RangeOffsets> depth_range_offsets = std::nullopt;
 
+    /// Offset of the non-constant zero immediate.
+    uint32_t non_constant_zero_offset = 0;
+
     /// The bindings.
     Bindings bindings;
+
+    /// Resource table information
+    std::optional<ResourceTableConfig> resource_table = std::nullopt;
 
     // Substitute Overrides
     SubstituteOverridesConfig substitute_overrides_config = {};
@@ -239,10 +271,13 @@ struct Options {
                  immediate_binding_point,
                  group_to_argument_buffer_info,
                  depth_range_offsets,
+                 non_constant_zero_offset,
                  bindings,
+                 resource_table,
                  substitute_overrides_config);
-    TINT_REFLECT_EQUALS(Options);
     TINT_REFLECT_HASH_CODE(Options);
+
+    bool operator==(const Options&) const = default;
 };
 
 }  // namespace tint::msl::writer

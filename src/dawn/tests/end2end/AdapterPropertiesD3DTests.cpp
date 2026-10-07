@@ -25,7 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/tests/DawnTest.h"
+#include "src/dawn/tests/DawnTest.h"
 
 namespace dawn {
 namespace {
@@ -50,6 +50,11 @@ TEST_P(AdapterPropertiesD3DTest, GetD3DProperties) {
 
         // This is the minimum D3D shader model Dawn supports.
         EXPECT_GE(d3dProperties.shaderModel, 50u);
+
+        // A DXGI adapter always has a non-zero LUID.
+        EXPECT_NE((static_cast<uint64_t>(d3dProperties.adapterLUIDHighPart) << 32) |
+                      d3dProperties.adapterLUIDLowPart,
+                  0u);
     }
     {
         wgpu::AdapterInfo adapterInfo;
@@ -60,6 +65,10 @@ TEST_P(AdapterPropertiesD3DTest, GetD3DProperties) {
 
         // This is the minimum D3D shader model Dawn supports.
         EXPECT_GE(d3dProperties.shaderModel, 50u);
+
+        EXPECT_NE((static_cast<uint64_t>(d3dProperties.adapterLUIDHighPart) << 32) |
+                      d3dProperties.adapterLUIDLowPart,
+                  0u);
     }
 }
 

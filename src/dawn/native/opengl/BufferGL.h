@@ -28,10 +28,11 @@
 #ifndef SRC_DAWN_NATIVE_OPENGL_BUFFERGL_H_
 #define SRC_DAWN_NATIVE_OPENGL_BUFFERGL_H_
 
-#include "dawn/native/Buffer.h"
-#include "partition_alloc/pointers/raw_ptr.h"
+#include <vector>
 
-#include "dawn/native/opengl/opengl_platform.h"
+#include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/native/Buffer.h"
+#include "src/dawn/native/opengl/opengl_platform.h"
 
 namespace dawn::native::opengl {
 
@@ -56,8 +57,10 @@ class Buffer final : public BufferBase {
 
     void TrackUsage() { MarkUsedInPendingCommands(); }
 
+    const void* GetMappedDataForTesting() const { return mMappedData.data(); }
+
   private:
-    Buffer(Device* device, const UnpackedPtr<BufferDescriptor>& descriptor, GLuint handle);
+    Buffer(Device* device, const UnpackedPtr<BufferDescriptor>& descriptor);
     ~Buffer() override;
     MaybeError MapAsyncImpl(wgpu::MapMode mode, size_t offset, size_t size) override;
     MaybeError FinalizeMapImpl(BufferState newState) override;
@@ -65,12 +68,16 @@ class Buffer final : public BufferBase {
     void DestroyImpl(DestroyReason reason) override;
     bool IsCPUWritableAtCreation() const override;
     MaybeError MapAtCreationImpl() override;
-    void* GetMappedPointerImpl() override;
+    Span<std::byte> GetMappedRangeImpl(size_t mapOffset, size_t mapSize) override;
 
     MaybeError InitializeToZero();
 
     GLuint mBuffer = 0;
-    raw_ptr<void> mMappedData = nullptr;
+    RawSpan<std::byte> mMappedData;
+    size_t mMappedDataOffsetInBuffer = 0u;
+    // Used as staging for mMappedData when running in GLDefer mode. Copied to the actual mapping
+    // when executing GL commands.
+    std::vector<std::byte> mCPUStaging;
 };
 
 }  // namespace dawn::native::opengl

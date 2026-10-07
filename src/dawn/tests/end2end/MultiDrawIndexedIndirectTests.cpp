@@ -27,10 +27,11 @@
 
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderBundleEncoderDescriptor.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderBundleEncoderDescriptor.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/compiler.h"
 
 namespace dawn {
 namespace {
@@ -173,6 +174,16 @@ TEST_P(MultiDrawIndexedIndirectTest, Uint32) {
     Test({6, 1, 0, 0, 0}, 0, 0, 1, filled, filled);
 }
 
+// Non-zero firstInstance is not allowed because `IndirectFirstInstance` is not requested in
+// `MultiDrawIndirectTest`.
+TEST_P(MultiDrawIndexedIndirectTest, FirstInstanceRequiresFeature) {
+    DAWN_TEST_UNSUPPORTED_IF(HasToggleEnabled("skip_validation"));
+
+    utils::RGBA8 filled(0, 255, 0, 255);
+    utils::RGBA8 notFilled(0, 0, 0, 0);
+    Test({3, 1, 0, 0, 1, 3, 1, 3, 0, 0}, 0, 0, 2, notFilled, filled);
+}
+
 // Test the parameter 'baseVertex' of DrawIndexed() works.
 TEST_P(MultiDrawIndexedIndirectTest, BaseVertex) {
     utils::RGBA8 filled(0, 255, 0, 255);
@@ -186,7 +197,7 @@ TEST_P(MultiDrawIndexedIndirectTest, BaseVertex) {
 
     const int negFour = -4;
     uint32_t unsignedNegFour;
-    std::memcpy(&unsignedNegFour, &negFour, sizeof(int));
+    DAWN_UNSAFE_TODO(std::memcpy(&unsignedNegFour, &negFour, sizeof(int)));
 
     // Test negative baseVertex
     // Test a draw with only the first 3 indices of the first quad (bottom left triangle)
@@ -566,10 +577,11 @@ class MultiDrawIndexedIndirectUsingInstanceIndexTest
     : public MultiDrawIndexedIndirectUsingFirstVertexTest {
   protected:
     std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
-        if (!SupportsFeatures({wgpu::FeatureName::MultiDrawIndirect})) {
+        if (!SupportsFeatures(
+                {wgpu::FeatureName::MultiDrawIndirect, wgpu::FeatureName::IndirectFirstInstance})) {
             return {};
         }
-        return {wgpu::FeatureName::MultiDrawIndirect};
+        return {wgpu::FeatureName::MultiDrawIndirect, wgpu::FeatureName::IndirectFirstInstance};
     }
 
     void SetupShaderModule() override {
@@ -590,12 +602,6 @@ class MultiDrawIndexedIndirectUsingInstanceIndexTest
             @fragment fn main() -> @location(0) vec4f {
                 return vec4f(0.0, 1.0, 0.0, 1.0);
             })");
-    }
-
-    void SetUp() override {
-        DawnTest::SetUp();
-        DAWN_TEST_UNSUPPORTED_IF(!device.HasFeature(wgpu::FeatureName::MultiDrawIndirect));
-        GeneralSetup();
     }
 };
 

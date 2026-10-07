@@ -26,6 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/type/reference.h"
+
 #include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/type/f32.h"
 #include "src/tint/lang/core/type/helper_test.h"
@@ -89,6 +90,18 @@ TEST_F(ReferenceTest, FriendlyNameWithAddressSpace) {
     Manager ty;
     auto* r = ty.ref(core::AddressSpace::kWorkgroup, ty.i32(), core::Access::kRead);
     EXPECT_EQ(r->FriendlyName(), "ref<workgroup, i32, read>");
+}
+
+TEST_F(ReferenceTest, IdentifierName) {
+    Manager ty;
+    auto* r = ty.ref(core::AddressSpace::kUndefined, ty.i32(), core::Access::kRead);
+    EXPECT_EQ(r->IdentifierName(), "ref_i32_read");
+}
+
+TEST_F(ReferenceTest, IdentifierNameWithAddressSpace) {
+    Manager ty;
+    auto* r = ty.ref(core::AddressSpace::kWorkgroup, ty.i32(), core::Access::kRead);
+    EXPECT_EQ(r->IdentifierName(), "ref_workgroup_i32_read");
 }
 
 TEST_F(ReferenceTest, Clone) {

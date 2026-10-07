@@ -28,13 +28,14 @@
 #ifndef SRC_DAWN_NATIVE_PASSRESOURCEUSAGETRACKER_H_
 #define SRC_DAWN_NATIVE_PASSRESOURCEUSAGETRACKER_H_
 
-#include <vector>
-
 #include "absl/container/flat_hash_map.h"
-#include "dawn/native/PassResourceUsage.h"
-
 #include "absl/container/flat_hash_set.h"
-#include "dawn/native/dawn_platform.h"
+#include "partition_alloc/pointers/raw_ptr.h"
+#include "partition_alloc/pointers/raw_ptr_exclusion.h"
+#include "src/dawn/common/ityp_vector.h"
+#include "src/dawn/native/IntegerTypes.h"
+#include "src/dawn/native/PassResourceUsage.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace dawn::native {
 
@@ -44,7 +45,7 @@ class ExternalTextureBase;
 class QuerySetBase;
 class TextureBase;
 
-using QueryAvailabilityMap = absl::flat_hash_map<QuerySetBase*, std::vector<bool>>;
+using QueryAvailabilityMap = absl::flat_hash_map<QuerySetBase*, ityp::vector<QueryIndex, bool>>;
 
 // Helper class to build SyncScopeResourceUsages
 class SyncScopeUsageTracker {
@@ -58,7 +59,7 @@ class SyncScopeUsageTracker {
     void BufferUsedAs(BufferBase* buffer,
                       wgpu::BufferUsage usage,
                       wgpu::ShaderStage shaderStages = wgpu::ShaderStage::None);
-    void TextureViewUsedAs(TextureViewBase* texture,
+    void TextureViewUsedAs(TextureViewBase* view,
                            wgpu::TextureUsage usage,
                            wgpu::ShaderStage shaderStages = wgpu::ShaderStage::None);
     void TextureRangeUsedAs(TextureBase* texture,
@@ -72,26 +73,34 @@ class SyncScopeUsageTracker {
     // Walks the bind groups and tracks all its resources.
     void AddBindGroup(BindGroupBase* group);
 
+    void SetUsedResourceTable(ResourceTableBase* table);
+
     // Returns the per-pass usage for use by backends for APIs with explicit barriers.
     SyncScopeResourceUsage AcquireSyncScopeUsage();
 
   private:
     void MergeTextureUsage(TextureBase* texture, const TextureSubresourceSyncInfo& textureSyncInfo);
 
-    absl::flat_hash_map<BufferBase*, BufferSyncInfo> mBufferSyncInfos;
-    absl::flat_hash_map<TextureBase*, TextureSubresourceSyncInfo> mTextureSyncInfos;
-    absl::flat_hash_set<ExternalTextureBase*> mExternalTextureUsages;
+    RAW_PTR_EXCLUSION absl::flat_hash_map<BufferBase*, BufferSyncInfo> mBufferSyncInfos;
+    RAW_PTR_EXCLUSION absl::flat_hash_map<TextureBase*, TextureSubresourceSyncInfo>
+        mTextureSyncInfos;
+    RAW_PTR_EXCLUSION absl::flat_hash_set<ExternalTextureBase*> mExternalTextureUsages;
+    raw_ptr<ResourceTableBase> mUsedResourceTable = nullptr;
 };
 
 // Helper class to build ComputePassResourceUsages
 class ComputePassResourceUsageTracker {
   public:
     ComputePassResourceUsageTracker();
+    ComputePassResourceUsageTracker(ComputePassResourceUsageTracker&&);
     ~ComputePassResourceUsageTracker();
+
+    ComputePassResourceUsageTracker& operator=(ComputePassResourceUsageTracker&&);
 
     void AddDispatch(SyncScopeResourceUsage scope);
     void AddReferencedBuffer(BufferBase* buffer);
     void AddResourcesReferencedByBindGroup(BindGroupBase* group);
+    void AddReferencedResourceTable(ResourceTableBase* table);
 
     ComputePassResourceUsage AcquireResourceUsage();
 
@@ -108,8 +117,10 @@ class RenderPassResourceUsageTracker : public SyncScopeUsageTracker {
 
     RenderPassResourceUsageTracker& operator=(RenderPassResourceUsageTracker&&);
 
-    void TrackQueryAvailability(QuerySetBase* querySet, uint32_t queryIndex);
+    void TrackQueryAvailability(QuerySetBase* querySet, QueryIndex queryIndex);
     const QueryAvailabilityMap& GetQueryAvailabilityMap() const;
+
+    void MarkFramebufferFetchUsed();
 
     RenderPassResourceUsage AcquireResourceUsage();
 
@@ -120,6 +131,8 @@ class RenderPassResourceUsageTracker : public SyncScopeUsageTracker {
 
     // Tracks queries used in the render pass to validate that they aren't written twice.
     QueryAvailabilityMap mQueryAvailabilities;
+
+    bool mFramebufferFetchUsed = false;
 };
 
 }  // namespace dawn::native

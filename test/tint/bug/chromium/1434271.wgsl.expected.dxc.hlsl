@@ -175,10 +175,10 @@ void export_level_inner(uint3 coord) {
   tex_out.GetDimensions(v.x, v.y);
   if (all((coord.xy < uint2(v)))) {
     uint dst_offset = (coord.x << ((coord.y * ubo[0u].x) & 31u));
-    uint src_offset = ((coord.x - 2u) + ((coord.y >> (2u & 31u)) * ubo[0u].x));
+    uint src_offset = ((coord.x - 2u) + ((coord.y >> 2u) * ubo[0u].x));
     uint v_1 = 0u;
     buf_in.GetDimensions(v_1);
-    float a = asfloat(buf_in.Load((0u + (min((src_offset << (0u & 31u)), ((v_1 / 4u) - 1u)) * 4u))));
+    float a = asfloat(buf_in.Load((0u + (min((src_offset << 0u), ((v_1 / 4u) - 1u)) * 4u))));
     uint v_2 = 0u;
     buf_in.GetDimensions(v_2);
     float b = asfloat(buf_in.Load((0u + (min((src_offset + 1u), ((v_2 / 4u) - 1u)) * 4u))));
@@ -191,9 +191,8 @@ void export_level_inner(uint3 coord) {
     float sum = dot(float4(a, b, c, d), (1.0f).xxxx);
     uint v_5 = 0u;
     buf_out.GetDimensions(v_5);
-    uint v_6 = (min(dst_offset, ((v_5 / 4u) - 1u)) * 4u);
-    float v_7 = (sum / 4.0f);
-    buf_out.Store((0u + v_6), asuint((sum - ((((v_7 < 0.0f)) ? (ceil(v_7)) : (floor(v_7))) * 4.0f))));
+    float v_6 = (sum / 4.0f);
+    buf_out.Store((0u + (min(dst_offset, ((v_5 / 4u) - 1u)) * 4u)), asuint((sum - (trunc(v_6) * 4.0f))));
     float4 probabilities = (float4(a, (a * b), ((a / b) + c), sum) + max(sum, 0.0f));
     tex_out[int2(coord.xy)] = probabilities;
   }

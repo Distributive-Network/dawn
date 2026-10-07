@@ -30,8 +30,8 @@
 #include <utility>
 
 #include "src/tint/lang/core/enums.h"
+#include "src/tint/lang/core/ir/array_count.h"
 #include "src/tint/lang/core/ir/transform/helper_test.h"
-#include "src/tint/lang/core/ir/type/array_count.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
 using namespace tint::core::number_suffixes;  // NOLINT
@@ -41,6 +41,12 @@ namespace {
 
 class IR_SingleEntryPointTest : public TransformTest {
   protected:
+    void SetUp() override {
+        TransformTest::SetUp();
+        mod.properties.Add(Property::kAllowMultipleEntryPoints, Property::kAllowOverrides,
+                           Property::kAllowBufferTypes);
+    }
+
     /// @returns a new entry point called @p name that references @p refs
     Function* EntryPoint(const char* name, std::initializer_list<Value*> refs = {}) {
         auto* func = Func(name, std::move(refs));
@@ -100,6 +106,12 @@ TEST_F(IR_SingleEntryPointTest, EntryPointNotFound) {
     auto result = SingleEntryPoint(mod, "foo");
     ASSERT_TRUE(result != Success);
     EXPECT_EQ(result.Failure().reason, "entry point 'foo' not found");
+}
+
+TEST_F(IR_SingleEntryPointTest, MultipleEntryPointPropertyRemoved) {
+    EntryPoint("main");
+    Run(SingleEntryPoint, "main");
+    EXPECT_FALSE(mod.properties.Contains(Property::kAllowMultipleEntryPoints));
 }
 
 TEST_F(IR_SingleEntryPointTest, NoChangesNeeded) {
@@ -319,28 +331,26 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(IR_SingleEntryPointTest, DirectOverridesWithInitializer) {
-    Value* init1 = nullptr;
-    Value* init2 = nullptr;
-    Value* init3 = nullptr;
-    b.Append(mod.root_block, [&] {
-        init1 = b.Multiply(2_i, 4_i)->Result();
-        auto* x = b.Multiply(2_i, 4_i);
-        init2 = b.Add(x, 4_i)->Result();
+    auto* init1 = mod.root_block->Append(b.Append(mod.CreateInstruction<core::ir::CoreBinary>(
+        b.InstructionResult(ty.i32()), BinaryOp::kMultiply, b.Constant(2_i), b.Constant(4_i))));
+    auto* x = mod.root_block->Append(b.Append(mod.CreateInstruction<core::ir::CoreBinary>(
+        b.InstructionResult(ty.i32()), BinaryOp::kMultiply, b.Constant(2_i), b.Constant(4_i))));
+    auto* init2 = mod.root_block->Append(b.Append(mod.CreateInstruction<core::ir::CoreBinary>(
+        b.InstructionResult(ty.i32()), BinaryOp::kAdd, x->Result(), b.Constant(4_i))));
+    auto* y = mod.root_block->Append(b.Append(mod.CreateInstruction<core::ir::CoreBinary>(
+        b.InstructionResult(ty.i32()), BinaryOp::kMultiply, b.Constant(3_i), b.Constant(5_i))));
+    auto* init3 = mod.root_block->Append(b.Append(mod.CreateInstruction<core::ir::CoreBinary>(
+        b.InstructionResult(ty.i32()), BinaryOp::kAdd, y->Result(), b.Constant(5_i))));
 
-        auto* y = b.Multiply(3_i, 5_i);
-        init3 = b.Add(y, 5_i)->Result();
-    });
-
-    auto* o1 = Override("o1", 1, init1);
-    auto* o2 = Override("o2", 2, init2);
-    auto* o3 = Override("o3", 3, init3);
+    auto* o1 = Override("o1", 1, init1->Result());
+    auto* o2 = Override("o2", 2, init2->Result());
+    auto* o3 = Override("o3", 3, init3->Result());
 
     EntryPoint("foo", {o1, o2});
     EntryPoint("bar", {o3});
@@ -392,7 +402,6 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
@@ -587,7 +596,6 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
@@ -814,7 +822,6 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
@@ -865,7 +872,6 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
@@ -888,8 +894,17 @@ TEST_F(IR_SingleEntryPointTest, OverrideInArrayType) {
         v2 = b.Var("b", ty.ptr(workgroup, a2, read_write))->Result();
     });
 
-    EntryPoint("foo", {v1});
-    EntryPoint("bar", {v2});
+    auto foo = b.ComputeFunction("foo");
+    b.Append(foo->Block(), [&] {
+        b.Let(v1->Type())->SetValue(v1);
+        b.Return(foo);
+    });
+
+    auto bar = b.ComputeFunction("bar");
+    b.Append(bar->Block(), [&] {
+        b.Let(v2->Type())->SetValue(v2);
+        b.Return(bar);
+    });
 
     auto* src = R"(
 $B1: {  # root
@@ -899,13 +914,13 @@ $B1: {  # root
   %b:ptr<workgroup, array<i32, %o2>, read_write> = var undef
 }
 
-%foo = @fragment func():void {
+%foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
   $B2: {
     %6:ptr<workgroup, array<i32, %o1>, read_write> = let %a
     ret
   }
 }
-%bar = @fragment func():void {
+%bar = @compute @workgroup_size(1u, 1u, 1u) func():void {
   $B3: {
     %8:ptr<workgroup, array<i32, %o2>, read_write> = let %b
     ret
@@ -919,7 +934,7 @@ $B1: {  # root
   %a:ptr<workgroup, array<i32, %o1>, read_write> = var undef
 }
 
-%foo = @fragment func():void {
+%foo = @compute @workgroup_size(1u, 1u, 1u) func():void {
   $B2: {
     %4:ptr<workgroup, array<i32, %o1>, read_write> = let %a
     ret
@@ -929,7 +944,6 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
@@ -943,7 +957,7 @@ TEST_F(IR_SingleEntryPointTest, OverrideWithComplexIncludingOverride) {
         auto* add = b.Add(x, 4_u);
         o = b.Override(Source{{1, 2}}, "a", ty.u32());
         o->SetOverrideId({1});
-        o->SetInitializer(add->Result());
+        o->SetInitializer(add);
     });
 
     auto* func = b.Function("foo", ty.u32());
@@ -991,7 +1005,6 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
@@ -1006,7 +1019,7 @@ TEST_F(IR_SingleEntryPointTest, OverrideInitVar) {
         auto* add = b.Add(x, 3_u);
         auto* var_local =
             b.Var("a", core::AddressSpace::kPrivate, ty.u32(), core::Access::kReadWrite);
-        var_local->SetInitializer(add->Result());
+        var_local->SetInitializer(add);
         v1 = var_local->Result();
     });
 
@@ -1043,7 +1056,6 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
@@ -1061,8 +1073,8 @@ TEST_F(IR_SingleEntryPointTest, OverrideInitVarIntermediateUnused) {
             b.Var("a", core::AddressSpace::kPrivate, ty.u32(), core::Access::kReadWrite);
         auto* var_local_b =
             b.Var("b", core::AddressSpace::kPrivate, ty.u32(), core::Access::kReadWrite);
-        var_local_b->SetInitializer(add_b->Result());
-        var_local->SetInitializer(add_a->Result());
+        var_local_b->SetInitializer(add_b);
+        var_local->SetInitializer(add_a);
         v1 = var_local->Result();
     });
 
@@ -1101,7 +1113,6 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
@@ -1116,7 +1127,7 @@ TEST_F(IR_SingleEntryPointTest, OverideInitVarUnused) {
         auto* add = b.Add(x, 3_u);
         auto* var_local =
             b.Var("a", core::AddressSpace::kPrivate, ty.u32(), core::Access::kReadWrite);
-        var_local->SetInitializer(add->Result());
+        var_local->SetInitializer(add);
         v1 = var_local->Result();
     });
 
@@ -1145,7 +1156,6 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
@@ -1237,10 +1247,57 @@ $B1: {  # root
 
     EXPECT_EQ(src, str());
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
     Run(SingleEntryPoint, "foo");
 
     EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_SingleEntryPointTest, OverrideSizedBuffer) {
+    auto* o = Override("x", 0);
+    core::ir::Var* v = nullptr;
+    core::ir::Value* add = nullptr;
+    const core::ir::type::ValueArrayCount* c1 = nullptr;
+    const core::type::Type* b1 = nullptr;
+    b.Append(mod.root_block, [&] {
+        add = b.Add(o, 2_i);
+        c1 = ty.Get<core::ir::type::ValueArrayCount>(add);
+        b1 = ty.Get<core::type::Buffer>(c1);
+        v = b.Var("v", ty.ptr(workgroup, b1));
+    });
+    auto* param = b.FunctionParam("param", ty.ptr(workgroup, b1));
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({param});
+    b.Append(func->Block(), [&] { b.Return(func); });
+    auto* ep = b.ComputeFunction("ep", 1_u, 1_u, 1_u);
+    b.Append(ep->Block(), [&] {
+        b.Call(ty.void_(), func, v);
+        b.Return(ep);
+    });
+    auto* src = R"(
+$B1: {  # root
+  %x:i32 = override undef @id(0)
+  %2:i32 = add %x, 2i
+  %v:ptr<workgroup, buffer<%2>, read_write> = var undef
+}
+
+%foo = func(%param:ptr<workgroup, buffer<%2>, read_write>):void {
+  $B2: {
+    ret
+  }
+}
+%ep = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B3: {
+    %7:void = call %foo, %v
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    Run(SingleEntryPoint, "ep");
+
+    EXPECT_EQ(src, str());
 }
 
 }  // namespace

@@ -84,6 +84,7 @@ std::string_view Token::TypeToName(Type type) {
         case Token::Type::kEqualEqual:
             return "==";
         case Token::Type::kTemplateArgsRight:
+            return "template_arg_right";
         case Token::Type::kGreaterThan:
             return ">";
         case Token::Type::kGreaterThanEqual:
@@ -91,6 +92,7 @@ std::string_view Token::TypeToName(Type type) {
         case Token::Type::kShiftRight:
             return ">>";
         case Token::Type::kTemplateArgsLeft:
+            return "template_arg_left";
         case Token::Type::kLessThan:
             return "<";
         case Token::Type::kLessThanEqual:
@@ -276,7 +278,7 @@ std::string_view Token::to_str_view() const {
         return *view;
     }
     auto& s = std::get<std::string>(value_);
-    return {s.data(), s.length()};
+    return s;
 }
 
 double Token::to_f64() const {

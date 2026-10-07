@@ -12,7 +12,7 @@ int foo(uint p_indices[1]) {
 }
 
 int bar() {
-  uint v_2[1] = {0u};
+  uint v_2[1] = (uint[1])0;
   return foo(v_2);
 }
 
@@ -29,7 +29,6 @@ void main_inner(uint tint_local_index) {
       {
         v_3 = (v_4 + 1u);
       }
-      continue;
     }
   }
   GroupMemoryBarrierWithGroupSync();

@@ -33,7 +33,8 @@
 #include "src/tint/lang/core/fluent_types.h"  // IWYU pragma: export
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
+#include "src/tint/lang/core/type/binding_array.h"
 
 namespace tint::glsl::writer::raise {
 namespace {
@@ -58,10 +59,14 @@ struct State {
     core::ir::Var* texture_uniform_data_ = nullptr;
 
     /// Map from binding point to index into uniform structure
-    Hashmap<BindingPoint, uint32_t, 2> binding_point_to_uniform_offset_{};
+    struct OffsetAndCount {
+        uint32_t offset;
+        uint32_t count;
+    };
+    Hashmap<BindingPoint, OffsetAndCount, 2> binding_point_to_uniform_info_{};
 
     /// Process the module.
-    void Process() {
+    Result<SuccessType> Process() {
         Vector<core::ir::CoreBuiltinCall*, 4> call_worklist;
         for (auto* inst : ir.Instructions()) {
             if (auto* call = inst->As<core::ir::CoreBuiltinCall>()) {
@@ -76,29 +81,35 @@ struct State {
                 continue;
             }
         }
-
-        if (!call_worklist.IsEmpty()) {
-            AddTextureBuiltinUniform();
+        if (call_worklist.IsEmpty()) {
+            return Success;
         }
+
+        AddTextureBuiltinUniform();
 
         // Replace the builtin calls that we found
         for (auto* call : call_worklist) {
             switch (call->Func()) {
                 case core::BuiltinFn::kTextureNumLevels:
                 case core::BuiltinFn::kTextureNumSamples:
-                    TextureFromUniform(call);
+                    TINT_CHECK_RESULT(TextureFromUniform(call));
                     break;
                 default:
                     TINT_IR_UNREACHABLE(ir);
             }
         }
+
+        return Success;
     }
 
     void AddTextureBuiltinUniform() {
         uint32_t required_size = 0;
         for (auto builtin : cfg.ubo_contents) {
             required_size = std::max(required_size, builtin.offset + builtin.count);
-            binding_point_to_uniform_offset_.Add(builtin.binding, builtin.offset);
+            binding_point_to_uniform_info_.Add(builtin.binding, OffsetAndCount{
+                                                                    .offset = builtin.offset,
+                                                                    .count = builtin.count,
+                                                                });
         }
 
         // The uniform buffer will contain packed u32s. The uniform buffer packing rules make
@@ -130,14 +141,13 @@ struct State {
         // chain to get to the variable is a mix of loads and accesses (but don't have guarantees on
         // their order). There is at most one load and one access so the recursion is bounded.
         return Switch(
-            val->As<core::ir::InstructionResult>()->Instruction(),
-            [&](core::ir::Var* var) -> TextureVariablePath { return {var}; },
+            val->AsInstruction(), [&](core::ir::Var* var) -> TextureVariablePath { return {var}; },
             [&](core::ir::Load* load) -> TextureVariablePath {
                 return PathForTexture(load->From());
             },
             [&](core::ir::Access* access) -> TextureVariablePath {
                 auto* binding_array = access->Object();
-                TINT_IR_ASSERT(ir, access->Indices().Length() == 1);
+                TINT_IR_ASSERT(ir, access->Indices().size() == 1);
                 auto* index = access->Indices()[0];
 
                 TextureVariablePath path = PathForTexture(binding_array);
@@ -149,21 +159,33 @@ struct State {
     }
 
     // Note, assumes is called inside an insert block
-    core::ir::Value* GetAccessFromUniform(core::ir::Value* arg) {
+    Result<core::ir::Value*> GetAccessFromUniform(core::ir::Value* arg) {
         auto path = PathForTexture(arg);
 
         BindingPoint binding = {
             .group = 0,
             .binding = path.var->BindingPoint()->binding,
         };
-        uint32_t metadata_offset = *binding_point_to_uniform_offset_.Get(binding);
+
+        auto metadata = binding_point_to_uniform_info_.Get(binding);
+        if (!metadata) {
+            return Failure("texture missing from texture_builtins_from_uniform list");
+        }
+        if (auto* ary = path.var->Result()->Type()->UnwrapPtr()->As<core::type::BindingArray>()) {
+            auto count = ary->Count()->As<core::type::ConstantArrayCount>()->value;
+            if (count > metadata->count) {
+                return Failure(
+                    "binding_array of textures doesn't have enough data in "
+                    "texture_builtins_from_uniform list");
+            }
+        }
 
         // Returns the u32 at `metadata_offset` + `path.index` (if present) in
         // `texture_uniform_data`. Because it is a uniform buffer it contains an array of uvec4
         // instead of an array of u32 so we need more complicated indexing logic.
-        core::ir::Value* offset = b.Constant(u32(metadata_offset));
+        core::ir::Value* offset = b.Constant(u32(metadata->offset));
         if (path.index != nullptr) {
-            offset = b.Add(offset, b.InsertConvertIfNeeded(ty.u32(), path.index))->Result();
+            offset = b.Add(offset, b.InsertConvertIfNeeded(ty.u32(), path.index));
         }
         auto* index_in_array = b.Divide(offset, u32(4));
         auto* index_in_vector = b.Modulo(offset, u32(4));
@@ -172,15 +194,17 @@ struct State {
             b.Access(ty.ptr<uniform>(ty.vec4u()), texture_uniform_data_, u32(0), index_in_array);
         auto* vec4_value = b.Load(vec4_ptr);
         auto* u32_value = b.Access(ty.u32(), vec4_value, index_in_vector);
-        return u32_value->Result();
+        return u32_value;
     }
 
-    void TextureFromUniform(core::ir::BuiltinCall* call) {
+    Result<SuccessType> TextureFromUniform(core::ir::BuiltinCall* call) {
         auto* src = call->Args()[0];
-        b.InsertBefore(call, [&] {
-            auto* val = GetAccessFromUniform(src);
-            call->Result()->ReplaceAllUsesWith(val);
+        Result<core::ir::Value*> val;
+        b.InsertBefore(call, [&] {  //
+            val = GetAccessFromUniform(src);
         });
+        TINT_CHECK_RESULT(val);
+        call->Result()->ReplaceAllUsesWith(val.Get());
 
         call->Destroy();
 
@@ -198,6 +222,8 @@ struct State {
                 }
             }
         }
+
+        return Success;
     }
 };
 
@@ -205,12 +231,9 @@ struct State {
 
 Result<SuccessType> TextureBuiltinsFromUniform(core::ir::Module& ir,
                                                const TextureBuiltinsFromUniformOptions& cfg) {
-    TINT_CHECK_RESULT(ValidateAndDumpIfNeeded(ir, "glsl.TextureBuiltinsFromUniform",
-                                              kTextureBuiltinFromUniformCapabilities));
+    AssertValid(ir, "before glsl.TextureBuiltinsFromUniform");
 
-    State{ir, cfg}.Process();
-
-    return Success;
+    return State{ir, cfg}.Process();
 }
 
 }  // namespace tint::glsl::writer::raise

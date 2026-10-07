@@ -26,6 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/type/array.h"
+
 #include "src/tint/lang/core/type/helper_test.h"
 #include "src/tint/lang/core/type/i32.h"
 #include "src/tint/lang/core/type/manager.h"
@@ -104,6 +105,18 @@ TEST_F(ArrayTest, FriendlyNameStaticSized) {
     Manager ty;
     auto* arr = ty.array(ty.i32(), 5u);
     EXPECT_EQ(arr->FriendlyName(), "array<i32, 5>");
+}
+
+TEST_F(ArrayTest, IdentifierNameRuntimeSized) {
+    Manager ty;
+    auto* arr = ty.runtime_array(ty.i32());
+    EXPECT_EQ(arr->IdentifierName(), "array_i32");
+}
+
+TEST_F(ArrayTest, IdentifierNameStaticSized) {
+    Manager ty;
+    auto* arr = ty.array(ty.i32(), 5u);
+    EXPECT_EQ(arr->IdentifierName(), "array_i32_5");
 }
 
 TEST_F(ArrayTest, IsConstructable) {

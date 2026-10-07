@@ -31,7 +31,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/spirv/type/explicit_layout_array.h"
 
 namespace tint::spirv::reader::lower {
@@ -218,7 +218,7 @@ struct State {
         b.InsertBefore(construct, [&] {
             Vector<core::ir::Value*, 8> new_operands;
             for (auto* operand : construct->Operands()) {
-                new_operands.Push(b.Construct(padded_struct_type, operand)->Result(0));
+                new_operands.Push(b.Construct(padded_struct_type, operand));
             }
             construct->SetOperands(new_operands);
         });
@@ -251,13 +251,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> DecomposeStridedArray(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(ValidateAndDumpIfNeeded(ir, "spirv.DecomposeStridedArray",
-                                              core::ir::Capabilities{
-                                                  core::ir::Capability::kAllowMultipleEntryPoints,
-                                                  core::ir::Capability::kAllowNonCoreTypes,
-                                                  core::ir::Capability::kAllowOverrides,
-                                                  core::ir::Capability::kAllowPointerToHandle,
-                                              }));
+    core::ir::AssertValid(ir, "before spirv.DecomposeStridedArray");
 
     State{ir}.Process();
 

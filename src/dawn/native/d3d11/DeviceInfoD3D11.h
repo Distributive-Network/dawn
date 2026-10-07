@@ -28,29 +28,30 @@
 #ifndef SRC_DAWN_NATIVE_D3D11_DEVICEINFOD3D11_H_
 #define SRC_DAWN_NATIVE_D3D11_DEVICEINFOD3D11_H_
 
-#include "dawn/native/Error.h"
-#include "dawn/native/PerStage.h"
-#include "dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/PerStage.h"
+#include "src/dawn/native/d3d/d3d_platform.h"
 
 namespace dawn::native::d3d11 {
 
 class PhysicalDevice;
 
 struct DeviceInfo {
-    bool isUMA;
+    bool isUMA = false;
 
     // shaderModel indicates the maximum supported shader model, for example, the value 62
     // indicates that current driver supports the maximum shader model is shader model 6.2.
-    uint32_t shaderModel;
+    uint32_t shaderModel = 0;
     PerStage<std::wstring> shaderProfiles;
-    bool supportsSharedResourceCapabilityTier2;
-    bool supportsROV;
-    size_t dedicatedVideoMemory;
-    size_t sharedSystemMemory;
-    bool supportsMonitoredFence;
-    bool supportsNonMonitoredFence;
-    bool supportsMapNoOverwriteDynamicBuffers;
-    bool supportsPartialConstantBufferUpdate;
+    bool supportsSharedResourceCapabilityTier2 = false;
+    bool supportsROV = false;
+    size_t dedicatedVideoMemory = 0;
+    size_t sharedSystemMemory = 0;
+    bool supportsMonitoredFence = false;
+    bool supportsNonMonitoredFence = false;
+    bool supportsMapOnDefaultBuffer = false;
+    bool supportsMapNoOverwriteDynamicBuffers = false;
+    bool supportsPartialConstantBufferUpdate = false;
 };
 
 ResultOrError<DeviceInfo> GatherDeviceInfo(const ComPtr<IDXGIAdapter3>& adapter,

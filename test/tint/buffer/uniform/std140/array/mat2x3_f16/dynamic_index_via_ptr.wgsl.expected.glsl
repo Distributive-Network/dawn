@@ -11,21 +11,21 @@ buffer s_block_1_ssbo {
 } v_1;
 int counter = 0;
 int i() {
-  uint v_2 = uint(counter);
-  counter = int((v_2 + uint(1)));
+  counter = int((uint(counter) + 1u));
   return counter;
 }
-f16vec2 tint_bitcast_to_f16_1(uint src) {
+f16vec2 tint_bitcast_to_16bit_1(uint src) {
   return unpackFloat2x16(src);
 }
-f16vec4 tint_bitcast_to_f16(uvec2 src) {
+f16vec4 tint_bitcast_to_16bit(uvec2 src) {
   return f16vec4(unpackFloat2x16(src.x), unpackFloat2x16(src.y));
 }
-f16mat2x3 v_3(uint start_byte_offset) {
-  uvec4 v_4 = v.inner[(start_byte_offset / 16u)];
-  f16vec3 v_5 = tint_bitcast_to_f16(mix(v_4.xy, v_4.zw, bvec2((((start_byte_offset & 15u) >> 2u) == 2u)))).xyz;
-  uvec4 v_6 = v.inner[((8u + start_byte_offset) / 16u)];
-  return f16mat2x3(v_5, tint_bitcast_to_f16(mix(v_6.xy, v_6.zw, bvec2(((((8u + start_byte_offset) & 15u) >> 2u) == 2u)))).xyz);
+f16mat2x3 v_2(uint start_byte_offset) {
+  uvec4 v_3 = v.inner[(start_byte_offset / 16u)];
+  f16vec3 v_4 = tint_bitcast_to_16bit(mix(v_3.xy, v_3.zw, bvec2((((start_byte_offset & 15u) >> 2u) == 2u)))).xyz;
+  uint v_5 = (8u + start_byte_offset);
+  uvec4 v_6 = v.inner[(v_5 / 16u)];
+  return f16mat2x3(v_4, tint_bitcast_to_16bit(mix(v_6.xy, v_6.zw, bvec2((((v_5 & 15u) >> 2u) == 2u)))).xyz);
 }
 f16mat2x3[4] v_7(uint start_byte_offset) {
   f16mat2x3 a[4] = f16mat2x3[4](f16mat2x3(f16vec3(0.0hf), f16vec3(0.0hf)), f16mat2x3(f16vec3(0.0hf), f16vec3(0.0hf)), f16mat2x3(f16vec3(0.0hf), f16vec3(0.0hf)), f16mat2x3(f16vec3(0.0hf), f16vec3(0.0hf)));
@@ -37,23 +37,24 @@ f16mat2x3[4] v_7(uint start_byte_offset) {
       if ((v_9 >= 4u)) {
         break;
       }
-      a[v_9] = v_3((start_byte_offset + (v_9 * 16u)));
+      a[v_9] = v_2((start_byte_offset + (v_9 * 16u)));
       {
         v_8 = (v_9 + 1u);
       }
-      continue;
     }
   }
   return a;
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 void main() {
-  uint v_10 = (16u * min(uint(i()), 3u));
-  uint v_11 = (8u * min(uint(i()), 1u));
+  uint v_10 = (min(uint(i()), 3u) * 16u);
+  uint v_11 = (min(uint(i()), 1u) * 8u);
   f16mat2x3 l_a[4] = v_7(0u);
-  f16mat2x3 l_a_i = v_3(v_10);
-  uvec4 v_12 = v.inner[((v_10 + v_11) / 16u)];
-  f16vec3 l_a_i_i = tint_bitcast_to_f16(mix(v_12.xy, v_12.zw, bvec2(((((v_10 + v_11) & 15u) >> 2u) == 2u)))).xyz;
-  uvec4 v_13 = v.inner[((v_10 + v_11) / 16u)];
-  v_1.inner = (((tint_bitcast_to_f16_1(v_13[(((v_10 + v_11) & 15u) >> 2u)])[mix(1u, 0u, (((v_10 + v_11) % 4u) == 0u))] + l_a[0u][0u].x) + l_a_i[0u].x) + l_a_i_i.x);
+  f16mat2x3 l_a_i = v_2(v_10);
+  uint v_12 = (v_10 + v_11);
+  uvec4 v_13 = v.inner[(v_12 / 16u)];
+  f16vec3 l_a_i_i = tint_bitcast_to_16bit(mix(v_13.xy, v_13.zw, bvec2((((v_12 & 15u) >> 2u) == 2u)))).xyz;
+  uint v_14 = (v_10 + v_11);
+  uvec4 v_15 = v.inner[(v_14 / 16u)];
+  v_1.inner = (((tint_bitcast_to_16bit_1(v_15[((v_14 & 15u) >> 2u)])[mix(1u, 0u, ((v_14 % 4u) == 0u))] + l_a[0][0].x) + l_a_i[0].x) + l_a_i_i.x);
 }

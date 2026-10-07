@@ -33,13 +33,12 @@
 #include <utility>
 #include <vector>
 
-#include "dawn/common/FutureUtils.h"
-#include "dawn/tests/MockCallback.h"
-#include "dawn/tests/ParamGenerator.h"
-#include "dawn/tests/unittests/wire/WireTest.h"
 #include "dawn/wire/WireServer.h"
-
 #include "gtest/gtest.h"
+#include "src/dawn/common/FutureUtils.h"
+#include "src/dawn/tests/MockCallback.h"
+#include "src/dawn/tests/ParamGenerator.h"
+#include "src/dawn/tests/unittests/wire/WireTest.h"
 
 namespace dawn::wire {
 
@@ -47,7 +46,7 @@ struct WireFutureTestParam {
     wgpu::CallbackMode callbackMode;
 };
 std::ostream& operator<<(std::ostream& os, const WireFutureTestParam& param);
-static constexpr std::array kWgpuCallbackModes = {
+inline constexpr std::array kWgpuCallbackModes = {
     WireFutureTestParam{wgpu::CallbackMode::WaitAnyOnly},
     WireFutureTestParam{wgpu::CallbackMode::AllowProcessEvents},
     WireFutureTestParam{wgpu::CallbackMode::AllowSpontaneous}};
@@ -93,14 +92,20 @@ class WireFutureTestWithParamsBase : public WireTest, public testing::WithParamI
     //
     //     // Call the API under test
     //     CallImpl(mockCb, this, args...);
-    //     EXPECT_CALL(api, OnAsyncAPI(...)).WillOnce(InvokeWithoutArgs([&] {
-    //         api.CallAsyncAPICallback(...);
-    //     }));
+    //     EXPECT_CALL(api, OnAsyncAPI(..., _))
+    //         .WillOnce(testing::WithArg<futureArgIndex>([&](WGPUFuture future) {
+    //             api.CallAsyncAPICallback(..., future);
+    //         }));
     //
     //     FlushClient();
     //     FlushFutures(); // Ensures that the callbacks are ready (if applicable), but NOT called.
     //     EXPECT_CALL(mockCb, Call(...));
     //     FlushCallbacks();  // Calls the callbacks
+    //
+    // OnAsyncAPI passes the backend future as its last argument, after the callback info.
+    // To respond later, use testing::SaveArg<futureArgIndex>(&future) and pass that saved
+    // future to CallAsyncAPICallback. Backend futures are distinct from the client futures
+    // stored in mFutureIDs.
     //
     // Note that in the example above we don't explicitly every call FlushServer and in most cases
     // that is probably the way to go because for Async and Spontaneous events, FlushServer will

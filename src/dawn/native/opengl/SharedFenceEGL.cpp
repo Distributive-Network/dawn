@@ -25,16 +25,17 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/SharedFenceEGL.h"
+#include "src/dawn/native/opengl/SharedFenceEGL.h"
 
 #include <utility>
 
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/opengl/DeviceGL.h"
-#include "dawn/native/opengl/DisplayEGL.h"
-#include "dawn/native/opengl/EGLFunctions.h"
-#include "dawn/native/opengl/PhysicalDeviceGL.h"
-#include "dawn/utils/SystemHandle.h"
+#include "src/dawn/common/SystemHandle.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/opengl/DeviceGL.h"
+#include "src/dawn/native/opengl/DisplayEGL.h"
+#include "src/dawn/native/opengl/EGLFunctions.h"
+#include "src/dawn/native/opengl/PhysicalDeviceGL.h"
+#include "src/utils/span.h"
 
 namespace dawn::native::opengl {
 ResultOrError<Ref<SharedFence>> SharedFenceEGL::Create(
@@ -45,13 +46,13 @@ ResultOrError<Ref<SharedFence>> SharedFenceEGL::Create(
     DAWN_INVALID_IF(descriptor->handle < 0, "File descriptor (%d) was invalid.",
                     descriptor->handle);
 
-    utils::SystemHandle handleForSyncCreation = utils::SystemHandle::Duplicate(descriptor->handle);
+    SystemHandle handleForSyncCreation = SystemHandle::Duplicate(descriptor->handle);
 
-    const EGLint attribs[] = {
+    const auto attribs = std::array<EGLint, 3>({
         EGL_SYNC_NATIVE_FENCE_FD_ANDROID,
         handleForSyncCreation.Get(),
         EGL_NONE,
-    };
+    });
 
     return device->ExecuteGL(
         ExecutionQueueBase::SubmitMode::Passive,
@@ -60,17 +61,17 @@ ResultOrError<Ref<SharedFence>> SharedFenceEGL::Create(
             Ref<WrappedEGLSync> sync;
             EGLint fdForSharedFence;
 
-            DAWN_TRY_ASSIGN(
-                sync, WrappedEGLSync::Create(display, gl, EGL_SYNC_NATIVE_FENCE_ANDROID, attribs));
+            DAWN_TRY_ASSIGN(sync, WrappedEGLSync::Create(display, gl, EGL_SYNC_NATIVE_FENCE_ANDROID,
+                                                         Span<const EGLint>(attribs)));
 
             // If EGLSync creation succeeded, the sync now owns the handle.
             handleForSyncCreation.Detach();
 
             DAWN_TRY_ASSIGN(fdForSharedFence, sync->DupFD(gl));
 
-            auto fence = AcquireRef(
-                new SharedFenceEGL(device, label, wgpu::SharedFenceType::SyncFD,
-                                   utils::SystemHandle::Acquire(fdForSharedFence), sync));
+            auto fence =
+                AcquireRef(new SharedFenceEGL(device, label, wgpu::SharedFenceType::SyncFD,
+                                              SystemHandle::Acquire(fdForSharedFence), sync));
             return fence;
         });
 
@@ -90,15 +91,15 @@ ResultOrError<Ref<SharedFence>> SharedFenceEGL::Create(
     Ref<WrappedEGLSync> sync;
     DAWN_TRY_ASSIGN(sync, WrappedEGLSync::AcquireExternal(display, descriptor->sync));
 
-    auto fence = AcquireRef(new SharedFenceEGL(device, label, wgpu::SharedFenceType::EGLSync,
-                                               utils::SystemHandle(), sync));
+    auto fence = AcquireRef(
+        new SharedFenceEGL(device, label, wgpu::SharedFenceType::EGLSync, SystemHandle(), sync));
     return fence;
 }
 
 SharedFenceEGL::SharedFenceEGL(Device* device,
                                StringView label,
                                wgpu::SharedFenceType type,
-                               utils::SystemHandle&& handle,
+                               SystemHandle&& handle,
                                Ref<WrappedEGLSync> sync)
     : SharedFence(device, label), mType(type), mHandle(std::move(handle)), mSync(sync) {}
 
@@ -114,7 +115,7 @@ MaybeError SharedFenceEGL::ServerWait(uint64_t signaledValue) {
     });
 }
 
-MaybeError SharedFenceEGL::ExportInfoImpl(UnpackedPtr<SharedFenceExportInfo>& info) const {
+MaybeValError SharedFenceEGL::ExportInfoImpl(UnpackedPtr<SharedFenceExportInfo>& info) const {
     info->type = mType;
 
     switch (mType) {

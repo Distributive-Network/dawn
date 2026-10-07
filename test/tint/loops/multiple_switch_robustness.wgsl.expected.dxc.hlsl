@@ -23,7 +23,7 @@ void main() {
       }
       if (tint_continue) {
         {
-          i_1 = asint((asuint(i_1) + asuint(int(1))));
+          i_1 = asint((asuint(i_1) + 1u));
         }
         continue;
       }
@@ -41,14 +41,13 @@ void main() {
       }
       if (tint_continue_1) {
         {
-          i_1 = asint((asuint(i_1) + asuint(int(1))));
+          i_1 = asint((asuint(i_1) + 1u));
         }
         continue;
       }
       {
-        i_1 = asint((asuint(i_1) + asuint(int(1))));
+        i_1 = asint((asuint(i_1) + 1u));
       }
-      continue;
     }
   }
 }

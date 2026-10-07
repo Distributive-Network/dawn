@@ -27,6 +27,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/ir/transform/rename_conflicts.h"
+
 #include "src/tint/lang/core/ir/construct.h"
 #include "src/tint/lang/core/ir/control_instruction.h"
 #include "src/tint/lang/core/ir/convert.h"
@@ -37,7 +38,7 @@
 #include "src/tint/lang/core/ir/loop.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/multi_in_block.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/ir/var.h"
 #include "src/tint/lang/core/type/array.h"
 #include "src/tint/lang/core/type/matrix.h"
@@ -46,6 +47,7 @@
 #include "src/tint/lang/core/type/struct.h"
 #include "src/tint/lang/core/type/vector.h"
 #include "src/tint/utils/containers/hashmap.h"
+#include "src/tint/utils/containers/hashset.h"
 #include "src/tint/utils/containers/reverse.h"
 #include "src/tint/utils/macros/defer.h"
 #include "src/tint/utils/rtti/switch.h"
@@ -153,7 +155,7 @@ struct State {
             }
         }
 
-        Switch(
+        tint::Switch(
             inst,  //
             [&](core::ir::Loop* loop) {
                 // Initializer's scope encompasses the body and continuing
@@ -241,6 +243,16 @@ struct State {
                     auto name = s->Name().NameView();
                     if (IsBuiltinStruct(s)) {
                         EnsureResolvesToBuiltin(name);
+                    } else {
+                        Hashset<std::string_view, 8> member_names;
+                        for (auto* mem : s->Members()) {
+                            auto mem_name = mem->Name().NameView();
+                            if (!member_names.Add(mem_name)) {
+                                auto new_name = ir.symbols.New(mem_name);
+                                const_cast<core::type::StructMember*>(mem)->SetName(new_name);
+                                member_names.Add(new_name.NameView());
+                            }
+                        }
                     }
                     return nullptr;
                 });
@@ -283,7 +295,7 @@ struct State {
     /// @returns the new name
     Symbol Rename(CastableBase* thing, std::string_view old_name) {
         Symbol new_name = ir.symbols.New(old_name);
-        Switch(
+        tint::Switch(
             thing,  //
             [&](core::ir::Value* value) { ir.SetName(value, new_name); },
             [&](core::type::Struct* str) { str->SetName(new_name); },  //
@@ -300,8 +312,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> RenameConflicts(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(
-        ValidateAndDumpIfNeeded(ir, "core.RenameConflicts", kRenameConflictsCapabilities));
+    core::ir::AssertValid(ir, "before core.RenameConflicts");
 
     State{ir}.Process();
 

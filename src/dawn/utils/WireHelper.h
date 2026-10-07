@@ -59,6 +59,9 @@ class WireHelper {
         const wgpu::InstanceDescriptor* nativeDesc = nullptr,
         const wgpu::InstanceDescriptor* wireDesc = nullptr);
 
+    // Helper that returns a handle to the native Device.
+    virtual WGPUDevice GetBackendDevice(const wgpu::Device& device) = 0;
+
     virtual void BeginWireTrace(const char* name) = 0;
 
     virtual bool FlushClient() = 0;
@@ -73,7 +76,8 @@ class WireHelper {
 
 std::unique_ptr<WireHelper> CreateWireHelper(const DawnProcTable& procs,
                                              bool useWire,
-                                             const char* wireTraceDir = nullptr);
+                                             const char* wireTraceDir = nullptr,
+                                             bool enableSharedMemoryInWire = false);
 
 }  // namespace dawn::utils
 

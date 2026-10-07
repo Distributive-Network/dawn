@@ -46,7 +46,7 @@ A **record** is a list of **record members**, each of which is a dictionary with
  - `"length"` (default to 1 if not set), a string. Defines length of the array pointed to for pointer arguments. If not set the length is implicitly 1 (so not an array), but otherwise it can be set to the name of another member in the same record that will contain the length of the array (this is heavily used in the `fooCount` `foos` pattern in the API).
  - `"optional"` (default to false) a boolean that says whether this member is optional. Member records can be optional if they are pointers (otherwise dawn_wire will always try to dereference them), objects (otherwise dawn_wire will always try to encode their ID and crash), or if they have a `"default"` key. Optional pointers and objects will always default to `nullptr` (unless `"no_default"` is set to `true`).
  - `"default"` (optional) a number or string. If set the record member will use that value as default value. Depending on the member's category it can be a number, a string containing a number, or the name of an enum/bitmask value.
-   - Dawn implements "trivial defaulting" for enums, similarly to the upstream WebGPU spec's WebIDL: if a zero-valued enum (usually called `Undefined`) is passed in, Dawn applies the default value specified here. See `WithTrivialFrontendDefaults()` in `api_structs.h` for how this works.
+   - Dawn implements "trivial defaulting" for enums, similarly to the upstream WebGPU spec's WebIDL: if a zero-valued enum (usually called `Undefined`) is passed in, Dawn applies the default value specified here. See `WithTrivialFrontendDefaults()` in `api_structs_defaults.h` for how this works.
  - `"wire_is_data_only"` (default to false) a boolean that says whether it is safe to directly return a pointer of this member that is pointing to a piece of memory in the transfer buffer into dawn_wire. To prevent TOCTOU attacks, by default in dawn_wire we must ensure every single value returned to dawn_native a copy of what's in the wire, so `"wire_is_data_only"` is set to true only when the member is data-only and don't impact control flow.
 
 **`"native"`** native types that can be referenced by name in other things.
@@ -114,6 +114,33 @@ The schema of `dawn_wire.json` is a dictionary with the following keys:
    - `"server_handwrittten_commands"`: a list of methods that are written manually and won't be automatically generated in the server.
    - `server_reverse_object_lookup_objects`: a list of objects for which the server will maintain an object -> ID mapping.
 
+## Dawn "native" generators
+
+The generator for the pieces of dawn_native need additional data which is found in [`dawn_native_json`](../../src/dawn/dawn_native.json). Examples of pieces that are generated are:
+
+ - `ProcTable.cpp` that implements all of the WebGPU function by converting arguments and forwarding to the correct method/function in `dawn::native`.
+ - `dawn_platform_autogen.h` and `wgpu_structs_autogen.cpp` that define the `dawn::native` equivalents of types in `webgpu.h` (for example with objects being actual pointers to objects and not just opaque handles) as well as conversion functions.
+ - `api_absl_format.cpp` to make it easy to print any WebGPU type in error messages.
+
+ The schema of `dawn_native.json` is a dictionary with the following keys:
+  - `"metadata"` a dictionary containing various other containers that can be used in templates. Its keys are:
+    - `addins`: A dictionary mapping fully qualified instance names (structs, struct members, functions, function arguments, objects, object methods, or method arguments) to a dictionary of attribute addins (e.g. `{"spanify": false}` or `{"index_type": "BindingIndex"}`).
+
+## Dawn "Kotlin" generators
+
+The generator for the Android Kotlin/JNI bindings needs additional data which is found in [`dawn_kotlin.json`](../../src/dawn/dawn_kotlin.json). It generates the Kotlin classes (one per object, structure, enum and callback) and the JNI glue that converts between Kotlin objects and `webgpu.h` structures.
+
+The schema of `dawn_kotlin.json` is a dictionary with the following keys:
+ - `"kotlin_package"` a string, the package for the generated Kotlin classes.
+ - `"jni_primitives"` / `"jni_signatures"` dictionaries mapping native type names to their JNI C type and JNI signature letter.
+ - `"kdocs_blocklist"` / `"kdocs_replacements"` filters applied to the upstream documentation when generating KDoc.
+ - `"metadata"` a dictionary with the same shape as in `dawn_native.json`:
+   - `addins`: maps fully qualified instance names to attribute addins. Supported addins are:
+     - `"omitted": true` on a structure, enum, function pointer, function, object method, or **structure member** to exclude it from the Kotlin API. It is not supported on function/method arguments (the generator asserts) since the native call would silently receive a zero-initialized value.
+     - `"kotlin_name": "<name>"` on a function or object method to override its Kotlin name (e.g. `"create instance": {"kotlin_name": "createGPUInstance"}`).
+     - `"additional_members": [...]` on a structure to add Kotlin-only members that have no native counterpart. Each entry has a `"name"`, a `"type"` (either a `dawn.json` type name or a Kotlin type when `"category": "kotlin type"`), and optional `"category"`, `"annotation"`, `"optional"` and `"default_value"` keys.
+     - `"graduated_batches": [[...], ...]` on a structure, a list of member-name batches that were added after the structure first shipped, used to emit hidden legacy constructors for binary compatibility.
+
 ## OpenGL loader generator
 
-The code to load OpenGL entrypoints from a `GetProcAddress` function is generated from [`gl.xml`](../../third_party/khronos/gl.xml) and the [list of extensions](../../src/dawn/native/opengl/supported_extensions.json) it supports.
+The code to load OpenGL entrypoints from a `GetProcAddress` function is generated from [`gl.xml`](../../third_party/OpenGL-Registry/src/xml/gl.xml) and the [list of extensions](../../src/dawn/native/opengl/supported_extensions.json) it supports.

@@ -28,15 +28,25 @@
 #ifndef SRC_DAWN_NATIVE_D3D11_COMMANDRECORDINGCONTEXT_D3D11_H_
 #define SRC_DAWN_NATIVE_D3D11_COMMANDRECORDINGCONTEXT_D3D11_H_
 
+#include <algorithm>
+#include <array>
+#include <optional>
+#include <utility>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
-#include "dawn/common/Constants.h"
-#include "dawn/common/MutexProtected.h"
-#include "dawn/common/NonCopyable.h"
-#include "dawn/common/Ref.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/d3d/KeyedMutex.h"
-#include "dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/common/MutexProtected.h"
+#include "src/dawn/common/Ref.h"
+#include "src/dawn/common/StackAllocated.h"
+#include "src/dawn/native/Buffer.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/d3d/KeyedMutex.h"
+#include "src/dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/native/d3d11/ImmediatesLayoutD3D11.h"
+#include "src/utils/non_copyable.h"
+#include "src/utils/span.h"
 
 namespace dawn::native::d3d11 {
 
@@ -57,16 +67,15 @@ class CommandRecordingContextGuard : public ::dawn::detail::Guard<Ctx, Traits> {
   public:
     using Base = ::dawn::detail::Guard<Ctx, Traits>;
 
+    CommandRecordingContextGuard() = default;
     CommandRecordingContextGuard(CommandRecordingContextGuard&& rhs) = default;
-    CommandRecordingContextGuard(Ctx* ctx,
-                                 typename Traits::MutexType& mutex,
-                                 Defer* defer = nullptr)
-        : Base(ctx, mutex, defer) {
-    }
+    CommandRecordingContextGuard& operator=(CommandRecordingContextGuard&& other) = default;
+    CommandRecordingContextGuard(Ctx* ctx, typename Traits::MutexType& mutex) : Base(ctx, mutex) {}
+    CommandRecordingContextGuard(Ctx* ctx, typename Traits::template LockType<Ctx>&& lock)
+        : Base(ctx, std::move(lock)) {}
 
     CommandRecordingContextGuard(const CommandRecordingContextGuard& other) = delete;
     CommandRecordingContextGuard& operator=(const CommandRecordingContextGuard& other) = delete;
-    CommandRecordingContextGuard& operator=(CommandRecordingContextGuard&& other) = delete;
 };
 
 class CommandRecordingContext {
@@ -81,6 +90,10 @@ class CommandRecordingContext {
     bool IsValid() const;
 
     static ResultOrError<Ref<BufferBase>> CreateInternalUniformBuffer(DeviceBase* device);
+    // The number of uint32_t elements in the immediate uniform buffer. Align to 16 bytes since
+    // D3D11 UpdateSubresource1 requires 16 bytes alignment for constant buffer.
+    static constexpr uint32_t kMaxImmediateSlotsD3D11 =
+        Align(std::max(sizeof(RenderImmediates), sizeof(ComputeImmediates)), 16) / sizeof(uint32_t);
 
     void ReleaseKeyedMutexes();
 
@@ -103,7 +116,7 @@ class CommandRecordingContext {
 
     // The uniform buffer for built-in variables.
     Ref<GPUUsableBuffer> mUniformBuffer;
-    std::array<uint32_t, kMaxImmediateConstantsPerPipeline> mUniformBufferData{};
+    std::array<uint32_t, kMaxImmediateSlotsD3D11> mUniformBufferData{};
     bool mUniformBufferDirty = true;
 
     absl::flat_hash_set<Ref<d3d::KeyedMutex>> mAcquiredKeyedMutexes;
@@ -124,7 +137,10 @@ class CommandRecordingContext {
 // When enabled, it synchronizes access to the D3D11 context external to Dawn.
 class ScopedCommandRecordingContext : NonCopyable {
   public:
+    ScopedCommandRecordingContext() = default;
     ScopedCommandRecordingContext(CommandRecordingContext::Guard&& guard, bool lockD3D11Scope);
+    ScopedCommandRecordingContext(ScopedCommandRecordingContext&& other);
+    ScopedCommandRecordingContext& operator=(ScopedCommandRecordingContext&& other);
     ~ScopedCommandRecordingContext();
 
     Device* GetDevice() const;
@@ -147,7 +163,7 @@ class ScopedCommandRecordingContext : NonCopyable {
                                UINT SrcSubresource,
                                const D3D11_BOX* pSrcBox) const;
     void ClearRenderTargetView(ID3D11RenderTargetView* pRenderTargetView,
-                               const FLOAT ColorRGBA[4]) const;
+                               Span<const float, 4> colorRGBA) const;
     void ClearDepthStencilView(ID3D11DepthStencilView* pDepthStencilView,
                                UINT ClearFlags,
                                FLOAT Depth,
@@ -166,7 +182,7 @@ class ScopedCommandRecordingContext : NonCopyable {
     void Flush1(D3D11_CONTEXT_TYPE ContextType, HANDLE hEvent) const;
 
     // Write immediate data to the uniform buffer.
-    void WriteUniformBufferRange(uint32_t offset, const void* data, size_t size) const;
+    void WriteUniformBufferRange(uint32_t offset, Span<const std::byte> data) const;
     MaybeError FlushUniformBuffer() const;
 
     MaybeError AcquireKeyedMutex(Ref<d3d::KeyedMutex> keyedMutex) const;
@@ -188,15 +204,23 @@ class ScopedCommandRecordingContext : NonCopyable {
     }
 
   private:
+    STACK_ALLOCATED_IGNORE("TODO: avoid heap allocated class containing StackAllocated members")
     CommandRecordingContext::Guard mGuard;
-    const bool mLockD3D11Scope = false;
+    bool mLockD3D11Scope = false;
+    // The scoped use of the uniform buffer to keep it in the InUse state for the lifetime of the
+    // scoped command context. This is lazily initialized.
+    mutable std::optional<BufferBase::ScopedUseBuffer> mUniformBufferInUse;
 };
 
 // For using ID3D11DeviceContext directly. It swaps and resets ID3DDeviceContextState of
 // ID3D11DeviceContext for a scope. It is needed for sharing ID3D11Device between dawn and ANGLE.
 class ScopedSwapStateCommandRecordingContext : public ScopedCommandRecordingContext {
   public:
+    ScopedSwapStateCommandRecordingContext() = default;
     explicit ScopedSwapStateCommandRecordingContext(CommandRecordingContext::Guard&& guard);
+    ScopedSwapStateCommandRecordingContext(ScopedSwapStateCommandRecordingContext&& other);
+    ScopedSwapStateCommandRecordingContext& operator=(
+        ScopedSwapStateCommandRecordingContext&& other);
     ~ScopedSwapStateCommandRecordingContext();
 
     ID3D11Device* GetD3D11Device() const;

@@ -46,6 +46,7 @@
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/core/type/type.h"
+#include "src/tint/lang/core/type/u16.h"
 #include "src/tint/lang/core/type/u32.h"
 #include "src/tint/lang/core/type/u64.h"
 #include "src/tint/lang/core/type/u8.h"
@@ -149,6 +150,10 @@ const core::type::U8* Manager::u8() {
     return Get<core::type::U8>();
 }
 
+const core::type::U16* Manager::u16() {
+    return Get<core::type::U16>();
+}
+
 const core::type::U32* Manager::u32() {
     return Get<core::type::U32>();
 }
@@ -194,6 +199,16 @@ const core::type::Type* Manager::MatchWidth(const core::type::Type* el_ty, size_
         return vec(el_ty, static_cast<uint32_t>(size));
     }
     return el_ty;
+}
+
+const core::type::Type* Manager::ShaderScalarType(const core::type::SubgroupMatrix* mat) {
+    if (mat->Type()->Is<I8>()) {
+        return i32();
+    }
+    if (mat->Type()->Is<U8>()) {
+        return u32();
+    }
+    return mat->Type();
 }
 
 const core::type::Vector* Manager::vec(const core::type::Type* inner, uint32_t size) {

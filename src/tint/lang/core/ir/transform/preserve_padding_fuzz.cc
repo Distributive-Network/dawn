@@ -19,26 +19,31 @@
 // IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
 // DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
 // FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT\ OF SUBSTITUTE GOODS OR
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
 // SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 // CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include "src/tint/cmd/fuzz/common/ir_fuzzer.h"
 #include "src/tint/lang/core/ir/transform/preserve_padding.h"
-
-#include "src/tint/cmd/fuzz/ir/fuzz.h"
-#include "src/tint/lang/core/ir/validator.h"
 
 namespace tint::core::ir::transform {
 namespace {
 
-Result<SuccessType> PreservePaddingFuzzer(Module& ir, const fuzz::ir::Context&) {
-    return PreservePadding(ir);
+Result<SuccessType> PreservePaddingFuzzer(Module& ir,
+                                          const fuzz::ir::Context& context,
+                                          PreservePaddingConfig config) {
+    if (context.options.verbose) {
+        PrintReflected(std::cout, config);
+        std::cout << "\n";
+    }
+
+    return PreservePadding(ir, config);
 }
 
 }  // namespace
 }  // namespace tint::core::ir::transform
 
-TINT_IR_MODULE_FUZZER(tint::core::ir::transform::PreservePaddingFuzzer,
-                      tint::core::ir::transform::kPreservePaddingCapabilities);
+constexpr auto kUnsupportedProperties = tint::core::ir::Properties{};
+TINT_IR_MODULE_FUZZER(tint::core::ir::transform::PreservePaddingFuzzer, kUnsupportedProperties);

@@ -25,36 +25,36 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/metal/DeviceMTL.h"
+#include "src/dawn/native/metal/DeviceMTL.h"
 
-#include "dawn/common/GPUInfo.h"
-#include "dawn/common/Platform.h"
-#include "dawn/native/Adapter.h"
-#include "dawn/native/BackendConnection.h"
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/Commands.h"
-#include "dawn/native/ErrorData.h"
-#include "dawn/native/EventManager.h"
-#include "dawn/native/metal/BackendMTL.h"
-#include "dawn/native/metal/BindGroupLayoutMTL.h"
-#include "dawn/native/metal/BindGroupMTL.h"
-#include "dawn/native/metal/BufferMTL.h"
-#include "dawn/native/metal/CommandBufferMTL.h"
-#include "dawn/native/metal/ComputePipelineMTL.h"
-#include "dawn/native/metal/PhysicalDeviceMTL.h"
-#include "dawn/native/metal/PipelineLayoutMTL.h"
-#include "dawn/native/metal/QuerySetMTL.h"
-#include "dawn/native/metal/QueueMTL.h"
-#include "dawn/native/metal/RenderPipelineMTL.h"
-#include "dawn/native/metal/SamplerMTL.h"
-#include "dawn/native/metal/ShaderModuleMTL.h"
-#include "dawn/native/metal/SharedFenceMTL.h"
-#include "dawn/native/metal/SharedTextureMemoryMTL.h"
-#include "dawn/native/metal/SwapChainMTL.h"
-#include "dawn/native/metal/TextureMTL.h"
-#include "dawn/native/metal/UtilsMetal.h"
 #include "dawn/platform/DawnPlatform.h"
-#include "dawn/platform/tracing/TraceEvent.h"
+#include "src/dawn/common/GPUInfo.h"
+#include "src/dawn/native/Adapter.h"
+#include "src/dawn/native/BackendConnection.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/Commands.h"
+#include "src/dawn/native/ErrorData.h"
+#include "src/dawn/native/EventManager.h"
+#include "src/dawn/native/metal/BackendMTL.h"
+#include "src/dawn/native/metal/BindGroupLayoutMTL.h"
+#include "src/dawn/native/metal/BindGroupMTL.h"
+#include "src/dawn/native/metal/BufferMTL.h"
+#include "src/dawn/native/metal/CommandBufferMTL.h"
+#include "src/dawn/native/metal/ComputePipelineMTL.h"
+#include "src/dawn/native/metal/PhysicalDeviceMTL.h"
+#include "src/dawn/native/metal/PipelineLayoutMTL.h"
+#include "src/dawn/native/metal/QuerySetMTL.h"
+#include "src/dawn/native/metal/QueueMTL.h"
+#include "src/dawn/native/metal/RenderPipelineMTL.h"
+#include "src/dawn/native/metal/SamplerMTL.h"
+#include "src/dawn/native/metal/ShaderModuleMTL.h"
+#include "src/dawn/native/metal/SharedFenceMTL.h"
+#include "src/dawn/native/metal/SharedTextureMemoryMTL.h"
+#include "src/dawn/native/metal/SwapChainMTL.h"
+#include "src/dawn/native/metal/TextureMTL.h"
+#include "src/dawn/native/metal/UtilsMetal.h"
+#include "src/dawn/platform/tracing/TraceEvent.h"
+#include "src/utils/platform.h"
 
 namespace dawn::native::metal {
 
@@ -77,7 +77,7 @@ float KalmanFilter(KalmanInfo* info, float measuredValue) {
 
     // Correct filter value
     info->filterValue =
-        info->kalmanGain * measuredValue + (1.0 - info->kalmanGain) * info->filterValue;
+        info->kalmanGain * measuredValue + (1.0f - info->kalmanGain) * info->filterValue;
     // Update estimate covariance
     info->P = (1.0f - info->kalmanGain) * info->P;
     return info->filterValue;
@@ -107,7 +107,7 @@ void UpdateTimestampPeriod(id<MTLDevice> device,
 
     if (cpuTimestampEnd - *cpuTimestampStart >= kFilterIntervalInMs) {
         // The measured timestamp period
-        float measurement = (cpuTimestampEnd - *cpuTimestampStart) /
+        float measurement = static_cast<float>(cpuTimestampEnd - *cpuTimestampStart) /
                             static_cast<float>(gpuTimestampEnd - *gpuTimestampStart);
 
         // Measurement update
@@ -184,6 +184,8 @@ MaybeError Device::Initialize(const UnpackedPtr<DeviceDescriptor>& descriptor) {
             [*mMtlDevice sampleTimestamps:&mCpuTimestamp gpuTimestamp:&mGpuTimestamp];
         }
     }
+
+    mCounterSampleBufferAllocator = std::make_unique<CounterSampleBufferAllocator>(this);
 
     return DeviceBase::Initialize(descriptor, std::move(queue));
 }
@@ -269,10 +271,7 @@ void Device::InitializeRenderPipelineAsyncImpl(Ref<CreateRenderPipelineAsyncEven
 }
 
 ResultOrError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImpl(
-    const SharedTextureMemoryDescriptor* baseDescriptor) {
-    UnpackedPtr<SharedTextureMemoryDescriptor> unpacked;
-    DAWN_TRY_ASSIGN(unpacked, ValidateAndUnpack(baseDescriptor));
-
+    UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) {
     wgpu::SType type;
     DAWN_TRY_ASSIGN(type,
                     (unpacked.ValidateBranches<Branch<SharedTextureMemoryIOSurfaceDescriptor>>()));
@@ -283,14 +282,11 @@ ResultOrError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImp
     DAWN_INVALID_IF(!HasFeature(Feature::SharedTextureMemoryIOSurface), "%s is not enabled.",
                     wgpu::FeatureName::SharedTextureMemoryIOSurface);
 
-    return SharedTextureMemory::Create(this, baseDescriptor->label, descriptor);
+    return SharedTextureMemory::Create(this, unpacked->label, descriptor);
 }
 
 ResultOrError<Ref<SharedFenceBase>> Device::ImportSharedFenceImpl(
-    const SharedFenceDescriptor* baseDescriptor) {
-    UnpackedPtr<SharedFenceDescriptor> unpacked;
-    DAWN_TRY_ASSIGN(unpacked, ValidateAndUnpack(baseDescriptor));
-
+    UnpackedPtr<SharedFenceDescriptor> unpacked) {
     wgpu::SType type;
     DAWN_TRY_ASSIGN(type,
                     (unpacked.ValidateBranches<Branch<SharedFenceMTLSharedEventDescriptor>>()));
@@ -301,7 +297,7 @@ ResultOrError<Ref<SharedFenceBase>> Device::ImportSharedFenceImpl(
     DAWN_INVALID_IF(!HasFeature(Feature::SharedFenceMTLSharedEvent), "%s is not enabled.",
                     wgpu::FeatureName::SharedFenceMTLSharedEvent);
 
-    return SharedFence::Create(this, baseDescriptor->label, descriptor);
+    return SharedFence::Create(this, unpacked->label, descriptor);
 }
 
 MaybeError Device::TickImpl() {
@@ -356,6 +352,7 @@ MaybeError Device::CopyFromStagingToTextureImpl(BufferBase* source,
                                                 const TextureCopy& dst,
                                                 const Extent3D& copySizePixels) {
     Texture* texture = ToBackend(dst.texture.Get());
+    const TypedTexelBlockInfo& blockInfo = GetBlockInfo(dst);
     texture->SynchronizeTextureBeforeUse(ToBackend(GetQueue())->GetPendingCommandContext());
     DAWN_TRY(EnsureDestinationTextureInitialized(
         ToBackend(GetQueue())->GetPendingCommandContext(QueueBase::SubmitMode::Passive), texture,
@@ -364,8 +361,9 @@ MaybeError Device::CopyFromStagingToTextureImpl(BufferBase* source,
     RecordCopyBufferToTexture(
         ToBackend(GetQueue())->GetPendingCommandContext(QueueBase::SubmitMode::Passive),
         ToBackend(source)->GetMTLBuffer(), source->GetSize(), dataLayout.offset,
-        dataLayout.bytesPerRow, dataLayout.rowsPerImage, texture, dst.mipLevel,
-        dst.origin.ToOrigin3D(), dst.aspect, copySizePixels);
+        blockInfo.BytesToBlocks(dataLayout.bytesPerRow), BlockCount(dataLayout.rowsPerImage),
+        texture, dst.mipLevel, blockInfo.ToBlock(dst.origin), dst.aspect,
+        blockInfo.ToBlock(TexelExtent3D(copySizePixels)));
     return {};
 }
 
@@ -378,6 +376,7 @@ void Device::DestroyImpl(DestroyReason reason) {
     // - It may be called when the last ref to the device is dropped and the device
     //   is implicitly destroyed. This case is thread-safe because there are no
     //   other threads using the device since there are no other live refs.
+    mCounterSampleBufferAllocator = nullptr;
     mMtlDevice = nullptr;
     mMockBlitMtlBuffer = nullptr;
 }
@@ -417,6 +416,10 @@ id<MTLBuffer> Device::GetMockBlitMtlBuffer() {
     }
 
     return mMockBlitMtlBuffer.Get();
+}
+
+CounterSampleBufferAllocator* Device::GetCounterSampleBufferAllocator() const {
+    return mCounterSampleBufferAllocator.get();
 }
 
 void Device::StartTrace() {

@@ -27,7 +27,7 @@
 
 #include <iostream>
 
-#include "src/tint/cmd/fuzz/ir/fuzz.h"
+#include "src/tint/cmd/fuzz/common/ir_fuzzer.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/transform/single_entry_point.h"
 #include "src/tint/lang/glsl/writer/helpers/generate_bindings.h"
@@ -48,9 +48,10 @@ struct FuzzedOptions {
     bool enable_integer_range_analysis;
     bool disable_workgroup_init;
     bool disable_polyfill_integer_div_mod;
-    bool use_array_length_from_uniform;
+    bool use_array_length_from_immediate;
     std::unordered_set<uint32_t> bgra_swizzle_locations;
     SubstituteOverridesConfig substitute_overrides_config;
+    bool has_gl_ext_conservative_depth;
 
     /// Reflect the fields of this class so that it can be used by tint::ForeachField()
     TINT_REFLECT(FuzzedOptions,
@@ -59,15 +60,21 @@ struct FuzzedOptions {
                  enable_integer_range_analysis,
                  disable_workgroup_init,
                  disable_polyfill_integer_div_mod,
-                 use_array_length_from_uniform,
+                 use_array_length_from_immediate,
                  bgra_swizzle_locations,
-                 substitute_overrides_config);
+                 substitute_overrides_config,
+                 has_gl_ext_conservative_depth);
     TINT_REFLECT_HASH_CODE(FuzzedOptions);
 };
 
 Result<SuccessType> IRFuzzer(core::ir::Module& module,
                              const fuzz::ir::Context& context,
                              FuzzedOptions fuzzed_options) {
+    if (context.options.verbose) {
+        PrintReflected(std::cout, fuzzed_options);
+        std::cout << "\n";
+    }
+
     // TODO(375388101): We cannot run the backend for every entry point in the module unless we
     // clone the whole module each time, so for now we just generate the first entry point.
 
@@ -96,10 +103,10 @@ Result<SuccessType> IRFuzzer(core::ir::Module& module,
     options.disable_integer_range_analysis = !fuzzed_options.enable_integer_range_analysis;
     options.disable_workgroup_init = fuzzed_options.disable_workgroup_init;
     options.disable_polyfill_integer_div_mod = fuzzed_options.disable_polyfill_integer_div_mod;
-    options.use_array_length_from_uniform = fuzzed_options.use_array_length_from_uniform;
     options.entry_point_name = ep_name;
     options.bgra_swizzle_locations = fuzzed_options.bgra_swizzle_locations;
     options.substitute_overrides_config = fuzzed_options.substitute_overrides_config;
+    options.has_gl_ext_conservative_depth = fuzzed_options.has_gl_ext_conservative_depth;
 
     options.version = Version(Version::Standard::kES, 3, 1);
 
@@ -109,11 +116,21 @@ Result<SuccessType> IRFuzzer(core::ir::Module& module,
 
     // Leave some room for user-declared immediate data.
     uint32_t next_immediate_offset = 0x800;
-    auto builtin_immediate = [&next_immediate_offset] {
+    auto builtin_immediate = [&next_immediate_offset](uint32_t count = 1) {
         auto offset = next_immediate_offset;
-        next_immediate_offset += 4;
+        next_immediate_offset += count * 4;
         return offset;
     };
+
+    if (fuzzed_options.use_array_length_from_immediate && !options.bindings.storage.empty()) {
+        options.array_length_from_immediate.buffer_sizes_offset =
+            builtin_immediate(static_cast<uint32_t>(options.bindings.storage.size()));
+        uint32_t size_index = 0;
+        for (const auto& entry : options.bindings.storage) {
+            options.array_length_from_immediate.bindpoint_to_size_index.emplace(entry.first,
+                                                                                size_index++);
+        }
+    }
 
     // Set offsets for immediate data used for certain builtins.
     for (auto& func : module.functions) {
@@ -128,14 +145,14 @@ Result<SuccessType> IRFuzzer(core::ir::Module& module,
                     if (member->Attributes().builtin == core::BuiltinValue::kVertexIndex) {
                         options.first_vertex_offset = builtin_immediate();
                     } else if (member->Attributes().builtin == core::BuiltinValue::kInstanceIndex) {
-                        options.first_vertex_offset = builtin_immediate();
+                        options.first_instance_offset = builtin_immediate();
                     }
                 }
             } else {
                 if (param->Builtin() == core::BuiltinValue::kVertexIndex) {
                     options.first_vertex_offset = builtin_immediate();
                 } else if (param->Builtin() == core::BuiltinValue::kInstanceIndex) {
-                    options.first_vertex_offset = builtin_immediate();
+                    options.first_instance_offset = builtin_immediate();
                 }
             }
         }
@@ -160,8 +177,6 @@ Result<SuccessType> IRFuzzer(core::ir::Module& module,
         }
     }
 
-    TINT_CHECK_RESULT(CanGenerate(module, options));
-
     TINT_CHECK_RESULT_UNWRAP(output, Generate(module, options));
     if (context.options.dump) {
         std::cout << "Dumping generated GLSL:\n" << output.glsl << "\n";
@@ -173,6 +188,4 @@ Result<SuccessType> IRFuzzer(core::ir::Module& module,
 }  // namespace
 }  // namespace tint::glsl::writer
 
-TINT_IR_MODULE_FUZZER(tint::glsl::writer::IRFuzzer,
-                      tint::core::ir::Capabilities{},
-                      tint::glsl::writer::kPrinterCapabilities);
+TINT_IR_MODULE_FUZZER(tint::glsl::writer::IRFuzzer);

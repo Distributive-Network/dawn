@@ -25,17 +25,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include "src/dawn/utils/TestUtils.h"
+
 #include <algorithm>
 #include <memory>
 #include <ostream>
 #include <thread>
 #include <vector>
 
-#include "dawn/common/Assert.h"
-#include "dawn/common/Math.h"
-#include "dawn/utils/TestUtils.h"
-#include "dawn/utils/TextureUtils.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/utils/TextureUtils.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/assert.h"
 
 namespace dawn::utils {
 
@@ -66,6 +67,7 @@ TextureDataCopyLayout GetTextureDataCopyLayoutForTextureAtLevel(
     wgpu::Extent3D textureSizeAtLevel0,
     uint32_t mipmapLevel,
     wgpu::TextureDimension dimension,
+    uint32_t bytesPerRow,
     uint32_t rowsPerImage,
     uint32_t textureBytesPerRowAlignment) {
     // Compressed texture formats not supported in this function yet.
@@ -82,8 +84,12 @@ TextureDataCopyLayout GetTextureDataCopyLayoutForTextureAtLevel(
             std::max(textureSizeAtLevel0.depthOrArrayLayers >> mipmapLevel, 1u);
     }
 
-    layout.bytesPerRow =
-        GetMinimumBytesPerRow(format, layout.mipSize.width, textureBytesPerRowAlignment);
+    // Default to the minimum valid bytesPerRow if the caller doesn't specify one.
+    if (bytesPerRow == wgpu::kCopyStrideUndefined) {
+        bytesPerRow =
+            GetMinimumBytesPerRow(format, layout.mipSize.width, textureBytesPerRowAlignment);
+    }
+    layout.bytesPerRow = bytesPerRow;
 
     if (rowsPerImage == wgpu::kCopyStrideUndefined) {
         rowsPerImage = layout.mipSize.height;
@@ -97,6 +103,7 @@ TextureDataCopyLayout GetTextureDataCopyLayoutForTextureAtLevel(
         RequiredBytesInCopy(layout.bytesPerRow, appliedRowsPerImage, layout.mipSize, format);
 
     const uint32_t bytesPerTexel = dawn::utils::GetTexelBlockSizeInBytes(format);
+    DAWN_ASSERT(layout.bytesPerRow % bytesPerTexel == 0);
     layout.texelBlocksPerRow = layout.bytesPerRow / bytesPerTexel;
     layout.texelBlocksPerImage = layout.bytesPerImage / bytesPerTexel;
     layout.texelBlockCount = layout.byteLength / bytesPerTexel;
@@ -197,6 +204,7 @@ uint32_t VertexFormatSize(wgpu::VertexFormat format) {
         case wgpu::VertexFormat::Uint32:
         case wgpu::VertexFormat::Sint32:
         case wgpu::VertexFormat::Unorm10_10_10_2:
+        case wgpu::VertexFormat::Snorm10_10_10_2:
         case wgpu::VertexFormat::Unorm8x4BGRA:
             return 4;
         case wgpu::VertexFormat::Uint16x4:

@@ -25,12 +25,11 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/common/Platform.h"
+#include "src/dawn/native/metal/SharedFenceMTL.h"
 
-#include "dawn/native/metal/SharedFenceMTL.h"
-
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/metal/DeviceMTL.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/metal/DeviceMTL.h"
+#include "src/utils/platform.h"
 
 namespace dawn::native::metal {
 
@@ -57,7 +56,7 @@ id<MTLSharedEvent> SharedFence::GetMTLSharedEvent() const {
     return mSharedEvent.Get();
 }
 
-MaybeError SharedFence::ExportInfoImpl(UnpackedPtr<SharedFenceExportInfo>& info) const {
+MaybeValError SharedFence::ExportInfoImpl(UnpackedPtr<SharedFenceExportInfo>& info) const {
     info->type = wgpu::SharedFenceType::MTLSharedEvent;
 
     DAWN_TRY(info.ValidateSubset<SharedFenceMTLSharedEventExportInfo>());

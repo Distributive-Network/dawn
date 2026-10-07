@@ -25,7 +25,7 @@ void main() {
       } else {
         break;
       }
-      i = asint((asuint(i) + asuint(int(1))));
+      i = asint((asuint(i) + 1u));
       {
         uint tint_low_inc = (tint_loop_idx.x - 1u);
         tint_loop_idx.x = tint_low_inc;
@@ -38,7 +38,6 @@ void main() {
         InnerS v_3[8] = tint_array_copy;
         s1.a1 = v_3;
       }
-      continue;
     }
   }
 }

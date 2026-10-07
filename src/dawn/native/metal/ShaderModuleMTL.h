@@ -28,16 +28,15 @@
 #ifndef SRC_DAWN_NATIVE_METAL_SHADERMODULEMTL_H_
 #define SRC_DAWN_NATIVE_METAL_SHADERMODULEMTL_H_
 
+#import <Metal/Metal.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "dawn/native/ShaderModule.h"
-
-#include "dawn/common/NSRef.h"
-#include "dawn/native/Error.h"
-
-#import <Metal/Metal.h>
+#include "src/dawn/common/NSRef.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/ShaderModule.h"
 
 namespace dawn::native {
 struct ProgrammableStage;
@@ -59,15 +58,14 @@ class ShaderModule final : public ShaderModuleBase {
     struct MetalFunctionData {
         std::string msl;
         NSPRef<id<MTLFunction>> function;
-        bool needsStorageBufferLength;
         std::vector<uint32_t> workgroupAllocations;
-        MTLSize localWorkgroupSize;
+        MTLSize localWorkgroupSize{};
     };
 
     MaybeError CreateFunction(SingleShaderStage stage,
                               const ProgrammableStage& programmableStage,
                               const PipelineLayout* layout,
-                              const ImmediateConstantMask& pipelineImmediateMask,
+                              const ImmediateMask& pipelineImmediateMask,
                               MetalFunctionData* out,
                               uint32_t sampleMask = 0xFFFFFFFF,
                               const RenderPipeline* renderPipeline = nullptr);

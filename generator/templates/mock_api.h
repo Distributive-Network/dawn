@@ -39,7 +39,8 @@
 #include <atomic>
 #include <memory>
 
-#include "dawn/common/FutureUtils.h"
+#include "absl/container/flat_hash_map.h"
+#include "src/dawn/common/FutureUtils.h"
 
 // An abstract base class representing a proc table so that API calls can be mocked. Most API calls
 // are directly represented by a delete virtual method but others need minimal state tracking to be
@@ -64,7 +65,7 @@ class ProcTableAsClass {
             virtual void {{as_MethodSuffix(type.name, Name("release"))}}({{as_cType(type.name)}} self) = 0;
             {% for method in type.methods %}
                 {% set Suffix = as_CppMethodSuffix(type.name, method.name) %}
-                {% if not has_callbackInfoStruct(method) %}
+                {% if not has_callbackInfoStruct(method.arguments) %}
                     virtual {{as_annotated_cType(method.returns)}} {{Suffix}}(
                         {{-as_cType(type.name)}} {{as_varName(type.name)}}
                         {%- for arg in method.arguments -%}
@@ -82,15 +83,20 @@ class ProcTableAsClass {
                 {% endif %}
             {% endfor %}
 
-            {% for method in type.methods if has_callbackInfoStruct(method) %}
+            {% for method in type.methods if has_callbackInfoStruct(method.arguments) %}
                 {% set Suffix = as_CppMethodSuffix(type.name, method.name) %}
                 //* The virtual function to call after saving the callback and userdata in the proc.
                 //* This function can be mocked.
+                // Future-returning methods also pass their backend future as the last argument.
+                // Use WithArg to respond immediately, or SaveArg to save it for a later response.
                 virtual void On{{Suffix}}(
                     {{-as_cType(type.name)}} {{as_varName(type.name)}}
                     {%- for arg in method.arguments -%}
                         , {{as_annotated_cType(arg)}}
                     {%- endfor -%}
+                    {%- if method.returns and method.returns.type.name.get() == "future" -%}
+                        , WGPUFuture future
+                    {%- endif -%}
                 ) = 0;
                 {% set CallbackInfoType = (method.arguments|last).type %}
                 {% set CallbackType = find_by_name(CallbackInfoType.members, "callback").type %}
@@ -99,6 +105,9 @@ class ProcTableAsClass {
                     {%- for arg in CallbackType.arguments -%}
                         , {{as_annotated_cType(arg)}}
                     {%- endfor -%}
+                    {%- if method.returns and method.returns.type.name.get() == "future" -%}
+                        , WGPUFuture future
+                    {%- endif -%}
                 );
             {% endfor %}
 
@@ -111,21 +120,31 @@ class ProcTableAsClass {
         struct Object {
             ProcTableAsClass* procs = nullptr;
             {% for type in by_category["object"] %}
-                {% for method in type.methods if has_callbackInfoStruct(method) %}
+                {% for method in type.methods if has_callbackInfoStruct(method.arguments) %}
+                    {% set Suffix = as_CppMethodSuffix(type.name, method.name) %}
                     {% set CallbackInfoType = (method.arguments|last).type %}
                     {% set CallbackType = find_by_name(CallbackInfoType.members, "callback").type %}
-                    void* m{{as_CppMethodSuffix(type.name, method.name)}}Userdata1 = 0;
-                    void* m{{as_CppMethodSuffix(type.name, method.name)}}Userdata2 = 0;
-                    {{as_cType(CallbackType.name)}} m{{as_CppMethodSuffix(type.name, method.name)}}Callback = nullptr;
+                    {% if method.returns and method.returns.type.name.get() == "future" %}
+                        struct {{Suffix}}Data {
+                            {{as_cType(CallbackType.name)}} callback = nullptr;
+                            void* userdata1 = nullptr;
+                            void* userdata2 = nullptr;
+                        };
+                        absl::flat_hash_map<dawn::FutureID, {{Suffix}}Data> m{{Suffix}}Requests;
+                    {% else %}
+                        void* m{{Suffix}}Userdata1 = nullptr;
+                        void* m{{Suffix}}Userdata2 = nullptr;
+                        {{as_cType(CallbackType.name)}} m{{Suffix}}Callback = nullptr;
+                    {% endif %}
                 {% endfor %}
             {% endfor %}
             // Manually implement some callback helpers for testing.
             WGPUDeviceLostCallback mDeviceLostCallback = nullptr;
-            void* mDeviceLostUserdata1 = 0;
-            void* mDeviceLostUserdata2 = 0;
+            void* mDeviceLostUserdata1 = nullptr;
+            void* mDeviceLostUserdata2 = nullptr;
             WGPUUncapturedErrorCallback mUncapturedErrorCallback = nullptr;
-            void* mUncapturedErrorUserdata1 = 0;
-            void* mUncapturedErrorUserdata2 = 0;
+            void* mUncapturedErrorUserdata1 = nullptr;
+            void* mUncapturedErrorUserdata2 = nullptr;
         };
 
     private:
@@ -140,13 +159,11 @@ class MockProcTable : public ProcTableAsClass {
         MockProcTable();
         ~MockProcTable() override;
 
-        void IgnoreAllReleaseCalls();
-
         {%- for type in by_category["object"] %}
 
             MOCK_METHOD(void, {{as_MethodSuffix(type.name, Name("add ref"))}}, ({{as_cType(type.name)}} self), (override));
             MOCK_METHOD(void, {{as_MethodSuffix(type.name, Name("release"))}}, ({{as_cType(type.name)}} self), (override));
-            {% for method in type.methods if not has_callbackInfoStruct(method) %}
+            {% for method in type.methods if not has_callbackInfoStruct(method.arguments) %}
                 MOCK_METHOD({{as_annotated_cType(method.returns)}},{{" "}}
                     {{-as_MethodSuffix(type.name, method.name)}}, (
                         {{-as_cType(type.name)}} {{as_varName(type.name)}}
@@ -156,13 +173,16 @@ class MockProcTable : public ProcTableAsClass {
                     ), (override));
             {% endfor %}
 
-            {% for method in type.methods if has_callbackInfoStruct(method) %}
+            {% for method in type.methods if has_callbackInfoStruct(method.arguments) %}
                 MOCK_METHOD(void,{{" "-}}
                     On{{as_CppMethodSuffix(type.name, method.name)}}, (
                         {{-as_cType(type.name)}} {{as_varName(type.name)}}
                         {%- for arg in method.arguments -%}
                             , {{as_annotated_cType(arg)}}
                         {%- endfor -%}
+                        {%- if method.returns and method.returns.type.name.get() == "future" -%}
+                            , WGPUFuture future
+                        {%- endif -%}
                     ), (override));
             {% endfor %}
         {% endfor %}

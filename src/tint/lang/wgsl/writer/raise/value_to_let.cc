@@ -32,7 +32,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/phony.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/utils/containers/reverse.h"
 
 namespace tint::wgsl::writer::raise {
@@ -178,6 +178,7 @@ struct State {
         }
 
         if (!value->IsUsed() && !ir.NameOf(value).IsValid()) {
+            ir.properties.Add(core::ir::Property::kAllowPhonyInstructions);
             auto* phony = b.Phony(value);
             phony->InsertAfter(inst);
             return;
@@ -197,14 +198,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> ValueToLet(core::ir::Module& ir) {
-    TINT_CHECK_RESULT(core::ir::ValidateAndDumpIfNeeded(
-        ir, "wgsl.ValueToLet",
-        core::ir::Capabilities{
-            core::ir::Capability::kAllowMultipleEntryPoints,
-            core::ir::Capability::kAllowOverrides,
-        }
-
-        ));
+    core::ir::AssertValid(ir, "before wgsl.ValueToLet");
 
     State{ir}.Process();
 

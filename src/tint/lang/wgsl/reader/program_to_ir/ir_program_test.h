@@ -33,7 +33,7 @@
 
 #include "gtest/gtest.h"
 #include "src/tint/lang/core/ir/disassembler.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/wgsl/program/program_builder.h"
 #include "src/tint/lang/wgsl/reader/lower/lower.h"
 #include "src/tint/lang/wgsl/reader/program_to_ir/program_to_ir.h"
@@ -49,10 +49,11 @@ class IRProgramTestBase : public BASE, public ProgramBuilder {
     IRProgramTestBase() = default;
     ~IRProgramTestBase() override = default;
 
-    /// Builds a core-dialect module from this ProgramBuilder.
+    /// Builds a core-dialect module from this ProgramBuilder with the given allowed features.
+    /// @param allowed_features the allowed features for resolving
     /// @returns the generated core-dialect module
-    Result<core::ir::Module> Build() {
-        Program program{resolver::Resolve(*this)};
+    Result<core::ir::Module> Build(const wgsl::AllowedFeatures& allowed_features) {
+        Program program{resolver::Resolve(*this, allowed_features)};
         if (!program.IsValid()) {
             return Failure{program.Diagnostics().Str()};
         }
@@ -62,9 +63,13 @@ class IRProgramTestBase : public BASE, public ProgramBuilder {
         // WGSL-dialect -> core-dialect
         TINT_CHECK_RESULT(wgsl::reader::Lower(result));
 
-        TINT_CHECK_RESULT(core::ir::Validate(result, kCapabilities));
+        TINT_CHECK_RESULT(core::ir::Validate(result));
         return result;
     }
+
+    /// Builds a core-dialect module from this ProgramBuilder.
+    /// @returns the generated core-dialect module
+    Result<core::ir::Module> Build() { return Build(wgsl::AllowedFeatures::Everything()); }
 
     /// Build the module from the given WGSL.
     /// @param wgsl the WGSL to convert to IR
@@ -75,7 +80,7 @@ class IRProgramTestBase : public BASE, public ProgramBuilder {
             .allowed_features = wgsl::AllowedFeatures::Everything(),
         };
         TINT_CHECK_RESULT_UNWRAP(result, wgsl::reader::WgslToIR(&file, options));
-        TINT_CHECK_RESULT(core::ir::Validate(result, kCapabilities));
+        TINT_CHECK_RESULT(core::ir::Validate(result));
 
         return result;
     }
@@ -84,9 +89,6 @@ class IRProgramTestBase : public BASE, public ProgramBuilder {
     /// @param m the module to disassemble.
     /// @returns the string representation
     std::string Dis(core::ir::Module& m) { return core::ir::Disassembler(m).Plain(); }
-
-    core::ir::Capabilities kCapabilities =
-        core::ir::Capabilities{core::ir::Capability::kAllowOverrides};
 };
 
 using IRProgramTest = IRProgramTestBase<testing::Test>;

@@ -28,13 +28,12 @@
 #ifndef SRC_DAWN_NATIVE_VULKAN_BUFFERVK_H_
 #define SRC_DAWN_NATIVE_VULKAN_BUFFERVK_H_
 
-#include "dawn/native/Buffer.h"
-#include "partition_alloc/pointers/raw_ptr.h"
-
 #include "absl/container/flat_hash_set.h"
-#include "dawn/common/SerialQueue.h"
-#include "dawn/common/vulkan_platform.h"
-#include "dawn/native/ResourceMemoryAllocation.h"
+#include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/SerialQueue.h"
+#include "src/dawn/common/vulkan_platform.h"
+#include "src/dawn/native/Buffer.h"
+#include "src/dawn/native/ResourceMemoryAllocation.h"
 
 namespace dawn::native::vulkan {
 
@@ -107,7 +106,7 @@ class Buffer final : public BufferBase {
     // unmapped/flushed if necessary. The op function receives a span of exactly the requested
     // size.
     template <typename F>
-    MaybeError MapMemoryAndPerformOperation(uint64_t requestedOffset, size_t requestedSize, F&& op);
+    MaybeError MapMemoryAndPerformOperation(size_t requestedOffset, size_t requestedSize, F&& op);
 
     MaybeError MapAsyncImpl(wgpu::MapMode mode, size_t offset, size_t size) override;
     MaybeError FinalizeMapImpl(BufferState newState) override;
@@ -115,8 +114,8 @@ class Buffer final : public BufferBase {
     void DestroyImpl(DestroyReason reason) override;
     bool IsCPUWritableAtCreation() const override;
     MaybeError MapAtCreationImpl() override;
-    void* GetMappedPointerImpl() override;
-    MaybeError UploadData(uint64_t bufferOffset, const void* data, size_t size) override;
+    Span<std::byte> GetMappedRangeImpl(size_t offset, size_t size) override;
+    MaybeError UploadData(uint64_t bufferOffset, Span<const std::byte> data) override;
 
     VkBuffer mHandle = VK_NULL_HANDLE;
     ResourceMemoryAllocation mMemoryAllocation;
@@ -125,7 +124,7 @@ class Buffer final : public BufferBase {
     VkDeviceMemory mDedicatedDeviceMemory = VK_NULL_HANDLE;
 
     wgpu::Callback mHostMappedDisposeCallback = nullptr;
-    raw_ptr<void, DisableDanglingPtrDetection> mHostMappedDisposeUserdata = nullptr;
+    raw_ptr<void> mHostMappedDisposeUserdata = nullptr;
 
     // Track which usage was the last to write to the buffer.
     wgpu::BufferUsage mLastWriteUsage = wgpu::BufferUsage::None;

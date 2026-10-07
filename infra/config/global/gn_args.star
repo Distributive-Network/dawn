@@ -30,6 +30,36 @@
 load("@chromium-luci//gn_args.star", "gn_args")
 
 gn_args.config(
+    name = "android",
+    args = {
+        "target_os": "android",
+    },
+)
+
+gn_args.config(
+    name = "android_clang",
+    configs = [
+        "android",
+        "android_static_analysis_on",
+        "siso",
+    ],
+)
+
+gn_args.config(
+    name = "android_static_analysis_on",
+    args = {
+        "android_static_analysis": "on",
+    },
+)
+
+gn_args.config(
+    name = "arm",
+    args = {
+        "target_cpu": "arm",
+    },
+)
+
+gn_args.config(
     name = "arm64",
     args = {
         "target_cpu": "arm64",
@@ -54,6 +84,13 @@ gn_args.config(
     name = "component",
     args = {
         "is_component_build": True,
+    },
+)
+
+gn_args.config(
+    name = "dawn_agility_sdk",
+    args = {
+        "dawn_use_agility_sdk": True,
     },
 )
 
@@ -96,6 +133,13 @@ gn_args.config(
     name = "libfuzzer",
     args = {
         "use_libfuzzer": True,
+    },
+)
+
+gn_args.config(
+    name = "tint_build_mesa",
+    args = {
+        "tint_build_mesa": True,
     },
 )
 
@@ -278,6 +322,7 @@ gn_args.config(
     name = "win_clang",
     configs = [
         "clang",
+        "dawn_agility_sdk",
         "siso",
         "tint_hlsl_writer",
         "tint_msl_writer",
@@ -290,6 +335,7 @@ gn_args.config(
 gn_args.config(
     name = "win_msvc",
     configs = [
+        "dawn_agility_sdk",
         "msvc",
         "no_custom_libcxx",
         "siso",

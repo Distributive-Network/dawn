@@ -26,7 +26,6 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "gmock/gmock.h"
-
 #include "src/tint/lang/core/type/array.h"
 #include "src/tint/lang/core/type/binding_array.h"
 #include "src/tint/lang/core/type/depth_multisampled_texture.h"
@@ -52,11 +51,12 @@ TEST_F(MslWriterTest, EmitType_Array) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
-    EXPECT_EQ(output_.msl, MetalHeader() + MetalArray() + R"(
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
+    EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
-  tint_array<bool, 4> a = {};
+  array<bool, 4> a = {};
 }
 )");
 }
@@ -68,11 +68,12 @@ TEST_F(MslWriterTest, EmitType_ArrayOfArray) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
-    EXPECT_EQ(output_.msl, MetalHeader() + MetalArray() + R"(
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
+    EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
-  tint_array<tint_array<bool, 4>, 5> a = {};
+  array<array<bool, 4>, 5> a = {};
 }
 )");
 }
@@ -85,11 +86,12 @@ TEST_F(MslWriterTest, EmitType_ArrayOfArrayOfArray) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
-    EXPECT_EQ(output_.msl, MetalHeader() + MetalArray() + R"(
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
+    EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
-  tint_array<tint_array<tint_array<bool, 4>, 5>, 6> a = {};
+  array<array<array<bool, 4>, 5>, 6> a = {};
 }
 )");
 }
@@ -114,23 +116,24 @@ TEST_F(MslWriterTest, EmitType_RuntimeArray) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
-    EXPECT_EQ(output_.msl, MetalHeader() + MetalArray() + R"(
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
+    EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct S {
-  /* 0x0000 */ tint_array<int, 1> a;
+  /* 0x0000 */ array<int, 1> a;
 };
 
 struct tint_module_vars_struct {
   device S* v;
 };
 
-void foo(device tint_array<int, 1>* const param) {
+void foo(device array<int, 1>* const param) {
 }
 
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(device S* v [[buffer(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo((&(*tint_module_vars.v).a));
+  (foo((&(*tint_module_vars.v).a)));
 }
 )");
 }
@@ -142,7 +145,8 @@ TEST_F(MslWriterTest, EmitType_Bool) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -158,7 +162,8 @@ TEST_F(MslWriterTest, EmitType_F32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -174,7 +179,8 @@ TEST_F(MslWriterTest, EmitType_F16) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -190,7 +196,8 @@ TEST_F(MslWriterTest, EmitType_I32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -206,7 +213,8 @@ TEST_F(MslWriterTest, EmitType_Matrix_F32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -222,7 +230,8 @@ TEST_F(MslWriterTest, EmitType_Matrix_F16) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -237,7 +246,8 @@ TEST_F(MslWriterTest, EmitType_U32) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -254,7 +264,8 @@ TEST_F(MslWriterTest, EmitType_U64) {
     });
 
     // Use `Print()` as u64 types are only support after certain transforms have run.
-    ASSERT_TRUE(Print()) << err_ << output_.msl;
+    auto result = Print();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -280,7 +291,8 @@ TEST_F(MslWriterTest, EmitType_Atomic_U32) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   threadgroup atomic_uint* v;
@@ -295,16 +307,16 @@ void foo(threadgroup atomic_uint* const a) {
 
 void entry_inner(uint tint_local_index, tint_module_vars_struct tint_module_vars) {
   if ((tint_local_index < 1u)) {
-    atomic_store_explicit(tint_module_vars.v, 0u, memory_order_relaxed);
+    (atomic_store_explicit(tint_module_vars.v, 0u, memory_order_relaxed));
   }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  foo(tint_module_vars.v);
+  (threadgroup_barrier(mem_flags::mem_threadgroup));
+  (foo(tint_module_vars.v));
 }
 
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(uint tint_local_index [[thread_index_in_threadgroup]], threadgroup tint_symbol_1* v_1 [[threadgroup(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=(&(*v_1).tint_symbol)};
-  entry_inner(tint_local_index, tint_module_vars);
+  (entry_inner(tint_local_index, tint_module_vars));
 }
 )");
 }
@@ -326,7 +338,8 @@ TEST_F(MslWriterTest, EmitType_Atomic_I32) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   threadgroup atomic_int* v;
@@ -341,16 +354,16 @@ void foo(threadgroup atomic_int* const a) {
 
 void entry_inner(uint tint_local_index, tint_module_vars_struct tint_module_vars) {
   if ((tint_local_index < 1u)) {
-    atomic_store_explicit(tint_module_vars.v, 0, memory_order_relaxed);
+    (atomic_store_explicit(tint_module_vars.v, 0, memory_order_relaxed));
   }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  foo(tint_module_vars.v);
+  (threadgroup_barrier(mem_flags::mem_threadgroup));
+  (foo(tint_module_vars.v));
 }
 
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(uint tint_local_index [[thread_index_in_threadgroup]], threadgroup tint_symbol_1* v_1 [[threadgroup(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=(&(*v_1).tint_symbol)};
-  entry_inner(tint_local_index, tint_module_vars);
+  (entry_inner(tint_local_index, tint_module_vars));
 }
 )");
 }
@@ -362,7 +375,8 @@ TEST_F(MslWriterTest, EmitType_Vector) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -378,7 +392,8 @@ TEST_F(MslWriterTest, EmitType_VectorPacked) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -394,7 +409,8 @@ TEST_F(MslWriterTest, EmitType_Void) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -419,7 +435,8 @@ TEST_F(MslWriterTest, EmitType_Pointer_Workgroup) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   threadgroup float* v;
@@ -436,14 +453,14 @@ void entry_inner(uint tint_local_index, tint_module_vars_struct tint_module_vars
   if ((tint_local_index < 1u)) {
     (*tint_module_vars.v) = 0.0f;
   }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  foo(tint_module_vars.v);
+  (threadgroup_barrier(mem_flags::mem_threadgroup));
+  (foo(tint_module_vars.v));
 }
 
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(uint tint_local_index [[thread_index_in_threadgroup]], threadgroup tint_symbol_1* v_1 [[threadgroup(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=(&(*v_1).tint_symbol)};
-  entry_inner(tint_local_index, tint_module_vars);
+  (entry_inner(tint_local_index, tint_module_vars));
 }
 )");
 }
@@ -466,7 +483,8 @@ TEST_F(MslWriterTest, EmitType_Pointer_Const) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   const device int* v;
@@ -478,7 +496,7 @@ void foo(const device int* const param) {
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(const device int* v [[buffer(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo(tint_module_vars.v);
+  (foo(tint_module_vars.v));
 }
 )");
 }
@@ -494,7 +512,8 @@ TEST_F(MslWriterTest, EmitType_Struct) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct S {
   int a;
@@ -520,7 +539,8 @@ TEST_F(MslWriterTest, EmitType_Struct_Dedup) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct S {
   int a;
@@ -544,7 +564,7 @@ void FormatMSLField(StringStream& out,
     if (array_count == 0) {
         out << type << " ";
     } else {
-        out << "tint_array<" << type << ", " << std::to_string(array_count) << "> ";
+        out << "array<" << type << ", " << std::to_string(array_count) << "> ";
     }
     out << name << ";\n";
 }
@@ -694,7 +714,8 @@ TEST_F(MslWriterTest, EmitType_Struct_Layout_NumericTypes) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_THAT(output_.msl, testing::HasSubstr(expect.str())) << output_.msl;
 
     // 1.4 Metal and C++14
@@ -754,14 +775,14 @@ TEST_F(MslWriterTest, EmitType_Struct_Layout_Structures) {
     expect << R"(
 struct inner_x {
   /* 0x0000 */ int a;
-  /* 0x0004 */ tint_array<int8_t, 508> tint_pad_1;
+  /* 0x0004 */ array<int8_t, 508> tint_pad_1;
   /* 0x0200 */ float b;
-  /* 0x0204 */ tint_array<int8_t, 508> tint_pad_2;
+  /* 0x0204 */ array<int8_t, 508> tint_pad_2;
 };
 
 struct inner_y {
   /* 0x0000 */ int a;
-  /* 0x0004 */ tint_array<int8_t, 508> tint_pad_3;
+  /* 0x0004 */ array<int8_t, 508> tint_pad_3;
   /* 0x0200 */ float b;
 };
 
@@ -784,7 +805,8 @@ struct inner_y {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_THAT(output_.msl, testing::HasSubstr(expect.str())) << output_.msl;
 
     // 1.4 Metal and C++14
@@ -864,9 +886,9 @@ TEST_F(MslWriterTest, EmitType_Struct_Layout_ArrayDefaultStride) {
     expect << R"(
 struct inner {
   /* 0x0000 */ int a;
-  /* 0x0004 */ tint_array<int8_t, 508> tint_pad_1;
+  /* 0x0004 */ array<int8_t, 508> tint_pad_1;
   /* 0x0200 */ float b;
-  /* 0x0204 */ tint_array<int8_t, 508> tint_pad_2;
+  /* 0x0204 */ array<int8_t, 508> tint_pad_2;
 };
 
 )";
@@ -888,7 +910,8 @@ struct inner {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_THAT(output_.msl, testing::HasSubstr(expect.str())) << output_.msl;
 
     // 1.4 Metal and C++14
@@ -950,10 +973,10 @@ TEST_F(MslWriterTest, EmitType_Struct_Layout_Vec3) {
                                                   {mod.symbols.Register("j"), ty.i32()},
                                               });
 
-    auto expect = MetalHeader() + MetalArray() + R"(
+    auto expect = MetalHeader() + R"(
 struct tint_packed_vec3_f32_array_element {
   /* 0x0000 */ packed_float3 packed;
-  /* 0x000c */ tint_array<int8_t, 4> tint_pad;
+  /* 0x000c */ array<int8_t, 4> tint_pad;
 };
 
 struct S {
@@ -965,33 +988,33 @@ struct S {
   float3x3 f;
   float4x3 g;
   float h;
-  tint_array<float3, 4> i;
+  array<float3, 4> i;
   int j;
 };
 
 struct S_packed_vec3 {
   /* 0x0000 */ int a;
-  /* 0x0004 */ tint_array<int8_t, 12> tint_pad_1;
+  /* 0x0004 */ array<int8_t, 12> tint_pad_1;
   /* 0x0010 */ packed_uint3 b;
-  /* 0x001c */ tint_array<int8_t, 4> tint_pad_2;
+  /* 0x001c */ array<int8_t, 4> tint_pad_2;
   /* 0x0020 */ packed_float3 c;
   /* 0x002c */ float d;
-  /* 0x0030 */ tint_array<tint_packed_vec3_f32_array_element, 2> e;
-  /* 0x0050 */ tint_array<tint_packed_vec3_f32_array_element, 3> f;
-  /* 0x0080 */ tint_array<tint_packed_vec3_f32_array_element, 4> g;
+  /* 0x0030 */ array<tint_packed_vec3_f32_array_element, 2> e;
+  /* 0x0050 */ array<tint_packed_vec3_f32_array_element, 3> f;
+  /* 0x0080 */ array<tint_packed_vec3_f32_array_element, 4> g;
   /* 0x00c0 */ float h;
-  /* 0x00c4 */ tint_array<int8_t, 12> tint_pad_3;
-  /* 0x00d0 */ tint_array<tint_packed_vec3_f32_array_element, 4> i;
+  /* 0x00c4 */ array<int8_t, 12> tint_pad_3;
+  /* 0x00d0 */ array<tint_packed_vec3_f32_array_element, 4> i;
   /* 0x0110 */ int j;
-  /* 0x0114 */ tint_array<int8_t, 12> tint_pad_4;
+  /* 0x0114 */ array<int8_t, 12> tint_pad_4;
 };
 
 struct tint_module_vars_struct {
   device S_packed_vec3* a;
 };
 
-tint_array<float3, 4> tint_load_array_packed_vec3(device tint_array<tint_packed_vec3_f32_array_element, 4>* const from) {
-  return tint_array<float3, 4>{float3((*from)[0u].packed), float3((*from)[1u].packed), float3((*from)[2u].packed), float3((*from)[3u].packed)};
+array<float3, 4> tint_load_array_packed_vec3(device array<tint_packed_vec3_f32_array_element, 4>* const from) {
+  return array<float3, 4>{float3((*from)[0u].packed), float3((*from)[1u].packed), float3((*from)[2u].packed), float3((*from)[3u].packed)};
 }
 
 S tint_load_struct_packed_vec3(device S_packed_vec3* const from) {
@@ -999,21 +1022,21 @@ S tint_load_struct_packed_vec3(device S_packed_vec3* const from) {
   uint3 const v_1 = uint3((*from).b);
   float3 const v_2 = float3((*from).c);
   float const v_3 = (*from).d;
-  tint_array<tint_packed_vec3_f32_array_element, 2> const v_4 = (*from).e;
+  array<tint_packed_vec3_f32_array_element, 2> const v_4 = (*from).e;
   float2x3 const v_5 = float2x3(float3(v_4[0u].packed), float3(v_4[1u].packed));
-  tint_array<tint_packed_vec3_f32_array_element, 3> const v_6 = (*from).f;
+  array<tint_packed_vec3_f32_array_element, 3> const v_6 = (*from).f;
   float3x3 const v_7 = float3x3(float3(v_6[0u].packed), float3(v_6[1u].packed), float3(v_6[2u].packed));
-  tint_array<tint_packed_vec3_f32_array_element, 4> const v_8 = (*from).g;
+  array<tint_packed_vec3_f32_array_element, 4> const v_8 = (*from).g;
   float4x3 const v_9 = float4x3(float3(v_8[0u].packed), float3(v_8[1u].packed), float3(v_8[2u].packed), float3(v_8[3u].packed));
   float const v_10 = (*from).h;
-  tint_array<float3, 4> const v_11 = tint_load_array_packed_vec3((&(*from).i));
+  array<float3, 4> const v_11 = tint_load_array_packed_vec3((&(*from).i));
   return S{.a=v, .b=v_1, .c=v_2, .d=v_3, .e=v_5, .f=v_7, .g=v_9, .h=v_10, .i=v_11, .j=(*from).j};
 }
 
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(device S_packed_vec3* a [[buffer(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.a=a};
-  tint_load_struct_packed_vec3(tint_module_vars.a);
+  (tint_load_struct_packed_vec3(tint_module_vars.a));
 }
 )";
 
@@ -1026,7 +1049,8 @@ kernel void entry(device S_packed_vec3* a [[buffer(0)]]) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, expect);
 }
 
@@ -1062,47 +1086,119 @@ TEST_F(MslWriterTest, AttemptTintPadSymbolCollision) {
     auto* s = MkStruct(mod, ty, "S", data);
 
     auto expect = R"(
+struct S {
+  int tint_pad_2;
+  float tint_pad_20;
+  float2 tint_pad_33;
+  uint tint_pad_1;
+  float3 tint_pad_3;
+  uint tint_pad_7;
+  float4 tint_pad_25;
+  uint tint_pad_5;
+  float2x2 tint_pad_27;
+  uint tint_pad_24;
+  float2x3 tint_pad_23;
+  uint tint_pad;
+  float2x4 tint_pad_8;
+  uint tint_pad_26;
+  float3x2 tint_pad_29;
+  uint tint_pad_6;
+  float3x3 tint_pad_22;
+  uint tint_pad_32;
+  float3x4 tint_pad_34;
+  uint tint_pad_35;
+  float4x2 tint_pad_30;
+  uint tint_pad_9;
+  float4x3 tint_pad_31;
+  uint tint_pad_28;
+  float4x4 tint_pad_4;
+  float tint_pad_21;
+};
+
+struct tint_packed_vec3_f32_array_element {
+  /* 0x0000 */ packed_float3 packed;
+  /* 0x000c */ array<int8_t, 4> tint_pad_15;
+};
+
 struct S_packed_vec3 {
   /* 0x0000 */ int tint_pad_2;
-  /* 0x0004 */ tint_array<int8_t, 124> tint_pad_10;
+  /* 0x0004 */ array<int8_t, 124> tint_pad_10;
   /* 0x0080 */ float tint_pad_20;
-  /* 0x0084 */ tint_array<int8_t, 124> tint_pad_11;
+  /* 0x0084 */ array<int8_t, 124> tint_pad_11;
   /* 0x0100 */ float2 tint_pad_33;
   /* 0x0108 */ uint tint_pad_1;
-  /* 0x010c */ tint_array<int8_t, 4> tint_pad_12;
+  /* 0x010c */ array<int8_t, 4> tint_pad_12;
   /* 0x0110 */ packed_float3 tint_pad_3;
   /* 0x011c */ uint tint_pad_7;
   /* 0x0120 */ float4 tint_pad_25;
   /* 0x0130 */ uint tint_pad_5;
-  /* 0x0134 */ tint_array<int8_t, 4> tint_pad_13;
+  /* 0x0134 */ array<int8_t, 4> tint_pad_13;
   /* 0x0138 */ float2x2 tint_pad_27;
   /* 0x0148 */ uint tint_pad_24;
-  /* 0x014c */ tint_array<int8_t, 4> tint_pad_14;
-  /* 0x0150 */ tint_array<tint_packed_vec3_f32_array_element, 2> tint_pad_23;
+  /* 0x014c */ array<int8_t, 4> tint_pad_14;
+  /* 0x0150 */ array<tint_packed_vec3_f32_array_element, 2> tint_pad_23;
   /* 0x0170 */ uint tint_pad;
-  /* 0x0174 */ tint_array<int8_t, 12> tint_pad_16;
+  /* 0x0174 */ array<int8_t, 12> tint_pad_16;
   /* 0x0180 */ float2x4 tint_pad_8;
   /* 0x01a0 */ uint tint_pad_26;
-  /* 0x01a4 */ tint_array<int8_t, 4> tint_pad_17;
+  /* 0x01a4 */ array<int8_t, 4> tint_pad_17;
   /* 0x01a8 */ float3x2 tint_pad_29;
   /* 0x01c0 */ uint tint_pad_6;
-  /* 0x01c4 */ tint_array<int8_t, 12> tint_pad_18;
-  /* 0x01d0 */ tint_array<tint_packed_vec3_f32_array_element, 3> tint_pad_22;
+  /* 0x01c4 */ array<int8_t, 12> tint_pad_18;
+  /* 0x01d0 */ array<tint_packed_vec3_f32_array_element, 3> tint_pad_22;
   /* 0x0200 */ uint tint_pad_32;
-  /* 0x0204 */ tint_array<int8_t, 12> tint_pad_19;
+  /* 0x0204 */ array<int8_t, 12> tint_pad_19;
   /* 0x0210 */ float3x4 tint_pad_34;
   /* 0x0240 */ uint tint_pad_35;
-  /* 0x0244 */ tint_array<int8_t, 4> tint_pad_36;
+  /* 0x0244 */ array<int8_t, 4> tint_pad_36;
   /* 0x0248 */ float4x2 tint_pad_30;
   /* 0x0268 */ uint tint_pad_9;
-  /* 0x026c */ tint_array<int8_t, 4> tint_pad_37;
-  /* 0x0270 */ tint_array<tint_packed_vec3_f32_array_element, 4> tint_pad_31;
+  /* 0x026c */ array<int8_t, 4> tint_pad_37;
+  /* 0x0270 */ array<tint_packed_vec3_f32_array_element, 4> tint_pad_31;
   /* 0x02b0 */ uint tint_pad_28;
-  /* 0x02b4 */ tint_array<int8_t, 12> tint_pad_38;
+  /* 0x02b4 */ array<int8_t, 12> tint_pad_38;
   /* 0x02c0 */ float4x4 tint_pad_4;
   /* 0x0300 */ float tint_pad_21;
-  /* 0x0304 */ tint_array<int8_t, 124> tint_pad_39;
+  /* 0x0304 */ array<int8_t, 124> tint_pad_39;
 };
+
+struct tint_module_vars_struct {
+  device S_packed_vec3* a;
+};
+
+S tint_load_struct_packed_vec3(device S_packed_vec3* const from) {
+  int const v = (*from).tint_pad_2;
+  float const v_1 = (*from).tint_pad_20;
+  float2 const v_2 = (*from).tint_pad_33;
+  uint const v_3 = (*from).tint_pad_1;
+  float3 const v_4 = float3((*from).tint_pad_3);
+  uint const v_5 = (*from).tint_pad_7;
+  float4 const v_6 = (*from).tint_pad_25;
+  uint const v_7 = (*from).tint_pad_5;
+  float2x2 const v_8 = (*from).tint_pad_27;
+  uint const v_9 = (*from).tint_pad_24;
+  array<tint_packed_vec3_f32_array_element, 2> const v_10 = (*from).tint_pad_23;
+  float2x3 const v_11 = float2x3(float3(v_10[0u].packed), float3(v_10[1u].packed));
+  uint const v_12 = (*from).tint_pad;
+  float2x4 const v_13 = (*from).tint_pad_8;
+  uint const v_14 = (*from).tint_pad_26;
+  float3x2 const v_15 = (*from).tint_pad_29;
+  uint const v_16 = (*from).tint_pad_6;
+  array<tint_packed_vec3_f32_array_element, 3> const v_17 = (*from).tint_pad_22;
+  float3x3 const v_18 = float3x3(float3(v_17[0u].packed), float3(v_17[1u].packed), float3(v_17[2u].packed));
+  uint const v_19 = (*from).tint_pad_32;
+  float3x4 const v_20 = (*from).tint_pad_34;
+  uint const v_21 = (*from).tint_pad_35;
+  float4x2 const v_22 = (*from).tint_pad_30;
+  uint const v_23 = (*from).tint_pad_9;
+  array<tint_packed_vec3_f32_array_element, 4> const v_24 = (*from).tint_pad_31;
+  float4x3 const v_25 = float4x3(float3(v_24[0u].packed), float3(v_24[1u].packed), float3(v_24[2u].packed), float3(v_24[3u].packed));
+  return S{.tint_pad_2=v, .tint_pad_20=v_1, .tint_pad_33=v_2, .tint_pad_1=v_3, .tint_pad_3=v_4, .tint_pad_7=v_5, .tint_pad_25=v_6, .tint_pad_5=v_7, .tint_pad_27=v_8, .tint_pad_24=v_9, .tint_pad_23=v_11, .tint_pad=v_12, .tint_pad_8=v_13, .tint_pad_26=v_14, .tint_pad_29=v_15, .tint_pad_6=v_16, .tint_pad_22=v_18, .tint_pad_32=v_19, .tint_pad_34=v_20, .tint_pad_35=v_21, .tint_pad_30=v_22, .tint_pad_9=v_23, .tint_pad_31=v_25, .tint_pad_28=(*from).tint_pad_28, .tint_pad_4=(*from).tint_pad_4, .tint_pad_21=(*from).tint_pad_21};
+}
+
+[[max_total_threads_per_threadgroup(1)]]
+kernel void entry(device S_packed_vec3* a [[buffer(0)]]) {
+  tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.a=a};
 )";
 
     auto* var = b.Var("a", ty.ptr(core::AddressSpace::kStorage, s));
@@ -1114,7 +1210,8 @@ struct S_packed_vec3 {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_THAT(output_.msl, testing::HasSubstr(expect)) << output_.msl;
 }
 
@@ -1136,7 +1233,8 @@ TEST_F(MslWriterTest, EmitType_Sampler) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   sampler v;
@@ -1148,7 +1246,7 @@ void foo(sampler a) {
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(sampler v [[sampler(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo(tint_module_vars.v);
+  (foo(tint_module_vars.v));
 }
 )");
 }
@@ -1171,7 +1269,8 @@ TEST_F(MslWriterTest, EmitType_SamplerComparison) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   sampler v;
@@ -1183,7 +1282,7 @@ void foo(sampler a) {
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(sampler v [[sampler(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo(tint_module_vars.v);
+  (foo(tint_module_vars.v));
 }
 )");
 }
@@ -1209,7 +1308,8 @@ TEST_F(MslWriterTest, EmitType_BindingArraySampledTexture) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   array<texture2d<float, access::sample>, 4> v;
@@ -1221,7 +1321,7 @@ void foo(array<texture2d<float, access::sample>, 4> a) {
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(array<texture2d<float, access::sample>, 4> v [[texture(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo(tint_module_vars.v);
+  (foo(tint_module_vars.v));
 }
 )");
 }
@@ -1259,7 +1359,8 @@ TEST_P(MslWriterDepthTexturesTest, Emit) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   )" + params.result + R"( v;
@@ -1273,7 +1374,7 @@ void foo()" + params.result +
 kernel void entry()" + params.result +
                                R"( v [[texture(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo(tint_module_vars.v);
+  (foo(tint_module_vars.v));
 }
 )");
 }
@@ -1309,7 +1410,8 @@ TEST_F(MslWriterTest, EmitType_DepthMultisampledTexture) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   depth2d_ms<float, access::read> v;
@@ -1321,7 +1423,7 @@ void foo(depth2d_ms<float, access::read> a) {
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(depth2d_ms<float, access::read> v [[texture(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo(tint_module_vars.v);
+  (foo(tint_module_vars.v));
 }
 )");
 }
@@ -1359,7 +1461,8 @@ TEST_P(MslWriterSampledtexturesTest, Emit) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   )" + params.result + R"( v;
@@ -1373,7 +1476,7 @@ void foo()" + params.result +
 kernel void entry()" + params.result +
                                R"( v [[texture(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo(tint_module_vars.v);
+  (foo(tint_module_vars.v));
 }
 )");
 }
@@ -1410,7 +1513,8 @@ TEST_F(MslWriterTest, EmitType_MultisampledTexture) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   texture2d_ms<uint, access::read> v;
@@ -1422,7 +1526,45 @@ void foo(texture2d_ms<uint, access::read> a) {
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry(texture2d_ms<uint, access::read> v [[texture(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo(tint_module_vars.v);
+  (foo(tint_module_vars.v));
+}
+)");
+}
+
+TEST_F(MslWriterTest, EmitType_MultisampledArrayTexture) {
+    auto* ms = ty.multisampled_texture(core::type::TextureDimension::k2dArray, ty.u32());
+
+    auto* var = b.Var("v", ty.ptr(handle, ms));
+    var->SetBindingPoint(0, 0);
+    mod.root_block->Append(var);
+
+    auto* func = b.Function("foo", ty.void_());
+    auto* param = b.FunctionParam("a", ms);
+    func->SetParams({param});
+    b.Append(func->Block(), [&] {  //
+        b.Return(func);
+    });
+
+    auto* eb = b.ComputeFunction("entry");
+    b.Append(eb->Block(), [&] {
+        b.Call(func, b.Load(var));
+        b.Return(eb);
+    });
+
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
+    EXPECT_EQ(output_.msl, MetalHeader() + R"(
+struct tint_module_vars_struct {
+  texture2d_ms_array<uint, access::read> v;
+};
+
+void foo(texture2d_ms_array<uint, access::read> a) {
+}
+
+[[max_total_threads_per_threadgroup(1)]]
+kernel void entry(texture2d_ms_array<uint, access::read> v [[texture(0)]]) {
+  tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
+  (foo(tint_module_vars.v));
 }
 )");
 }
@@ -1459,7 +1601,8 @@ TEST_P(MslWriterStorageTexturesTest, Emit) {
         b.Return(eb);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 struct tint_module_vars_struct {
   )" + params.result + R"( v;
@@ -1473,7 +1616,7 @@ void foo()" + params.result +
 kernel void entry()" + params.result +
                                R"( v [[texture(0)]]) {
   tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v};
-  foo(tint_module_vars.v);
+  (foo(tint_module_vars.v));
 }
 )");
 }
@@ -1497,7 +1640,8 @@ TEST_F(MslWriterTest, EmitType_SubgroupMatrixLeft) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -1514,7 +1658,8 @@ TEST_F(MslWriterTest, EmitType_SubgroupMatrixRight) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {
@@ -1532,7 +1677,8 @@ TEST_F(MslWriterTest, EmitType_SubgroupMatrixResult) {
         b.Return(func);
     });
 
-    ASSERT_TRUE(Generate()) << err_ << output_.msl;
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.msl;
     EXPECT_EQ(output_.msl, MetalHeader() + R"(
 [[max_total_threads_per_threadgroup(1)]]
 kernel void entry() {

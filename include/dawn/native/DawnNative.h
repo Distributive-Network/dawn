@@ -82,8 +82,7 @@ struct FeatureInfo {
 class DAWN_NATIVE_EXPORT Adapter {
   public:
     Adapter();
-    // NOLINTNEXTLINE(runtime/explicit)
-    Adapter(AdapterBase* impl);
+    explicit(false) Adapter(AdapterBase* impl);
     ~Adapter();
 
     Adapter(const Adapter& other);
@@ -116,8 +115,7 @@ enum BackendValidationLevel { Full, Partial, Disabled };
 // Can be chained in InstanceDescriptor
 struct DAWN_NATIVE_EXPORT DawnInstanceDescriptor : wgpu::ChainedStruct {
     DawnInstanceDescriptor();
-    uint32_t additionalRuntimeSearchPathsCount = 0;
-    const char* const* additionalRuntimeSearchPaths;
+    std::span<std::string_view> additionalRuntimeSearchPaths;
     dawn::platform::Platform* platform = nullptr;
 
     BackendValidationLevel backendValidationLevel = BackendValidationLevel::Disabled;
@@ -211,6 +209,9 @@ class DAWN_NATIVE_EXPORT Instance {
 // Backend-agnostic API for dawn_native
 DAWN_NATIVE_EXPORT const DawnProcTable& GetProcs();
 
+// Query the names of all the toggles that are enabled in adapter
+DAWN_NATIVE_EXPORT std::vector<const char*> GetTogglesUsed(const wgpu::Adapter& adapter);
+
 // Query the names of all the toggles that are enabled in device
 DAWN_NATIVE_EXPORT std::vector<const char*> GetTogglesUsed(WGPUDevice device);
 
@@ -233,15 +234,19 @@ DAWN_NATIVE_EXPORT bool DeviceTick(WGPUDevice device);
 
 DAWN_NATIVE_EXPORT bool InstanceProcessEvents(WGPUInstance instance);
 
+#if defined(DAWN_ENABLE_ERROR_INJECTION)
 // ErrorInjector functions used for testing only. Defined in dawn_native/ErrorInjector.cpp
 DAWN_NATIVE_EXPORT void EnableErrorInjector();
 DAWN_NATIVE_EXPORT void DisableErrorInjector();
 DAWN_NATIVE_EXPORT void ClearErrorInjector();
 DAWN_NATIVE_EXPORT uint64_t AcquireErrorInjectorCallCount();
+// TODO(https://crbug.com/562254224): Introduce "categories" or something to make it so that tests
+// don't have to specify/predict the exact number of injectable backend API calls in the backend.
 DAWN_NATIVE_EXPORT void InjectErrorAt(uint64_t index);
+#endif  // defined(DAWN_ENABLE_ERROR_INJECTION)
 
 // The different types of external images
-enum ExternalImageType {
+enum ExternalImageType : uint16_t {
     OpaqueFD,
     DmaBuf,
     IOSurface,
@@ -254,8 +259,8 @@ enum ExternalImageType {
 // Common properties of external images
 struct DAWN_NATIVE_EXPORT ExternalImageDescriptor {
   public:
-    const WGPUTextureDescriptor* cTextureDescriptor;  // Must match image creation params
-    bool isInitialized;  // Whether the texture is initialized on import
+    const WGPUTextureDescriptor* cTextureDescriptor = nullptr;  // Must match image creation params
+    bool isInitialized = false;  // Whether the texture is initialized on import
     ExternalImageType GetType() const;
 
   protected:
@@ -279,7 +284,7 @@ struct DAWN_NATIVE_EXPORT ExternalImageExportInfo {
 
 DAWN_NATIVE_EXPORT bool CheckIsErrorForTesting(void* objectHandle);
 
-DAWN_NATIVE_EXPORT const char* GetObjectLabelForTesting(void* objectHandle);
+DAWN_NATIVE_EXPORT std::string GetObjectLabelForTesting(void* objectHandle);
 
 DAWN_NATIVE_EXPORT uint64_t GetAllocatedSizeForTesting(WGPUBuffer buffer);
 

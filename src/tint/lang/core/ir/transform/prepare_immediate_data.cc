@@ -31,7 +31,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/type/struct.h"
 #include "src/tint/utils/ice/ice.h"
 
@@ -58,11 +58,6 @@ struct State {
     core::type::Manager& ty{ir.Types()};
 
     Result<ImmediateDataLayout> Run() {
-        if (config.internal_immediate_data.empty()) {
-            return ImmediateDataLayout{};
-        }
-
-        ImmediateDataLayout layout;
         Var* user_defined_immediates = nullptr;
         Vector<core::type::StructMember*, 4> members;
 
@@ -82,6 +77,10 @@ struct State {
             }
             user_defined_immediates = var;
 
+            if (ptr->StoreType()->Size() > kMaxImmediateBlockSize) {
+                return Failure("user-defined immediate data exceeds maximum immediate block size");
+            }
+
             // Assume that user-defined constants start at offset 0 until Dawn tells us otherwise.
             members.Push(ty.Get<core::type::StructMember>(ir.symbols.New("user_immediate_data"),
                                                           ptr->StoreType(),
@@ -92,12 +91,18 @@ struct State {
                                                           /* attributes */ IOAttributes{}));
         }
 
+        ImmediateDataLayout layout;
+        if (config.internal_immediate_data.empty()) {
+            return layout;
+        }
+
         // Create the structure and immediate data variable.
         for (auto& internal : config.internal_immediate_data) {
             auto offset = internal.first;
 
             if (!members.IsEmpty()) {
-                if (members.Back()->Offset() + members.Back()->Size() > offset) {
+                if (static_cast<uint64_t>(members.Back()->Offset()) + members.Back()->Size() >
+                    offset) {
                     return Failure("immediate offset for '" + internal.second.name.Name() +
                                    "' overlaps with previous member '" +
                                    members.Back()->Name().Name() + "'");
@@ -108,13 +113,17 @@ struct State {
                                "' must be aligned to " +
                                std::to_string(internal.second.type->Align()) + " bytes");
             }
-            if (offset + internal.second.type->Size() > kMaxImmediateBlockSize) {
+            if (static_cast<uint64_t>(offset) + internal.second.type->Size() >
+                kMaxImmediateBlockSize) {
                 return Failure("immediate '" + internal.second.name.Name() +
                                "' exceeds maximum immediate block size");
             }
 
             auto index = static_cast<uint32_t>(members.Length());
-            layout.offset_to_index.Add(offset, index);
+            if (!layout.immediate_to_index.Add(internal.second.immediate, index)) {
+                return Failure("duplicate internal immediate with id " +
+                               std::to_string(internal.second.immediate));
+            }
             members.Push(ty.Get<core::type::StructMember>(internal.second.name,
                                                           internal.second.type,
                                                           /* index */ index,
@@ -124,19 +133,20 @@ struct State {
                                                           /* attributes */ IOAttributes{}));
         }
 
-        auto* immediate_constant_struct =
+        auto* immediate_struct =
             ty.Struct(ir.symbols.New("tint_immediate_data_struct"), std::move(members));
-        immediate_constant_struct->SetStructFlag(type::kBlock);
-        layout.var =
-            b.Var("tint_immediate_data", core::AddressSpace::kImmediate, immediate_constant_struct);
+        immediate_struct->SetStructFlag(core::type::kBlock);
+        layout.var = b.Var("tint_immediate_data", core::AddressSpace::kImmediate, immediate_struct);
         ir.root_block->Append(layout.var);
 
         // Update uses of the user defined immediate data variable.
         if (user_defined_immediates) {
             user_defined_immediates->Result()->ReplaceAllUsesWith([&](Usage use) {
-                auto* access = b.Access(user_defined_immediates->Result()->Type(), layout.var, 0_u);
-                access->InsertBefore(use.instruction);
-                return access->Result();
+                Value* access = nullptr;
+                b.InsertBefore(use.instruction, [&] {
+                    access = b.Access(user_defined_immediates->Result()->Type(), layout.var, 0_u);
+                });
+                return access;
             });
             user_defined_immediates->Destroy();
         }
@@ -147,14 +157,22 @@ struct State {
 
 }  // namespace
 
+Value* ImmediateDataLayout::GetPointer(Builder& b, InternalImmediate immediate) const {
+    auto itr = immediate_to_index.Get(immediate);
+    TINT_ASSERT(itr);
+    auto index = u32(*itr.value);
+    auto* str = var->Result()->Type()->UnwrapPtr()->As<core::type::Struct>();
+    auto* type = str->Members()[index]->Type();
+    return b.Access(b.ir.Types().ptr(core::AddressSpace::kImmediate, type), var, index);
+}
+
+Value* ImmediateDataLayout::GetValue(Builder& b, InternalImmediate immediate) const {
+    return b.Load(GetPointer(b, immediate))->Result();
+}
+
 Result<ImmediateDataLayout> PrepareImmediateData(Module& ir,
                                                  const PrepareImmediateDataConfig& config) {
-    TINT_CHECK_RESULT(ValidateAndDumpIfNeeded(ir, "core.PrepareImmediateData",
-                                              core::ir::Capabilities{
-                                                  core::ir::Capability::kAllowDuplicateBindings,
-                                                  core::ir::Capability::kAllow8BitIntegers,
-                                                  core::ir::Capability::kAllowNonCoreTypes,
-                                              }));
+    core::ir::AssertValid(ir, "before core.PrepareImmediateData");
 
     return State{config, ir}.Run();
 }

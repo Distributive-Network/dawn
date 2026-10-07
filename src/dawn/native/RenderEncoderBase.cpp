@@ -25,21 +25,23 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/RenderEncoderBase.h"
+#include "src/dawn/native/RenderEncoderBase.h"
 
 #include <math.h>
+
 #include <cstring>
 #include <utility>
 
-#include "dawn/common/Constants.h"
-#include "dawn/native/BindGroup.h"
-#include "dawn/native/Buffer.h"
-#include "dawn/native/CommandEncoder.h"
-#include "dawn/native/CommandValidation.h"
-#include "dawn/native/Commands.h"
-#include "dawn/native/Device.h"
-#include "dawn/native/RenderPipeline.h"
 #include "dawn/native/ValidationUtils_autogen.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/native/BindGroup.h"
+#include "src/dawn/native/Buffer.h"
+#include "src/dawn/native/CommandEncoder.h"
+#include "src/dawn/native/CommandValidation.h"
+#include "src/dawn/native/Commands.h"
+#include "src/dawn/native/Device.h"
+#include "src/dawn/native/RenderPipeline.h"
+#include "src/utils/compiler.h"
 
 namespace dawn::native {
 
@@ -68,29 +70,31 @@ RenderEncoderBase::RenderEncoderBase(DeviceBase* device,
       mDisableBaseInstance(device->IsToggleEnabled(Toggle::DisableBaseInstance)) {}
 
 void RenderEncoderBase::DestroyImpl(DestroyReason reason) {
+    mUsageTracker = {};
+
     // Remove reference to the attachment state so that we don't have lingering references to
     // it preventing it from being uncached in the device.
     mAttachmentState = nullptr;
 }
 
 const AttachmentState* RenderEncoderBase::GetAttachmentState() const {
-    DAWN_ASSERT(!IsError());
-    DAWN_ASSERT(mAttachmentState != nullptr);
+    DAWN_CHECK(!IsError());
+    DAWN_CHECK(mAttachmentState != nullptr);
     return mAttachmentState.Get();
 }
 
 bool RenderEncoderBase::IsDepthReadOnly() const {
-    DAWN_ASSERT(!IsError());
+    DAWN_CHECK(!IsError());
     return mDepthReadOnly;
 }
 
 bool RenderEncoderBase::IsStencilReadOnly() const {
-    DAWN_ASSERT(!IsError());
+    DAWN_CHECK(!IsError());
     return mStencilReadOnly;
 }
 
 uint64_t RenderEncoderBase::GetDrawCount() const {
-    DAWN_ASSERT(!IsError());
+    DAWN_CHECK(!IsError());
     return mDrawCount;
 }
 
@@ -104,7 +108,7 @@ void RenderEncoderBase::APIDraw(uint32_t vertexCount,
                                 uint32_t firstInstance) {
     mEncodingContext->TryEncode(
         this,
-        [&](CommandAllocator* allocator) -> MaybeError {
+        [&](CommandAllocator* allocator) -> MaybeValError {
             if (IsValidationEnabled()) {
                 if (vertexCount == 0) {
                     GetDevice()->EmitWarningOnce(absl::StrFormat(
@@ -151,7 +155,7 @@ void RenderEncoderBase::APIDrawIndexed(uint32_t indexCount,
                                        uint32_t firstInstance) {
     mEncodingContext->TryEncode(
         this,
-        [&](CommandAllocator* allocator) -> MaybeError {
+        [&](CommandAllocator* allocator) -> MaybeValError {
             if (IsValidationEnabled()) {
                 if (indexCount == 0) {
                     GetDevice()->EmitWarningOnce(absl::StrFormat(
@@ -199,7 +203,7 @@ void RenderEncoderBase::APIDrawIndexed(uint32_t indexCount,
 void RenderEncoderBase::APIDrawIndirect(BufferBase* indirectBuffer, uint64_t indirectOffset) {
     mEncodingContext->TryEncode(
         this,
-        [&](CommandAllocator* allocator) -> MaybeError {
+        [&](CommandAllocator* allocator) -> MaybeValError {
             if (IsValidationEnabled()) {
                 DAWN_TRY(GetDevice()->ValidateObject(indirectBuffer));
                 DAWN_TRY(ValidateCanUseAs(indirectBuffer, wgpu::BufferUsage::Indirect));
@@ -259,7 +263,7 @@ void RenderEncoderBase::APIDrawIndexedIndirect(BufferBase* indirectBuffer,
                                                uint64_t indirectOffset) {
     mEncodingContext->TryEncode(
         this,
-        [&](CommandAllocator* allocator) -> MaybeError {
+        [&](CommandAllocator* allocator) -> MaybeValError {
             if (IsValidationEnabled()) {
                 DAWN_TRY(GetDevice()->ValidateObject(indirectBuffer));
                 DAWN_TRY(ValidateCanUseAs(indirectBuffer, wgpu::BufferUsage::Indirect));
@@ -328,7 +332,7 @@ void RenderEncoderBase::APIMultiDrawIndirect(BufferBase* indirectBuffer,
                                              uint64_t drawCountBufferOffset) {
     mEncodingContext->TryEncode(
         this,
-        [&](CommandAllocator* allocator) -> MaybeError {
+        [&](CommandAllocator* allocator) -> MaybeValError {
             if (IsValidationEnabled()) {
                 DAWN_INVALID_IF(!GetDevice()->HasFeature(Feature::MultiDrawIndirect),
                                 "%s is not enabled.", wgpu::FeatureName::MultiDrawIndirect);
@@ -434,7 +438,7 @@ void RenderEncoderBase::APIMultiDrawIndexedIndirect(BufferBase* indirectBuffer,
                                                     uint64_t drawCountBufferOffset) {
     mEncodingContext->TryEncode(
         this,
-        [&](CommandAllocator* allocator) -> MaybeError {
+        [&](CommandAllocator* allocator) -> MaybeValError {
             if (IsValidationEnabled()) {
                 DAWN_INVALID_IF(!GetDevice()->HasFeature(Feature::MultiDrawIndirect),
                                 "%s is not enabled.", wgpu::FeatureName::MultiDrawIndirect);
@@ -540,7 +544,7 @@ void RenderEncoderBase::APIMultiDrawIndexedIndirect(BufferBase* indirectBuffer,
 void RenderEncoderBase::APISetPipeline(RenderPipelineBase* pipeline) {
     mEncodingContext->TryEncode(
         this,
-        [&](CommandAllocator* allocator) -> MaybeError {
+        [&](CommandAllocator* allocator) -> MaybeValError {
             if (IsValidationEnabled()) {
                 DAWN_TRY(GetDevice()->ValidateObject(pipeline));
 
@@ -561,6 +565,10 @@ void RenderEncoderBase::APISetPipeline(RenderPipelineBase* pipeline) {
 
             mCommandBufferState.SetRenderPipeline(pipeline);
 
+            if (pipeline->UsesFramebufferFetch()) {
+                mUsageTracker.MarkFramebufferFetchUsed();
+            }
+
             SetRenderPipelineCmd* cmd =
                 allocator->Allocate<SetRenderPipelineCmd>(Command::SetRenderPipeline);
             cmd->pipeline = pipeline;
@@ -576,7 +584,7 @@ void RenderEncoderBase::APISetIndexBuffer(BufferBase* buffer,
                                           uint64_t size) {
     mEncodingContext->TryEncode(
         this,
-        [&](CommandAllocator* allocator) -> MaybeError {
+        [&](CommandAllocator* allocator) -> MaybeValError {
             if (IsValidationEnabled()) {
                 DAWN_TRY(GetDevice()->ValidateObject(buffer));
                 DAWN_TRY(ValidateCanUseAs(buffer, wgpu::BufferUsage::Index));
@@ -609,7 +617,7 @@ void RenderEncoderBase::APISetIndexBuffer(BufferBase* buffer,
                 }
             } else {
                 if (size == wgpu::kWholeSize) {
-                    DAWN_ASSERT(buffer->GetSize() >= offset);
+                    DAWN_CHECK(buffer->GetSize() >= offset);
                     size = buffer->GetSize() - offset;
                 }
             }
@@ -636,7 +644,7 @@ void RenderEncoderBase::APISetVertexBuffer(uint32_t slot,
                                            uint64_t size) {
     mEncodingContext->TryEncode(
         this,
-        [&](CommandAllocator* allocator) -> MaybeError {
+        [&](CommandAllocator* allocator) -> MaybeValError {
             if (IsValidationEnabled()) {
                 DAWN_INVALID_IF(slot >= kMaxVertexBuffers,
                                 "Vertex buffer slot (%u) is larger the maximum (%u)", slot,
@@ -672,7 +680,7 @@ void RenderEncoderBase::APISetVertexBuffer(uint32_t slot,
                 }
             } else {
                 if (size == wgpu::kWholeSize && buffer != nullptr) {
-                    DAWN_ASSERT(buffer->GetSize() >= offset);
+                    DAWN_CHECK(buffer->GetSize() >= offset);
                     size = buffer->GetSize() - offset;
                 }
             }
@@ -699,58 +707,43 @@ void RenderEncoderBase::APISetVertexBuffer(uint32_t slot,
 
 void RenderEncoderBase::APISetBindGroup(uint32_t groupIndexIn,
                                         BindGroupBase* group,
-                                        uint32_t dynamicOffsetCount,
-                                        const uint32_t* dynamicOffsets) {
+                                        ityp::span<BindingIndex, const uint32_t> dynamicOffsets) {
     mEncodingContext->TryEncode(
         this,
         [&](CommandAllocator* allocator) -> MaybeError {
             BindGroupIndex groupIndex(groupIndexIn);
 
             if (IsValidationEnabled()) {
-                DAWN_TRY(
-                    ValidateSetBindGroup(groupIndex, group, dynamicOffsetCount, dynamicOffsets));
+                DAWN_TRY(ValidateSetBindGroup(groupIndex, group, dynamicOffsets));
             }
 
             if (group == nullptr) {
                 mCommandBufferState.UnsetBindGroup(groupIndex);
             } else {
-                RecordSetBindGroup(allocator, groupIndex, group, dynamicOffsetCount,
-                                   dynamicOffsets);
-                mCommandBufferState.SetBindGroup(groupIndex, group, dynamicOffsetCount,
-                                                 dynamicOffsets);
+                RecordSetBindGroup(allocator, groupIndex, group, dynamicOffsets);
+                mCommandBufferState.SetBindGroup(groupIndex, group, dynamicOffsets);
                 mUsageTracker.AddBindGroup(group);
             }
 
             return {};
         },
         "encoding %s.SetBindGroup(%u, %s, %u, ...).", this, groupIndexIn, group,
-        dynamicOffsetCount);
+        dynamicOffsets.size());
 }
 
-void RenderEncoderBase::APISetImmediates(uint32_t offset, const void* data, size_t size) {
+void RenderEncoderBase::APISetImmediates(uint32_t offset, Span<const std::byte> data) {
     mEncodingContext->TryEncode(
         this,
         [&](CommandAllocator* allocator) -> MaybeError {
             if (IsValidationEnabled()) {
-                DAWN_TRY(ValidateSetImmediates(offset, size));
+                DAWN_TRY(ValidateSetImmediates(offset, data.size()));
             }
 
-            // Skip SetImmediates when uploading constants are empty.
-            if (size == 0) {
-                return {};
-            }
-
-            SetImmediatesCmd* cmd = allocator->Allocate<SetImmediatesCmd>(Command::SetImmediates);
-            cmd->offset = offset;
-            cmd->size = size;
-            uint8_t* immediateDatas = allocator->AllocateData<uint8_t>(cmd->size);
-            memcpy(immediateDatas, data, size);
-
-            mCommandBufferState.SetImmediateData(offset, size);
-
+            RecordSetImmediates(allocator, offset, data);
+            mCommandBufferState.SetImmediateData(offset, data.size());
             return {};
         },
-        "encoding %s.SetImmediates(%u, %u, ...).", this, offset, size);
+        "encoding %s.SetImmediates(%u, %u, ...).", this, offset, data.size());
 }
 
 }  // namespace dawn::native

@@ -25,16 +25,17 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/d3d/SharedTextureMemoryD3D.h"
+#include "src/dawn/native/d3d/SharedTextureMemoryD3D.h"
 
 #include <utility>
 
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/d3d/D3DError.h"
-#include "dawn/native/d3d/DeviceD3D.h"
-#include "dawn/native/d3d/Forward.h"
-#include "dawn/native/d3d/QueueD3D.h"
-#include "dawn/native/d3d/SharedFenceD3D.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/d3d/D3DError.h"
+#include "src/dawn/native/d3d/DeviceD3D.h"
+#include "src/dawn/native/d3d/Forward.h"
+#include "src/dawn/native/d3d/QueueD3D.h"
+#include "src/dawn/native/d3d/SharedFenceD3D.h"
+#include "src/utils/compiler.h"
 
 namespace dawn::native::d3d {
 
@@ -43,14 +44,12 @@ SharedTextureMemory::SharedTextureMemory(d3d::Device* device,
                                          SharedTextureMemoryProperties properties)
     : SharedTextureMemoryBase(device, label, properties) {}
 
-MaybeError SharedTextureMemory::BeginAccessImpl(
+MaybeValError SharedTextureMemory::BeginAccessImpl(
     TextureBase* texture,
     const UnpackedPtr<BeginAccessDescriptor>& descriptor) {
     DAWN_TRY((descriptor.ValidateSubset<SharedTextureMemoryD3DSwapchainBeginState,
                                         SharedTextureMemoryD3D11BeginState>()));
-    for (size_t i = 0; i < descriptor->fenceCount; ++i) {
-        SharedFenceBase* fence = descriptor->fences[i];
-
+    for (SharedFenceBase* fence : descriptor->fences) {
         SharedFenceExportInfo exportInfo;
         DAWN_TRY(fence->ExportInfo(&exportInfo));
         switch (exportInfo.type) {
@@ -61,6 +60,8 @@ MaybeError SharedTextureMemory::BeginAccessImpl(
                                 wgpu::SharedFenceType::DXGISharedHandle);
                 break;
             default:
+                // TODO(crbug.com/536639352): Move the validation of the fence type into the
+                // frontend to better separate the validation and internal error.
                 return DAWN_VALIDATION_ERROR("Unsupported fence type %s.", exportInfo.type);
         }
     }

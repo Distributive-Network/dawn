@@ -29,9 +29,9 @@
 #include <string>
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 namespace dawn {
 namespace {
@@ -127,6 +127,8 @@ override x: u32;
 
     wgpu::Buffer buffer;
 };
+
+class D3D12DecomposeWorkgroupAccessValidationTest : public DawnTest {};
 
 // Test workgroup size validation with fixed values.
 TEST_P(WorkgroupSizeValidationTest, WithFixedValues) {
@@ -382,6 +384,116 @@ TEST_P(WorkgroupSizeValidationTest, ValidationAfterOverrideStorageSize) {
     CheckPipelineWithWorkgroupStorage(false, 0, maxMat4Count + 1);
 }
 
+// Test workgroup storage size validation when the array size is overridden such that it causes the
+// total storage size to overflow a uint32_t when rounded up to the alignment of the element type.
+TEST_P(WorkgroupSizeValidationTest, WorkgroupStorageSizeOverflows) {
+    auto CheckPipelineWithWorkgroupStorage = [this](bool success, uint64_t arrayLength) {
+        std::vector<wgpu::ConstantEntry> constants;
+
+        const char* shader = R"(
+override len: u32;
+
+var<workgroup> data: array<u32, len>;
+
+@compute @workgroup_size(1)
+fn main() {
+  data[0] = 42;
+}
+)";
+
+        constants.push_back({nullptr, "len", static_cast<double>(arrayLength)});
+
+        wgpu::ComputePipelineDescriptor desc;
+        desc.compute.module = utils::CreateShaderModule(device, shader);
+        desc.compute.constants = constants.data();
+        desc.compute.constantCount = constants.size();
+
+        if (success) {
+            device.CreateComputePipeline(&desc);
+        } else {
+            ASSERT_DEVICE_ERROR(device.CreateComputePipeline(&desc));
+        }
+    };
+
+    CheckPipelineWithWorkgroupStorage(true, 16);
+    CheckPipelineWithWorkgroupStorage(false, (UINT32_MAX - 3) / 4);
+}
+
+// Test workgroup storage size validation with large @align to ensure that front-end validation
+// limits are correctly enforced and do not diverge from the backend's wrapper struct size (such as
+// on Metal where a wrapper struct aggregates all workgroup variables).
+// https://crbug.com/dawn/536446354
+TEST_P(WorkgroupSizeValidationTest, WorkgroupAlignValidationDivergence) {
+    // The metal backend is the only one that combines the workgroup variables into a distinct
+    // structure which causes the padding issue.
+    DAWN_TEST_UNSUPPORTED_IF(!IsMetal());
+
+    const auto& supportedLimits = GetSupportedLimits();
+    uint32_t maxComputeWorkgroupStorageSize = supportedLimits.maxComputeWorkgroupStorageSize;
+
+    // We choose the alignment 'align' to be maxComputeWorkgroupStorageSize / 2.
+    // The wrapper struct size ty->Size() will be 1.5 * maxComputeWorkgroupStorageSize, which
+    // exceeds maxComputeWorkgroupStorageSize. The divergent front-end calculation of storage_size
+    // would be maxComputeWorkgroupStorageSize / 2 + 32, which is <= maxComputeWorkgroupStorageSize.
+    uint32_t align = maxComputeWorkgroupStorageSize / 2;
+
+    std::ostringstream ss;
+    ss << R"(
+         struct S {
+             @align()"
+       << align << R"() x : f32,
+         }
+         var<workgroup> a : f32;
+         var<workgroup> b : S;
+         var<workgroup> c : f32;
+         @compute @workgroup_size(1) fn main() {
+             _ = a + b.x + c;
+         }
+     )";
+
+    wgpu::ComputePipelineDescriptor desc;
+    desc.compute.module = utils::CreateShaderModule(device, ss.str().c_str());
+
+    // Because the padding makes the actual workgroup storage size (1.5 *
+    // maxComputeWorkgroupStorageSize) exceed maxComputeWorkgroupStorageSize, creating this pipeline
+    // should fail pipeline creation on Metal (the test is unsupported on other backends). This
+    // failure is an internal error due to the size of our buffer allocation
+    ASSERT_DEVICE_ERROR(device.CreateComputePipeline(&desc));
+}
+
+// Test that the error identifies when SplitWorkgroupAtomics causes workgroup storage to exceed the
+// limit, even though the original shader is within the limit.
+TEST_P(D3D12DecomposeWorkgroupAccessValidationTest, WorkgroupStorageExceedsLimitAfterTransform) {
+    const uint32_t limit = GetSupportedLimits().maxComputeWorkgroupStorageSize;
+    ASSERT_EQ(limit % 8, 0u);
+    const uint32_t arrayLength = limit / 8;
+
+    std::ostringstream shader;
+    shader << R"(
+struct S {
+    data: u32,
+    counter: atomic<u32>,
+}
+
+var<workgroup> wg: array<S, )"
+           << arrayLength << R"(>;
+
+@compute @workgroup_size(1)
+fn main() {
+    wg[0].data = 1u;
+    atomicStore(&wg[0].counter, 0u);
+})";
+
+    wgpu::ComputePipelineDescriptor desc;
+    desc.compute.module = utils::CreateShaderModule(device, shader.str());
+
+    std::ostringstream expectedError;
+    expectedError << "the SplitWorkgroupAtomics transform increased workgroup storage usage from "
+                  << limit << " bytes to " << limit + limit / 2 << " bytes";
+    ASSERT_DEVICE_ERROR_MSG(device.CreateComputePipeline(&desc),
+                            testing::HasSubstr(expectedError.str()));
+}
+
 // TODO(crbug.com/462151326): Fix pipeline creation error of the inner layer to surface up properly
 // in WebGPUBackend.
 DAWN_INSTANTIATE_TEST(WorkgroupSizeValidationTest,
@@ -392,6 +504,9 @@ DAWN_INSTANTIATE_TEST(WorkgroupSizeValidationTest,
                       OpenGLBackend(),
                       OpenGLESBackend(),
                       VulkanBackend());
+
+DAWN_INSTANTIATE_TEST(D3D12DecomposeWorkgroupAccessValidationTest,
+                      D3D12Backend({"d3d12_decompose_workgroup_access"}));
 
 }  // anonymous namespace
 }  // namespace dawn

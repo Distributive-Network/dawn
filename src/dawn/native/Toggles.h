@@ -33,9 +33,9 @@
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "dawn/common/ityp_bitset.h"
 #include "dawn/native/DawnNative.h"
-#include "dawn/native/Serializable.h"
+#include "src/dawn/common/ityp_bitset.h"
+#include "src/dawn/native/Serializable.h"
 
 namespace dawn::native {
 
@@ -74,6 +74,8 @@ enum class Toggle {
     DisallowSpirv,
     DumpShaders,
     DumpShadersOnFailure,
+    DumpTintIR,
+    EnableTintIRValidationAsserts,
     DisableWorkgroupInit,
     DisableDemoteToHelper,
     VulkanUseDemoteToHelperInvocationExtension,
@@ -104,14 +106,16 @@ enum class Toggle {
     MetalKeepMultisubresourceDepthStencilTexturesInitialized,
     MetalPolyfillUnpack2x16snorm,
     MetalPolyfillUnpack2x16unorm,
-    VulkanPolyfillF32Negation,
-    VulkanPolyfillF32Abs,
+    MetalPolyfillTanhF16,
+    VulkanPolyfillFloatNegation,
+    VulkanPolyfillFloatAbs,
     MetalFillEmptyOcclusionQueriesWithZero,
     UseBlitForBufferToDepthTextureCopy,
     UseBlitForBufferToStencilTextureCopy,
     UseBlitForStencilTextureWrite,
     UseBlitForDepthTextureToTextureCopyToNonzeroSubresource,
     UseBlitForDepth16UnormTextureToBufferCopy,
+    UseBlitForDepth24PlusTextureToBufferCopy,
     UseBlitForDepth32FloatTextureToBufferCopy,
     UseBlitForStencilTextureToBufferCopy,
     UseBlitForSnormTextureToBufferCopy,
@@ -119,10 +123,16 @@ enum class Toggle {
     UseBlitForRGB9E5UfloatTextureCopy,
     UseBlitForRG11B10UfloatTextureCopy,
     UseBlitForFloat16TextureCopy,
-    UseBlitForFloat32TextureCopy,
     UseBlitForT2B,
     UseBlitForB2T,
-    GLUseArrayLengthFromUniform,
+    UseBlitForNonRGBAUnormTextureToBufferCopy,
+    UseBlitForNonRGBAFloatTextureToBufferCopy,
+    UseBlitForUintTextureToBufferCopy,
+    UseBlitForSintTextureToBufferCopy,
+    VulkanSplitBufferTextureCopyForArrayLayers,
+    VulkanForceAlphaWriteForAlphaToCoverage,
+    SplitBufferTextureCopyForOversizedRow,
+    GLUseArrayLengthFromImmediate,
     D3D11DisableCPUUploadBuffers,
     UseT2B2TForSRGBTextureCopy,
     D3D12ReplaceAddWithMinusWhenDstFactorIsZeroAndSrcFactorIsDstAlpha,
@@ -146,9 +156,10 @@ enum class Toggle {
     ExposeWGSLExperimentalFeatures,
     DisablePolyfillsOnIntegerDivisonAndModulo,
     ScalarizeMaxMinClamp,
+    SaturateAsMinMaxF16,
     MetalPolyfillClampFloat,
-    SubgroupShuffleClamped,
     VulkanSampleCompareDepthCubeArrayWorkaround,
+    VulkanSampleCompare2DWorkaround,
     MetalDisableModuleConstantF16,
     EnableImmediateErrorHandling,
     VulkanUseStorageInputOutput16,
@@ -171,13 +182,36 @@ enum class Toggle {
     MetalUseArgumentBuffers,
     EnableShaderPrint,
     BlobCacheHashValidation,
-    DecomposeUniformBuffers,
+    D3D12DecomposeWorkgroupAccess,
+    D3D12PolyfillF16CeilFloor,
+    CollapseSubgroupMinMax,
+    D3D12ForceEnableSubgroupMatrixOnBuggyIntelDrivers,
     VulkanEnableF16OnNvidia,
     EnableRenderDocProcessInjection,
     VulkanUseDynamicRendering,
+    EnableSpirvValidation,
+    VulkanUseCreateRenderPass2,
+    MetalReplaceWorkgroupBoolWithU32,
+    VulkanCooperativeMatrixStrideIsMatrixElements,
+    VulkanUseExtendedDynamicState,
+    VulkanUseRasterizationOrderAttachmentAccess,
+    VulkanForceStaticSamplersForExternalTextures,
+    D3D12UseHLSL2021,
+    MetalFixU32DivMod,
+    VulkanSleepAfterLostDeviceWait,
+    UseSpirvReconvergenceMode,
+    VulkanReplaceWorkgroupAtomicStoreWithExchange,
+    VulkanDisallowNPOTDepthStencilMipmaps,
+    VulkanReplaceUnsignedCompareZero,
+    VulkanUseCooperativeMatrixRobustBufferAccess,
+    MetalEnableTensors,
+    AllowAlphaToCoverageNotBlendable,
 
     // Once all backends have been updated to be thread safe for waiting, we can remove this toggle.
     WaitIsThreadSafe,
+
+    // If/when all backends support spontaneous queue events, we can then remove this toggle.
+    SpontaneousQueueEvents,
 
     // Unresolved issues.
     NoWorkaroundSampleMaskBecomesZeroForAllButLastColorTarget,
@@ -187,12 +221,18 @@ enum class Toggle {
     ClearColorWithDraw,
     VulkanSkipDraw,
 
+    D3D11DisableMapOnDefaultBuffers,
     D3D11UseUnmonitoredFence,
     D3D11DisableFence,
     D3D11DelayFlushToGPU,
+    D3D11UseDiscardView,
     IgnoreImportedAHardwareBufferVulkanImageSize,
     GLAllowContextOnMultiThreads,
     GLDefer,
+    DisableTransientAttachment,
+    AutoMapBackendBuffer,
+    PolyfillBoolVecDynamicStore,
+    VulkanRelaxMaxInterStageShaderVariables,
 
     EnumCount,
     InvalidEnum = EnumCount,

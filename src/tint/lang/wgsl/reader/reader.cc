@@ -30,6 +30,9 @@
 #include <limits>
 #include <utility>
 
+#include "src/tint/lang/core/ir/validator/validator.h"
+#include "src/tint/lang/wgsl/ast/module.h"
+#include "src/tint/lang/wgsl/ir/atomic_vec2u_to_from_u64.h"
 #include "src/tint/lang/wgsl/reader/lower/lower.h"
 #include "src/tint/lang/wgsl/reader/parser/parser.h"
 #include "src/tint/lang/wgsl/reader/program_to_ir/program_to_ir.h"
@@ -51,14 +54,34 @@ Program Parse(const Source::File* file, const Options& options) {
 
 Result<core::ir::Module> WgslToIR(const Source::File* file, const Options& options) {
     Program program = Parse(file, options);
-    return ProgramToLoweredIR(program);
+    auto ir = ProgramToLoweredIR(program);
+    if (ir == Success) {
+        TINT_CHECK_RESULT(core::ir::Validate(ir.Get(), core::ir::ErrorSource::kWgsl));
+    }
+    return ir;
 }
 
-Result<core::ir::Module> ProgramToLoweredIR(const Program& program,
-                                            InternalCompilerErrorCallback ice_callback) {
+Result<core::ir::Module> ProgramToLoweredIR(const Program& program, const IROptions& options) {
     TINT_CHECK_RESULT_UNWRAP(ir, ProgramToIR(program));
-    ir.ice_callback = ice_callback;
+    ir.ice_callback = options.ice_callback;
+    ir.dump_ir_when_validating = options.dump_ir_when_validating;
+    ir.enable_validation_asserts = options.enable_validation_asserts;
 
+    bool atomic_vec2u_min_max = false;
+    for (auto* enable : program.AST().Enables()) {
+        if (enable->HasExtension(wgsl::Extension::kAtomicVec2UMinMax)) {
+            atomic_vec2u_min_max = true;
+            break;
+        }
+    }
+
+    if (atomic_vec2u_min_max) {
+        auto res2 = tint::wgsl::ir::transform::AtomicVec2uToFromU64(
+            ir, tint::wgsl::ir::transform::AtomicVec2uU64Direction::kToU64);
+        if (res2 != Success) {
+            return res2.Failure();
+        }
+    }
     // Lower from WGSL-dialect to core-dialect
     TINT_CHECK_RESULT(Lower(ir));
 

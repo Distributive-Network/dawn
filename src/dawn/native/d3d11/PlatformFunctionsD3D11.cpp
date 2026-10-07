@@ -25,7 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/d3d11/PlatformFunctionsD3D11.h"
+#include "src/dawn/native/d3d11/PlatformFunctionsD3D11.h"
 
 #include <string>
 
@@ -51,7 +51,7 @@ MaybeError PlatformFunctions::LoadD3D11() {
     std::string error;
     if (!mD3D11Lib.OpenSystemLibrary(L"d3d11.dll", &error) ||
         !mD3D11Lib.GetProc(&d3d11CreateDevice, "D3D11CreateDevice", &error)) {
-        return DAWN_INTERNAL_ERROR(error.c_str());
+        return DAWN_UNRECOVERABLE_ERROR(error.c_str());
     }
 #endif
 

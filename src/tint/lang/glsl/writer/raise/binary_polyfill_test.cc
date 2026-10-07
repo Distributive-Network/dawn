@@ -38,20 +38,27 @@ using namespace tint::core::number_suffixes;  // NOLINT
 namespace tint::glsl::writer::raise {
 namespace {
 
-using GlslWriter_BinaryPolyfillTest = core::ir::transform::TransformTest;
+struct GlslWriter_BinaryPolyfillTest : public core::ir::transform::TransformTest {
+  protected:
+    void SetUp() override { mod.properties.Add(core::ir::Property::kAllow16BitFloats); }
+};
 
 TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolAnd) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("x", b.And(true, false));
+        auto* lhs = b.Let("lhs", true);
+        auto* rhs = b.Let("rhs", false);
+        b.Let("x", b.And(lhs, rhs));
         b.Return(func);
     });
 
     auto* src = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:bool = and true, false
-    %x:bool = let %2
+    %lhs:bool = let true
+    %rhs:bool = let false
+    %4:bool = and %lhs, %rhs
+    %x:bool = let %4
     ret
   }
 }
@@ -61,11 +68,13 @@ TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolAnd) {
     auto* expect = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:u32 = convert true
-    %3:u32 = convert false
-    %4:u32 = and %2, %3
-    %5:bool = convert %4
-    %x:bool = let %5
+    %lhs:bool = let true
+    %rhs:bool = let false
+    %4:u32 = convert %lhs
+    %5:u32 = convert %rhs
+    %6:u32 = and %4, %5
+    %7:bool = convert %6
+    %x:bool = let %7
     ret
   }
 }
@@ -78,8 +87,8 @@ TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolAnd) {
 TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolAnd_Vec) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* lhs = b.Splat(ty.vec2<bool>(), true);
-        auto* rhs = b.Splat(ty.vec2<bool>(), false);
+        auto* lhs = b.Let("lhs", b.Splat(ty.vec2<bool>(), true));
+        auto* rhs = b.Let("rhs", b.Splat(ty.vec2<bool>(), false));
         b.Let("x", b.And(lhs, rhs));
         b.Return(func);
     });
@@ -87,8 +96,10 @@ TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolAnd_Vec) {
     auto* src = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:vec2<bool> = and vec2<bool>(true), vec2<bool>(false)
-    %x:vec2<bool> = let %2
+    %lhs:vec2<bool> = let vec2<bool>(true)
+    %rhs:vec2<bool> = let vec2<bool>(false)
+    %4:vec2<bool> = and %lhs, %rhs
+    %x:vec2<bool> = let %4
     ret
   }
 }
@@ -98,11 +109,13 @@ TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolAnd_Vec) {
     auto* expect = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:vec2<u32> = convert vec2<bool>(true)
-    %3:vec2<u32> = convert vec2<bool>(false)
-    %4:vec2<u32> = and %2, %3
-    %5:vec2<bool> = convert %4
-    %x:vec2<bool> = let %5
+    %lhs:vec2<bool> = let vec2<bool>(true)
+    %rhs:vec2<bool> = let vec2<bool>(false)
+    %4:vec2<u32> = convert %lhs
+    %5:vec2<u32> = convert %rhs
+    %6:vec2<u32> = and %4, %5
+    %7:vec2<bool> = convert %6
+    %x:vec2<bool> = let %7
     ret
   }
 }
@@ -115,15 +128,19 @@ TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolAnd_Vec) {
 TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolOr) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("x", b.Or(true, false));
+        auto* lhs = b.Let("lhs", true);
+        auto* rhs = b.Let("rhs", false);
+        b.Let("x", b.Or(lhs, rhs));
         b.Return(func);
     });
 
     auto* src = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:bool = or true, false
-    %x:bool = let %2
+    %lhs:bool = let true
+    %rhs:bool = let false
+    %4:bool = or %lhs, %rhs
+    %x:bool = let %4
     ret
   }
 }
@@ -133,11 +150,13 @@ TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolOr) {
     auto* expect = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:u32 = convert true
-    %3:u32 = convert false
-    %4:u32 = or %2, %3
-    %5:bool = convert %4
-    %x:bool = let %5
+    %lhs:bool = let true
+    %rhs:bool = let false
+    %4:u32 = convert %lhs
+    %5:u32 = convert %rhs
+    %6:u32 = or %4, %5
+    %7:bool = convert %6
+    %x:bool = let %7
     ret
   }
 }
@@ -150,8 +169,8 @@ TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolOr) {
 TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolOr_Vec) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* lhs = b.Splat(ty.vec2<bool>(), true);
-        auto* rhs = b.Splat(ty.vec2<bool>(), false);
+        auto* lhs = b.Let("lhs", b.Splat(ty.vec2<bool>(), true));
+        auto* rhs = b.Let("rhs", b.Splat(ty.vec2<bool>(), false));
         b.Let("x", b.Or(lhs, rhs));
         b.Return(func);
     });
@@ -159,8 +178,10 @@ TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolOr_Vec) {
     auto* src = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:vec2<bool> = or vec2<bool>(true), vec2<bool>(false)
-    %x:vec2<bool> = let %2
+    %lhs:vec2<bool> = let vec2<bool>(true)
+    %rhs:vec2<bool> = let vec2<bool>(false)
+    %4:vec2<bool> = or %lhs, %rhs
+    %x:vec2<bool> = let %4
     ret
   }
 }
@@ -170,11 +191,13 @@ TEST_F(GlslWriter_BinaryPolyfillTest, BitwiseBoolOr_Vec) {
     auto* expect = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:vec2<u32> = convert vec2<bool>(true)
-    %3:vec2<u32> = convert vec2<bool>(false)
-    %4:vec2<u32> = or %2, %3
-    %5:vec2<bool> = convert %4
-    %x:vec2<bool> = let %5
+    %lhs:vec2<bool> = let vec2<bool>(true)
+    %rhs:vec2<bool> = let vec2<bool>(false)
+    %4:vec2<u32> = convert %lhs
+    %5:vec2<u32> = convert %rhs
+    %6:vec2<u32> = or %4, %5
+    %7:vec2<bool> = convert %6
+    %x:vec2<bool> = let %7
     ret
   }
 }

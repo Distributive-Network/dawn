@@ -27,11 +27,11 @@
 
 #include <vector>
 
-#include "dawn/common/Constants.h"
-#include "dawn/tests/unittests/validation/ValidationTest.h"
-#include "dawn/utils/ComboRenderBundleEncoderDescriptor.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/tests/unittests/validation/ValidationTest.h"
+#include "src/dawn/utils/ComboRenderBundleEncoderDescriptor.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 namespace dawn {
 namespace {
@@ -625,7 +625,7 @@ TEST_F(RenderBundleValidationTest, RequiresAtLeastOneTextureFormat) {
 
 // Test that it is invalid to create a render bundle with no texture formats
 TEST_F(RenderBundleValidationTest, ColorFormatsCountOutOfBounds) {
-    std::array<wgpu::TextureFormat, kMaxColorAttachments + 1> colorFormats;
+    std::array<wgpu::TextureFormat, kMaxColorAttachments + 1> colorFormats{};
     for (uint32_t i = 0; i < colorFormats.size(); ++i) {
         colorFormats[i] = wgpu::TextureFormat::R8Unorm;
     }

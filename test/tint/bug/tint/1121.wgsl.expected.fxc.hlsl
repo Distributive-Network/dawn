@@ -36,8 +36,8 @@ void main_inner(uint3 GlobalInvocationID) {
     lightsBuffer.Store((4u + (min(index, ((v_7 / 32u) - 1u)) * 32u)), asuint(asfloat(uniforms[1u].y)));
   }
   float4x4 M = v(96u);
-  float viewNear = (-(M[3u].z) / (-1.0f + M[2u].z));
-  float viewFar = (-(M[3u].z) / (1.0f + M[2u].z));
+  float viewNear = (-(M[int(3)].z) / (-1.0f + M[int(2)].z));
+  float viewFar = (-(M[int(3)].z) / (1.0f + M[int(2)].z));
   uint v_8 = 0u;
   lightsBuffer.GetDimensions(v_8);
   float4 lightPos = asfloat(lightsBuffer.Load4((0u + (min(index, ((v_8 / 32u) - 1u)) * 32u))));
@@ -52,33 +52,49 @@ void main_inner(uint3 GlobalInvocationID) {
   float4 v_12 = lightPos;
   float4 boxMax = (v_12 + float4(float3((lightRadius).xxx), 0.0f));
   float4 frustumPlanes[6] = (float4[6])0;
-  frustumPlanes[4u] = float4(0.0f, 0.0f, -1.0f, viewNear);
-  frustumPlanes[5u] = float4(0.0f, 0.0f, 1.0f, -(viewFar));
+  frustumPlanes[int(4)] = float4(0.0f, 0.0f, -1.0f, viewNear);
+  frustumPlanes[int(5)] = float4(0.0f, 0.0f, 1.0f, -(viewFar));
   int TILE_SIZE = int(16);
   int TILE_COUNT_X = int(2);
   int TILE_COUNT_Y = int(2);
   {
+    uint2 tint_loop_idx = (4294967295u).xx;
     int y = int(0);
-    while((y < TILE_COUNT_Y)) {
+    while(true) {
+      if (all((tint_loop_idx == (0u).xx))) {
+        break;
+      }
+      if ((y < TILE_COUNT_Y)) {
+      } else {
+        break;
+      }
       {
+        uint2 tint_loop_idx_1 = (4294967295u).xx;
         int x = int(0);
-        while((x < TILE_COUNT_X)) {
+        while(true) {
+          if (all((tint_loop_idx_1 == (0u).xx))) {
+            break;
+          }
+          if ((x < TILE_COUNT_X)) {
+          } else {
+            break;
+          }
           int2 tilePixel0Idx = int2(asint((asuint(x) * asuint(TILE_SIZE))), asint((asuint(y) * asuint(TILE_SIZE))));
           float2 v_13 = (2.0f * float2(tilePixel0Idx));
           float2 floorCoord = ((v_13 / asfloat(uniforms[10u]).xy) - (1.0f).xx);
           int2 v_14 = tilePixel0Idx;
           float2 v_15 = (2.0f * float2(asint((asuint(v_14) + asuint(int2((TILE_SIZE).xx))))));
           float2 ceilCoord = ((v_15 / asfloat(uniforms[10u]).xy) - (1.0f).xx);
-          float2 viewFloorCoord = float2((((-(viewNear) * floorCoord.x) - (M[2u].x * viewNear)) / M[0u].x), (((-(viewNear) * floorCoord.y) - (M[2u].y * viewNear)) / M[1u].y));
-          float2 viewCeilCoord = float2((((-(viewNear) * ceilCoord.x) - (M[2u].x * viewNear)) / M[0u].x), (((-(viewNear) * ceilCoord.y) - (M[2u].y * viewNear)) / M[1u].y));
-          frustumPlanes[0u] = float4(1.0f, 0.0f, (-(viewFloorCoord.x) / viewNear), 0.0f);
-          frustumPlanes[1u] = float4(-1.0f, 0.0f, (viewCeilCoord.x / viewNear), 0.0f);
-          frustumPlanes[2u] = float4(0.0f, 1.0f, (-(viewFloorCoord.y) / viewNear), 0.0f);
-          frustumPlanes[3u] = float4(0.0f, -1.0f, (viewCeilCoord.y / viewNear), 0.0f);
+          float2 viewFloorCoord = float2((((-(viewNear) * floorCoord.x) - (M[int(2)].x * viewNear)) / M[int(0)].x), (((-(viewNear) * floorCoord.y) - (M[int(2)].y * viewNear)) / M[int(1)].y));
+          float2 viewCeilCoord = float2((((-(viewNear) * ceilCoord.x) - (M[int(2)].x * viewNear)) / M[int(0)].x), (((-(viewNear) * ceilCoord.y) - (M[int(2)].y * viewNear)) / M[int(1)].y));
+          frustumPlanes[int(0)] = float4(1.0f, 0.0f, (-(viewFloorCoord.x) / viewNear), 0.0f);
+          frustumPlanes[int(1)] = float4(-1.0f, 0.0f, (viewCeilCoord.x / viewNear), 0.0f);
+          frustumPlanes[int(2)] = float4(0.0f, 1.0f, (-(viewFloorCoord.y) / viewNear), 0.0f);
+          frustumPlanes[int(3)] = float4(0.0f, -1.0f, (viewCeilCoord.y / viewNear), 0.0f);
           float dp = 0.0f;
           {
             uint i = 0u;
-            while((i < 6u)) {
+            for( ; (i < 6u); i = (i + 1u)) {
               float4 p = (0.0f).xxxx;
               uint v_16 = i;
               if ((frustumPlanes[v_16].x > 0.0f)) {
@@ -103,10 +119,6 @@ void main_inner(uint3 GlobalInvocationID) {
               float4 v_20 = p;
               uint v_21 = i;
               dp = (v_19 + min(0.0f, dot(v_20, frustumPlanes[v_21])));
-              {
-                i = (i + 1u);
-              }
-              continue;
             }
           }
           if ((dp >= 0.0f)) {
@@ -119,7 +131,11 @@ void main_inner(uint3 GlobalInvocationID) {
             }
             if (v_22) {
               {
-                x = asint((asuint(x) + asuint(int(1))));
+                uint tint_low_inc_1 = (tint_loop_idx_1.x - 1u);
+                tint_loop_idx_1.x = tint_low_inc_1;
+                uint tint_carry_1 = uint((tint_low_inc_1 == 4294967295u));
+                tint_loop_idx_1.y = (tint_loop_idx_1.y - tint_carry_1);
+                x = asint((asuint(x) + 1u));
               }
               continue;
             }
@@ -128,22 +144,32 @@ void main_inner(uint3 GlobalInvocationID) {
             uint offset = v_23;
             if ((offset >= config[1u].x)) {
               {
-                x = asint((asuint(x) + asuint(int(1))));
+                uint tint_low_inc_1 = (tint_loop_idx_1.x - 1u);
+                tint_loop_idx_1.x = tint_low_inc_1;
+                uint tint_carry_1 = uint((tint_low_inc_1 == 4294967295u));
+                tint_loop_idx_1.y = (tint_loop_idx_1.y - tint_carry_1);
+                x = asint((asuint(x) + 1u));
               }
               continue;
             }
             tileLightId.Store(((4u + (min(tileId, 3u) * 260u)) + (min(offset, 63u) * 4u)), GlobalInvocationID.x);
           }
           {
-            x = asint((asuint(x) + asuint(int(1))));
+            uint tint_low_inc_1 = (tint_loop_idx_1.x - 1u);
+            tint_loop_idx_1.x = tint_low_inc_1;
+            uint tint_carry_1 = uint((tint_low_inc_1 == 4294967295u));
+            tint_loop_idx_1.y = (tint_loop_idx_1.y - tint_carry_1);
+            x = asint((asuint(x) + 1u));
           }
-          continue;
         }
       }
       {
-        y = asint((asuint(y) + asuint(int(1))));
+        uint tint_low_inc = (tint_loop_idx.x - 1u);
+        tint_loop_idx.x = tint_low_inc;
+        uint tint_carry = uint((tint_low_inc == 4294967295u));
+        tint_loop_idx.y = (tint_loop_idx.y - tint_carry);
+        y = asint((asuint(y) + 1u));
       }
-      continue;
     }
   }
 }

@@ -25,15 +25,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/439062058): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <iostream>
+#include <span>
+#include <string_view>
 
 #include "src/tint/cmd/bench/bench.h"
 #include "src/tint/utils/text/string.h"
+#include "src/utils/compiler.h"
 
 namespace {
 
@@ -90,18 +88,16 @@ class ChromePerfReporter final : public benchmark::BenchmarkReporter {
     void Finalize() override {}
 };
 
-bool ParseExtraCommandLineArgs(int argc, char** argv) {
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--use-chrome-perf-format") == 0) {
+bool ParseExtraCommandLineArgs(std::span<char* const> args) {
+    for (std::string_view arg : args.subspan(1u)) {
+        if (arg == "--use-chrome-perf-format") {
             use_chrome_perf_format = true;
         } else {
             // Accept the flags that are passed by the Chromium perf waterfall, which treats this
             // executable as a GoogleTest binary.
-            if (strcmp(argv[i], "--verbose") != 0 &&
-                strcmp(argv[i], "--test-launcher-print-test-stdio=always") != 0 &&
-                strcmp(argv[i], "--test-launcher-total-shards=1") != 0 &&
-                strcmp(argv[i], "--test-launcher-shard-index=0") != 0) {
-                std::cerr << "Unrecognized command-line argument: " << argv[i] << "\n";
+            if (arg != "--verbose" && arg != "--test-launcher-print-test-stdio=always" &&
+                arg != "--test-launcher-total-shards=1" && arg != "--test-launcher-shard-index=0") {
+                std::cerr << "Unrecognized command-line argument: " << arg << "\n";
                 return false;
             }
         }
@@ -113,7 +109,9 @@ bool ParseExtraCommandLineArgs(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     benchmark::Initialize(&argc, argv);
-    if (!ParseExtraCommandLineArgs(argc, argv)) {
+    // SAFETY: argv comes directly from C API and has at least `argc` valid elements.
+    auto args = DAWN_UNSAFE_BUFFERS(std::span<char* const>(argv, static_cast<size_t>(argc)));
+    if (!ParseExtraCommandLineArgs(args)) {
         return 1;
     }
     if (use_chrome_perf_format) {

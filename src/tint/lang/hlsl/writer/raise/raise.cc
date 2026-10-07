@@ -32,22 +32,25 @@
 #include <utility>
 
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/transform/array_length_from_immediate.h"
-#include "src/tint/lang/core/ir/transform/array_length_from_uniform.h"
+#include "src/tint/lang/core/ir/reflection.h"
+#include "src/tint/lang/core/ir/transform/array_length_from.h"
 #include "src/tint/lang/core/ir/transform/binary_polyfill.h"
 #include "src/tint/lang/core/ir/transform/binding_remapper.h"
 #include "src/tint/lang/core/ir/transform/builtin_polyfill.h"
 #include "src/tint/lang/core/ir/transform/builtin_scalarize.h"
 #include "src/tint/lang/core/ir/transform/change_immediate_to_uniform.h"
+#include "src/tint/lang/core/ir/transform/collapse_subgroup_min_max.h"
 #include "src/tint/lang/core/ir/transform/conversion_polyfill.h"
-#include "src/tint/lang/core/ir/transform/decompose_uniform_access.h"
+#include "src/tint/lang/core/ir/transform/decompose_access.h"
 #include "src/tint/lang/core/ir/transform/demote_to_helper.h"
 #include "src/tint/lang/core/ir/transform/direct_variable_access.h"
 #include "src/tint/lang/core/ir/transform/multiplanar_external_texture.h"
 #include "src/tint/lang/core/ir/transform/prevent_infinite_loops.h"
+#include "src/tint/lang/core/ir/transform/propagate_buffer_sizes.h"
 #include "src/tint/lang/core/ir/transform/remove_continue_in_switch.h"
 #include "src/tint/lang/core/ir/transform/remove_terminator_args.h"
 #include "src/tint/lang/core/ir/transform/rename_conflicts.h"
+#include "src/tint/lang/core/ir/transform/resource_table.h"
 #include "src/tint/lang/core/ir/transform/robustness.h"
 #include "src/tint/lang/core/ir/transform/signed_integer_polyfill.h"
 #include "src/tint/lang/core/ir/transform/single_entry_point.h"
@@ -61,34 +64,51 @@
 #include "src/tint/lang/hlsl/writer/common/option_helpers.h"
 #include "src/tint/lang/hlsl/writer/common/options.h"
 #include "src/tint/lang/hlsl/writer/raise/array_offset_from_immediate.h"
-#include "src/tint/lang/hlsl/writer/raise/array_offset_from_uniform.h"
 #include "src/tint/lang/hlsl/writer/raise/binary_polyfill.h"
 #include "src/tint/lang/hlsl/writer/raise/builtin_polyfill.h"
+#include "src/tint/lang/hlsl/writer/raise/decompose_snorm10_10_10_2.h"
 #include "src/tint/lang/hlsl/writer/raise/decompose_storage_access.h"
+#include "src/tint/lang/hlsl/writer/raise/extract_ternary_values.h"
 #include "src/tint/lang/hlsl/writer/raise/localize_struct_array_assignment.h"
 #include "src/tint/lang/hlsl/writer/raise/pixel_local.h"
 #include "src/tint/lang/hlsl/writer/raise/promote_initializers.h"
 #include "src/tint/lang/hlsl/writer/raise/replace_default_only_switch.h"
 #include "src/tint/lang/hlsl/writer/raise/replace_non_indexable_mat_vec_stores.h"
+#include "src/tint/lang/hlsl/writer/raise/replace_subgroup_matrix_init.h"
+#include "src/tint/lang/hlsl/writer/raise/resource_table_helper.h"
 #include "src/tint/lang/hlsl/writer/raise/shader_io.h"
+#include "src/tint/lang/hlsl/writer/raise/split_workgroup_atomics.h"
 
 namespace tint::hlsl::writer {
 
-Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
+Result<RaiseResult> Raise(core::ir::Module& module, const Options& options) {
+    RaiseResult raise_result;
+
     TINT_CHECK_RESULT(core::ir::transform::SingleEntryPoint(module, options.entry_point_name));
 
     TINT_CHECK_RESULT(
         core::ir::transform::SubstituteOverrides(module, options.substitute_overrides_config));
 
+    TINT_CHECK_RESULT(core::ir::transform::PropagateBufferSizes(module));
+
     // PopulateBindingRelatedOptions must come before PrepareImmediateData so that
     // buffer_sizes_offset is available when configuring immediate data.
     tint::transform::multiplanar::BindingsMap multiplanar_map{};
     RemapperData remapper_data{};
-    ArrayLengthFromUniformOptions array_length_from_uniform_options{};
-    ArrayOffsetFromUniformOptions array_offset_from_uniform_options{};
+    ArrayLengthFromImmediateOptions array_length_from_immediate_options{};
+    ArrayOffsetFromImmediateOptions array_offset_from_immediate_options{};
     PopulateBindingRelatedOptions(options, remapper_data, multiplanar_map,
-                                  array_length_from_uniform_options,
-                                  array_offset_from_uniform_options);
+                                  array_length_from_immediate_options,
+                                  array_offset_from_immediate_options);
+
+    if (!array_length_from_immediate_options.bindpoint_to_size_index.empty() &&
+        !array_length_from_immediate_options.buffer_sizes_offset.has_value()) {
+        return Failure("array length from immediate requires a buffer sizes offset");
+    }
+    if (!array_offset_from_immediate_options.bindpoint_to_offset_index.empty() &&
+        !array_offset_from_immediate_options.buffer_offsets_offset.has_value()) {
+        return Failure("array offset from immediate requires a buffer offsets offset");
+    }
 
     // The number of vec4s used to store buffer sizes that will be set into the immediate block.
     uint32_t buffer_sizes_array_elements_num = 0;
@@ -99,56 +119,59 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
     core::ir::transform::PrepareImmediateDataConfig immediate_data_config;
     if (options.first_index_offset) {
         TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
-            options.first_index_offset.value(), module.symbols.New("tint_first_index_offset"),
-            module.Types().u32()));
+            core::InternalImmediate::kFirstVertexOffset, options.first_index_offset.value(),
+            module.symbols.New("tint_first_index_offset"), module.Types().u32()));
     }
 
     if (options.first_instance_offset) {
         TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
-            options.first_instance_offset.value(), module.symbols.New("tint_first_instance_offset"),
-            module.Types().u32()));
+            core::InternalImmediate::kFirstInstanceOffset, options.first_instance_offset.value(),
+            module.symbols.New("tint_first_instance_offset"), module.Types().u32()));
     }
 
     if (options.num_workgroups_start_offset) {
+        // Store num_workgroups as a struct of three u32 members rather than a vec3<u32> so it only
+        // requires 4-byte alignment. A vec3<u32> requires 16-byte alignment, which cannot be
+        // guaranteed when the internal immediate follows a user immediate block whose size is not a
+        // multiple of 16.
+        auto* num_workgroups_type = module.Types().Struct(
+            module.symbols.New("tint_num_workgroups_struct"),
+            {
+                {module.symbols.New("num_workgroups_x"), module.Types().u32()},
+                {module.symbols.New("num_workgroups_y"), module.Types().u32()},
+                {module.symbols.New("num_workgroups_z"), module.Types().u32()},
+            });
         TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
-            options.num_workgroups_start_offset.value(),
-            module.symbols.New("tint_num_workgroups_start_offset"), module.Types().vec3u()));
+            core::InternalImmediate::kNumWorkgroups, options.num_workgroups_start_offset.value(),
+            module.symbols.New("tint_num_workgroups_start_offset"), num_workgroups_type));
     }
 
-    if (array_length_from_uniform_options.buffer_sizes_offset) {
-        // Find the largest index declared in the map, in order to determine the number of
-        // elements needed in the array of buffer sizes. The buffer sizes will be packed into
-        // vec4s to satisfy the 16-byte alignment requirement for array elements in constant
-        // buffers.
+    if (array_length_from_immediate_options.buffer_sizes_offset) {
         uint32_t max_index = 0;
-        for (const auto& entry : array_length_from_uniform_options.bindpoint_to_size_index) {
+        for (const auto& entry : array_length_from_immediate_options.bindpoint_to_size_index) {
             max_index = std::max(max_index, entry.second);
         }
-        buffer_sizes_array_elements_num = (max_index / 4) + 1;
+        buffer_sizes_array_elements_num = max_index + 1;
 
         TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
-            array_length_from_uniform_options.buffer_sizes_offset.value(),
+            core::InternalImmediate::kStorageBufferSizes,
+            array_length_from_immediate_options.buffer_sizes_offset.value(),
             module.symbols.New("buffer_sizes"),
-            module.Types().array(module.Types().vec4<core::u32>(),
-                                 buffer_sizes_array_elements_num)));
+            module.Types().array(module.Types().u32(), buffer_sizes_array_elements_num)));
     }
 
-    if (array_offset_from_uniform_options.buffer_offsets_offset) {
-        // Find the largest index declared in the map, in order to determine the number of
-        // elements needed in the array of buffer offsets. The buffer offsets will be packed into
-        // vec4s to satisfy the 16-byte alignment requirement for array elements in constant
-        // buffers.
+    if (array_offset_from_immediate_options.buffer_offsets_offset) {
         uint32_t max_index = 0;
-        for (const auto& entry : array_offset_from_uniform_options.bindpoint_to_offset_index) {
+        for (const auto& entry : array_offset_from_immediate_options.bindpoint_to_offset_index) {
             max_index = std::max(max_index, entry.second);
         }
-        buffer_offsets_array_elements_num = (max_index / 4) + 1;
+        buffer_offsets_array_elements_num = max_index + 1;
 
         TINT_CHECK_RESULT(immediate_data_config.AddInternalImmediateData(
-            array_offset_from_uniform_options.buffer_offsets_offset.value(),
+            core::InternalImmediate::kStorageBufferOffsets,
+            array_offset_from_immediate_options.buffer_offsets_offset.value(),
             module.symbols.New("buffer_offsets"),
-            module.Types().array(module.Types().vec4<core::u32>(),
-                                 buffer_offsets_array_elements_num)));
+            module.Types().array(module.Types().u32(), buffer_offsets_array_elements_num)));
     }
 
     TINT_CHECK_RESULT_UNWRAP(immediate_data_layout, core::ir::transform::PrepareImmediateData(
@@ -181,6 +204,12 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
         TINT_CHECK_RESULT(core::ir::transform::Robustness(module, config));
 
         TINT_CHECK_RESULT(core::ir::transform::PreventInfiniteLoops(module));
+    }
+
+    if (options.resource_table.has_value()) {
+        hlsl::writer::raise::ResourceTableHelper helper;
+        TINT_CHECK_RESULT(
+            core::ir::transform::ResourceTable(module, options.resource_table.value(), &helper));
     }
 
     {
@@ -230,26 +259,10 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
     }
 
     // ArrayLength must run after Robustness, which introduces arrayLength calls.
-    // TODO(crbug.com/366291600): Replace ArrayLengthFromUniform with ArrayLengthFromImmediates
-    if (array_length_from_uniform_options.buffer_sizes_offset) {
-        // Use ArrayLengthFromImmediates when buffer_sizes_offset is provided.
-        TINT_ASSERT(!array_length_from_uniform_options.ubo_binding.group &&
-                    !array_length_from_uniform_options.ubo_binding.binding);
-
+    if (array_length_from_immediate_options.buffer_sizes_offset) {
         TINT_CHECK_RESULT(core::ir::transform::ArrayLengthFromImmediates(
-            module, immediate_data_layout,
-            array_length_from_uniform_options.buffer_sizes_offset.value(),
-            buffer_sizes_array_elements_num,
-            array_length_from_uniform_options.bindpoint_to_size_index));
-    } else {
-        // Always fall back to ArrayLengthFromUniform when buffer_sizes_offset is not provided.
-        // This preserves the behavior from before ArrayLengthFromImmediates was introduced,
-        // ensuring that arrayLength() calls are properly handled even without explicit options.
-        TINT_CHECK_RESULT(core::ir::transform::ArrayLengthFromUniform(
-            module,
-            BindingPoint{array_length_from_uniform_options.ubo_binding.group,
-                         array_length_from_uniform_options.ubo_binding.binding},
-            array_length_from_uniform_options.bindpoint_to_size_index));
+            module, immediate_data_layout, buffer_sizes_array_elements_num,
+            array_length_from_immediate_options.bindpoint_to_size_index));
     }
 
     if (!options.disable_workgroup_init) {
@@ -259,23 +272,18 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
 
     const bool pixel_local_enabled = !options.pixel_local.attachments.empty();
 
-    // ShaderIO must be run before DecomposeUniformAccess because it might
-    // introduce a uniform buffer for kNumWorkgroups.
     {
         raise::ShaderIOConfig config = {
             .immediate_data_layout = immediate_data_layout,
-            .num_workgroups_binding = options.root_constant_binding_point,
-            .first_index_offset_binding = options.root_constant_binding_point,
             .add_input_position_member = pixel_local_enabled,
             .truncate_interstage_variables = options.truncate_interstage_variables,
             .interstage_locations = std::move(options.interstage_locations),
-            .first_index_offset = options.first_index_offset,
-            .first_instance_offset = options.first_instance_offset,
-            .num_workgroups_start_offset = options.num_workgroups_start_offset,
         };
 
         TINT_CHECK_RESULT(raise::ShaderIO(module, config));
     }
+
+    TINT_CHECK_RESULT(raise::DecomposeSnorm10_10_10_2(module, options.snorm10_10_10_2_locations));
 
     // DemoteToHelper must come before any transform that introduces non-core instructions.
     // Run after ShaderIO to ensure the discards are added to the entry point it introduces.
@@ -284,32 +292,37 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
         TINT_CHECK_RESULT(core::ir::transform::DemoteToHelper(module));
     }
     TINT_CHECK_RESULT(core::ir::transform::DirectVariableAccess(
-        module, core::ir::transform::DirectVariableAccessOptions{}));
+        module, core::ir::transform::DirectVariableAccessConfig{}));
+
+    // Split workgroup variables that contain atomics into separate data and atomic variables.
+    // Must run after DirectVariableAccess and before DecomposeAccess.
+    if (auto workgroup_res = core::ir::GetWorkgroupInfo(module); workgroup_res == Success) {
+        raise::SplitWorkgroupAtomicsConfig config;
+        config.mode = options.workarounds.d3d12_decompose_workgroup_access
+                          ? raise::SplitMode::kAll
+                          : raise::SplitMode::kSubgroupMatrix;
+        auto workgroup_info = workgroup_res.Get();
+        raise_result.workgroup_storage_size_before_split_workgroup_atomics =
+            workgroup_info.storage_size;
+        TINT_CHECK_RESULT(raise::SplitWorkgroupAtomics(module, config));
+    }
 
     // DecomposeStorageAccess must come after Robustness and DirectVariableAccess
     TINT_CHECK_RESULT(raise::DecomposeStorageAccess(module));
 
-    // ArrayOffsetFrom* transforms must come after both DirectVariableAccess and
-    // DecomposeStorageAccess, and BEFORE ChangeImmediateToUniform.
-    // TODO(crbug.com/366291600): Replace ArrayOffsetFromUniform with ArrayOffsetFromImmediates
-    if (array_offset_from_uniform_options.buffer_offsets_offset) {
-        // Use ArrayOffsetFromImmediates when buffer_offsets_offset is provided.
-        TINT_ASSERT(!array_offset_from_uniform_options.ubo_binding.group &&
-                    !array_offset_from_uniform_options.ubo_binding.binding);
+    // DecomposeAccess must come after DecomposeStorageAccess. No address spaces enabled. Just
+    // decompose buffers.
+    TINT_CHECK_RESULT(core::ir::transform::DecomposeAccess(module, {}));
 
+    // ArrayOffsetFromImmediates must come after both DirectVariableAccess and
+    // DecomposeStorageAccess, and before ChangeImmediateToUniform.
+    if (array_offset_from_immediate_options.buffer_offsets_offset) {
         TINT_CHECK_RESULT(raise::ArrayOffsetFromImmediates(
-            module, immediate_data_layout,
-            array_offset_from_uniform_options.buffer_offsets_offset.value(),
-            buffer_offsets_array_elements_num,
-            array_offset_from_uniform_options.bindpoint_to_offset_index));
-    } else if (array_offset_from_uniform_options.ubo_binding.group ||
-               array_offset_from_uniform_options.ubo_binding.binding) {
-        // Fall back to ArrayOffsetFromUniform when UBO binding is provided.
-        // ArrayOffsetFromUniform operates on uniform buffers and must come after
-        // ChangeImmediateToUniform (see below after ChangeImmediateToUniform transform).
+            module, immediate_data_layout, buffer_offsets_array_elements_num,
+            array_offset_from_immediate_options.bindpoint_to_offset_index));
     }
 
-    // ChangeImmediateToUniformConfig must come before DecomposeUniformAccess (to write correct
+    // ChangeImmediateToUniformConfig must come before DecomposeAccess (to write correct
     // uniform access instructions).
     {
         core::ir::transform::ChangeImmediateToUniformConfig config = {
@@ -318,26 +331,23 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
         TINT_CHECK_RESULT(core::ir::transform::ChangeImmediateToUniform(module, config));
     }
 
-    // ArrayOffsetFromUniform must come after ChangeImmediateToUniform, DirectVariableAccess, and
-    // DecomposeStorageAccess.
-    if (array_offset_from_uniform_options.ubo_binding.group ||
-        array_offset_from_uniform_options.ubo_binding.binding) {
-        TINT_CHECK_RESULT(raise::ArrayOffsetFromUniform(
-            module,
-            BindingPoint{array_offset_from_uniform_options.ubo_binding.group,
-                         array_offset_from_uniform_options.ubo_binding.binding},
-            array_offset_from_uniform_options.bindpoint_to_offset_index));
-    }
-
-    // DecomposeUniformAccess must come after DecomposeStorageAccess, ChangeImmediateToUniform, and
-    // ArrayOffsetFrom* transforms
-    TINT_CHECK_RESULT(core::ir::transform::DecomposeUniformAccess(module));
+    // DecomposeAccess must come after DecomposeStorageAccess, ChangeImmediateToUniform, and
+    // ArrayOffsetFromImmediates.
+    core::ir::transform::DecomposeAccessConfig decompose_config;
+    decompose_config.uniform = true;
+    decompose_config.workgroup_subgroup_matrix = true;
+    decompose_config.workgroup = options.workarounds.d3d12_decompose_workgroup_access;
+    TINT_CHECK_RESULT(core::ir::transform::DecomposeAccess(module, decompose_config));
 
     // PixelLocal must run after DirectVariableAccess to avoid chasing pointer parameters.
     if (pixel_local_enabled) {
         raise::PixelLocalConfig config;
         config.options = options.pixel_local;
         TINT_CHECK_RESULT(raise::PixelLocal(module, config));
+    }
+
+    if (options.workarounds.collapse_subgroup_min_max) {
+        TINT_CHECK_RESULT(core::ir::transform::CollapseSubgroupMinMax(module));
     }
 
     TINT_CHECK_RESULT(raise::BinaryPolyfill(module));
@@ -349,14 +359,25 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
 
     // BuiltinPolyfill must come after BinaryPolyfill and DecomposeStorageAccess as they add
     // builtins
-    TINT_CHECK_RESULT(raise::BuiltinPolyfill(module));
+    {
+        raise::BuiltinPolyfillConfig config;
+        config.polyfill_trunc = (options.compiler == Options::Compiler::kFXC);
+        config.polyfill_f16_ceil_floor = options.workarounds.polyfill_f16_ceil_floor;
+        config.use_hlsl_2021_select = (options.compiler == Options::Compiler::kDXC_2021);
+        TINT_CHECK_RESULT(raise::BuiltinPolyfill(module, config));
+    }
     TINT_CHECK_RESULT(core::ir::transform::VectorizeScalarMatrixConstructors(module));
     TINT_CHECK_RESULT(core::ir::transform::RemoveContinueInSwitch(module));
 
+    // ExtractTernaryValues must come after BuiltinPolyfill because that's what introduces the
+    // ternary builtins.
+    TINT_CHECK_RESULT(raise::ExtractTernaryValues(module));
+
+    TINT_CHECK_RESULT(raise::ReplaceSubgroupMatrixInit(module));
+
     core::ir::transform::BuiltinScalarizeConfig scalarize_config{
-        .scalarize_clamp = options.workarounds.scalarize_max_min_clamp,
-        .scalarize_max = options.workarounds.scalarize_max_min_clamp,
-        .scalarize_min = options.workarounds.scalarize_max_min_clamp};
+        .scalarize_min_max_clamp = options.workarounds.scalarize_max_min_clamp,
+    };
     TINT_CHECK_RESULT(core::ir::transform::BuiltinScalarize(module, scalarize_config));
 
     // These transforms need to be run last as various transforms introduce terminator arguments,
@@ -369,10 +390,10 @@ Result<SuccessType> Raise(core::ir::Module& module, const Options& options) {
         TINT_CHECK_RESULT(core::ir::transform::ValueToLet(module, cfg));
     }
 
-    // Anything which runs after this needs to handle `Capabilities::kAllowModuleScopedLets`
+    // Anything which runs after this needs to handle `Property::kAllowModuleScopedLets`
     TINT_CHECK_RESULT(raise::PromoteInitializers(module));
 
-    return Success;
+    return raise_result;
 }
 
 }  // namespace tint::hlsl::writer

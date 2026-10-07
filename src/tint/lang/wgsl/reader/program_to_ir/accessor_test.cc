@@ -648,9 +648,8 @@ TEST_F(ProgramToIRAccessorTest, Accessor_Var_MultiElementSwizzleOfSwizzle) {
   $B1: {
     %a:ptr<function, vec3<f32>, read_write> = var undef
     %3:vec3<f32> = load %a
-    %4:vec3<f32> = swizzle %3, zyx
-    %5:vec2<f32> = swizzle %4, yy
-    %b:vec2<f32> = let %5
+    %4:vec2<f32> = swizzle %3, yy
+    %b:vec2<f32> = let %4
     ret
   }
 }
@@ -685,11 +684,55 @@ TEST_F(ProgramToIRAccessorTest, Accessor_Var_MultiElementSwizzle_MiddleOfChain) 
   $B1: {
     %a:ptr<function, MyStruct, read_write> = var undef
     %3:ptr<function, vec4<f32>, read_write> = access %a, 1u
-    %4:vec4<f32> = load %3
-    %5:vec3<f32> = swizzle %4, zyx
-    %6:vec2<f32> = swizzle %5, yx
-    %7:f32 = access %6, 0u
-    %b:f32 = let %7
+    %4:f32 = load_vector_element %3, 1u
+    %b:f32 = let %4
+    ret
+  }
+}
+)");
+}
+
+TEST_F(ProgramToIRAccessorTest, Accessor_Var_SingleElementSwizzleOfSwizzle) {
+    // var a: vec4<f32>;
+    // let b = a.zyx.x
+
+    auto* a = Var("a", ty.vec4<f32>(), core::AddressSpace::kFunction);
+    auto* expr = Decl(Let("b", MemberAccessor(MemberAccessor(a, "zyx"), "x")));
+    WrapInFunction(Decl(a), expr);
+
+    auto m = Build();
+    ASSERT_EQ(m, Success);
+
+    EXPECT_EQ(Dis(m.Get()),
+              R"(%test_function = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %a:ptr<function, vec4<f32>, read_write> = var undef
+    %3:f32 = load_vector_element %a, 2u
+    %b:f32 = let %3
+    ret
+  }
+}
+)");
+}
+
+TEST_F(ProgramToIRAccessorTest,
+       Accessor_Var_SingleElementSwizzleOfSwizzle_WithoutSwizzleAssignment) {
+    // var a: vec4<f32>;
+    // let b = a.zyx.x
+
+    auto* a = Var("a", ty.vec4<f32>(), core::AddressSpace::kFunction);
+    auto* expr = Decl(Let("b", MemberAccessor(MemberAccessor(a, "zyx"), "x")));
+    WrapInFunction(Decl(a), expr);
+
+    auto m = Build(wgsl::AllowedFeatures{});
+    ASSERT_EQ(m, Success);
+
+    EXPECT_EQ(Dis(m.Get()),
+              R"(%test_function = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B1: {
+    %a:ptr<function, vec4<f32>, read_write> = var undef
+    %3:f32 = load_vector_element %a, 2u
+    %b:f32 = let %3
     ret
   }
 }

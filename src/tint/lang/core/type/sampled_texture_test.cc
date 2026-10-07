@@ -27,6 +27,7 @@
 
 #include "src/tint/lang/core/type/sampled_texture.h"
 
+#include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/type/depth_texture.h"
 #include "src/tint/lang/core/type/external_texture.h"
 #include "src/tint/lang/core/type/f32.h"
@@ -106,6 +107,12 @@ TEST_F(SampledTextureTest, FriendlyName) {
     F32 f32;
     SampledTexture s(TextureDimension::k3d, &f32);
     EXPECT_EQ(s.FriendlyName(), "texture_3d<f32>");
+}
+
+TEST_F(SampledTextureTest, IdentifierName) {
+    F32 f32;
+    SampledTexture s(TextureDimension::k3d, &f32);
+    EXPECT_EQ(s.IdentifierName(), "texture_3d_f32");
 }
 
 TEST_F(SampledTextureTest, Clone) {

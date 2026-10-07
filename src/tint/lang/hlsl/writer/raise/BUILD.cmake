@@ -34,9 +34,11 @@
 #                       Do not modify this file directly
 ################################################################################
 
+if(TINT_BUILD_HLSL_WRITER)
 ################################################################################
 # Target:    tint_lang_hlsl_writer_raise
 # Kind:      lib
+# Condition: TINT_BUILD_HLSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_hlsl_writer_raise lib
   lang/hlsl/writer/raise/array_offset_from_immediate.cc
@@ -47,8 +49,12 @@ tint_add_target(tint_lang_hlsl_writer_raise lib
   lang/hlsl/writer/raise/binary_polyfill.h
   lang/hlsl/writer/raise/builtin_polyfill.cc
   lang/hlsl/writer/raise/builtin_polyfill.h
+  lang/hlsl/writer/raise/decompose_snorm10_10_10_2.cc
+  lang/hlsl/writer/raise/decompose_snorm10_10_10_2.h
   lang/hlsl/writer/raise/decompose_storage_access.cc
   lang/hlsl/writer/raise/decompose_storage_access.h
+  lang/hlsl/writer/raise/extract_ternary_values.cc
+  lang/hlsl/writer/raise/extract_ternary_values.h
   lang/hlsl/writer/raise/localize_struct_array_assignment.cc
   lang/hlsl/writer/raise/localize_struct_array_assignment.h
   lang/hlsl/writer/raise/pixel_local.cc
@@ -61,8 +67,14 @@ tint_add_target(tint_lang_hlsl_writer_raise lib
   lang/hlsl/writer/raise/replace_default_only_switch.h
   lang/hlsl/writer/raise/replace_non_indexable_mat_vec_stores.cc
   lang/hlsl/writer/raise/replace_non_indexable_mat_vec_stores.h
+  lang/hlsl/writer/raise/replace_subgroup_matrix_init.cc
+  lang/hlsl/writer/raise/replace_subgroup_matrix_init.h
+  lang/hlsl/writer/raise/resource_table_helper.cc
+  lang/hlsl/writer/raise/resource_table_helper.h
   lang/hlsl/writer/raise/shader_io.cc
   lang/hlsl/writer/raise/shader_io.h
+  lang/hlsl/writer/raise/split_workgroup_atomics.cc
+  lang/hlsl/writer/raise/split_workgroup_atomics.h
 )
 
 tint_target_add_dependencies(tint_lang_hlsl_writer_raise lib
@@ -72,6 +84,7 @@ tint_target_add_dependencies(tint_lang_hlsl_writer_raise lib
   tint_lang_core_intrinsic
   tint_lang_core_ir
   tint_lang_core_ir_transform
+  tint_lang_core_ir_validator
   tint_lang_core_type
   tint_lang_hlsl
   tint_lang_hlsl_intrinsic
@@ -85,6 +98,7 @@ tint_target_add_dependencies(tint_lang_hlsl_writer_raise lib
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -94,22 +108,29 @@ tint_target_add_external_dependencies(tint_lang_hlsl_writer_raise lib
   "src_utils"
 )
 
+endif(TINT_BUILD_HLSL_WRITER)
+if(TINT_BUILD_HLSL_WRITER)
 ################################################################################
 # Target:    tint_lang_hlsl_writer_raise_test
 # Kind:      test
+# Condition: TINT_BUILD_HLSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_hlsl_writer_raise_test test
   lang/hlsl/writer/raise/array_offset_from_immediate_test.cc
   lang/hlsl/writer/raise/array_offset_from_uniform_test.cc
   lang/hlsl/writer/raise/binary_polyfill_test.cc
   lang/hlsl/writer/raise/builtin_polyfill_test.cc
+  lang/hlsl/writer/raise/decompose_snorm10_10_10_2_test.cc
   lang/hlsl/writer/raise/decompose_storage_access_test.cc
+  lang/hlsl/writer/raise/extract_ternary_values_test.cc
   lang/hlsl/writer/raise/localize_struct_array_assignment_test.cc
   lang/hlsl/writer/raise/pixel_local_test.cc
   lang/hlsl/writer/raise/promote_initializers_test.cc
   lang/hlsl/writer/raise/replace_default_only_switch_test.cc
   lang/hlsl/writer/raise/replace_non_indexable_mat_vec_stores_test.cc
+  lang/hlsl/writer/raise/replace_subgroup_matrix_init_test.cc
   lang/hlsl/writer/raise/shader_io_test.cc
+  lang/hlsl/writer/raise/split_workgroup_atomics_test.cc
 )
 
 tint_target_add_dependencies(tint_lang_hlsl_writer_raise_test test
@@ -120,6 +141,7 @@ tint_target_add_dependencies(tint_lang_hlsl_writer_raise_test test
   tint_lang_core_ir
   tint_lang_core_ir_transform
   tint_lang_core_ir_transform_test
+  tint_lang_core_ir_validator
   tint_lang_core_type
   tint_lang_hlsl
   tint_lang_hlsl_intrinsic
@@ -134,6 +156,7 @@ tint_target_add_dependencies(tint_lang_hlsl_writer_raise_test test
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -144,9 +167,12 @@ tint_target_add_external_dependencies(tint_lang_hlsl_writer_raise_test test
   "src_utils"
 )
 
+endif(TINT_BUILD_HLSL_WRITER)
+if(TINT_BUILD_FUZZERS AND TINT_BUILD_HLSL_WRITER)
 ################################################################################
 # Target:    tint_lang_hlsl_writer_raise_fuzz
 # Kind:      fuzz
+# Condition: TINT_BUILD_FUZZERS AND TINT_BUILD_HLSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_hlsl_writer_raise_fuzz fuzz
   lang/hlsl/writer/raise/promote_initializers_fuzz.cc
@@ -154,20 +180,21 @@ tint_add_target(tint_lang_hlsl_writer_raise_fuzz fuzz
 
 tint_target_add_dependencies(tint_lang_hlsl_writer_raise_fuzz fuzz
   tint_api_common
-  tint_cmd_fuzz_ir_fuzz
+  tint_cmd_fuzz_common
   tint_lang_core
   tint_lang_core_constant
   tint_lang_core_ir
+  tint_lang_core_ir_validator
   tint_lang_core_type
   tint_lang_hlsl_writer_raise
   tint_utils
-  tint_utils_bytes
   tint_utils_containers
   tint_utils_diagnostic
   tint_utils_ice
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -176,3 +203,5 @@ tint_target_add_dependencies(tint_lang_hlsl_writer_raise_fuzz fuzz
 tint_target_add_external_dependencies(tint_lang_hlsl_writer_raise_fuzz fuzz
   "src_utils"
 )
+
+endif(TINT_BUILD_FUZZERS AND TINT_BUILD_HLSL_WRITER)

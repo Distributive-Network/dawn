@@ -1,5 +1,8 @@
-SKIP: FAILED
 
-buffers are not supported by the HLSL backend
+RWByteAddressBuffer v : register(u0);
+[numthreads(1, 1, 1)]
+void main() {
+  min(0u, (32u - 1u));
+  v.Store(0u, 2u);
+}
 
-tint executable returned error: exit status 1

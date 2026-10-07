@@ -26,6 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "src/tint/lang/core/ir/multi_in_block.h"
+
 #include "src/tint/lang/core/ir/block_param.h"
 #include "src/tint/lang/core/ir/ir_helper_test.h"
 
@@ -52,8 +53,8 @@ TEST_F(IR_MultiInBlockTest, CloneInto) {
     auto* loop = b.Loop();
 
     auto* blk = b.MultiInBlock();
-    auto* add = b.Add(1_i, 2_i);
-    blk->Append(add);
+    Value* add = nullptr;
+    b.Append(blk, [&] { add = b.Add(1_u, 2_i); });
     auto* param1 = b.BlockParam(mod.Types().i32());
     auto* param2 = b.BlockParam(mod.Types().f32());
     blk->SetParams({param1, param2});
@@ -74,7 +75,7 @@ TEST_F(IR_MultiInBlockTest, CloneInto) {
     EXPECT_EQ(nullptr, new_blk->Parent());
 
     EXPECT_EQ(1u, new_blk->Length());
-    EXPECT_NE(add, new_blk->Front());
+    EXPECT_NE(add, new_blk->Front()->Result());
     EXPECT_TRUE(new_blk->Front()->Is<Binary>());
     EXPECT_EQ(BinaryOp::kAdd, new_blk->Front()->As<Binary>()->Op());
 

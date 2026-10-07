@@ -63,6 +63,16 @@ if (NOT TARGET absl::strings)
     add_subdirectory(${DAWN_ABSEIL_DIR} "${CMAKE_CURRENT_BINARY_DIR}/abseil")
 endif()
 
+# Warning suppressions to keep dependencies from poluting the logs.
+if (("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang") OR
+    ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang"))
+    add_compile_options(
+            -Wno-deprecated-this-capture # For protobuf and marl
+            -Wno-nontrivial-memcall # For swiftshader
+            -Wno-c++20-extensions # For swiftshader and marl
+    )
+endif()
+
 if (DAWN_BUILD_PROTOBUF AND EXISTS "${DAWN_PROTOBUF_DIR}/cmake")
     if (("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang") AND WIN32)
         set(protobuf_HAVE_BUILTIN_ATOMICS 1)
@@ -132,8 +142,7 @@ if (NOT TARGET SPIRV-Headers)
 endif()
 
 if (NOT TARGET SPIRV-Tools AND
-    (((DAWN_ENABLE_OPENGL OR DAWN_ENABLE_VULKAN)
-        AND DAWN_ENABLE_SPIRV_VALIDATION)
+    (DAWN_ENABLE_SPIRV_VALIDATION
         OR TINT_BUILD_SPV_READER
         OR TINT_BUILD_SPV_WRITER
         OR DAWN_USE_BUILT_DXC))
@@ -166,7 +175,7 @@ if (NOT TARGET glfw AND DAWN_USE_GLFW)
     set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 
     message(STATUS "Dawn: using GLFW at ${DAWN_GLFW_DIR}")
-    add_subdirectory(${DAWN_GLFW_DIR} "${CMAKE_CURRENT_BINARY_DIR}/glfw")
+    add_subdirectory(${DAWN_GLFW_DIR} "${CMAKE_CURRENT_BINARY_DIR}/glfw3/src")
 endif()
 
 if (DAWN_BUILD_PROTOBUF AND NOT TARGET libprotobuf-mutator)
@@ -192,6 +201,11 @@ if (NOT TARGET Vulkan::Headers AND DAWN_ENABLE_VULKAN)
 
     set(VULKAN_HEADERS_ENABLE_MODULE OFF)
     add_subdirectory(${DAWN_VULKAN_HEADERS_DIR} "${CMAKE_CURRENT_BINARY_DIR}/vulkan-headers/src")
+endif()
+
+if (NOT TARGET Vulkan::Loader AND DAWN_ENABLE_VULKAN AND TINT_BUILD_FUZZER_VULKAN_SUPPORT)
+    message(STATUS "Dawn: using Vulkan::Loader at ${DAWN_VULKAN_LOADER_DIR}")
+    add_subdirectory(${DAWN_VULKAN_LOADER_DIR} "${CMAKE_CURRENT_BINARY_DIR}/vulkan-loader/src")
 endif()
 
 if (NOT TARGET Vulkan::UtilityHeaders AND DAWN_ENABLE_VULKAN)
@@ -280,7 +294,7 @@ function(AddSubdirectoryDXC)
     set(LLVM_ENABLE_TERMINFO OFF CACHE BOOL "" FORCE)
 
     if (NOT WIN32)
-        set(DIRECTX_HEADER_INCLUDE_DIR "${DAWN_THIRD_PARTY_DIR}/dxheaders/include")
+        set(DIRECTX_HEADER_INCLUDE_DIR "${DAWN_THIRD_PARTY_DIR}/directx-headers/src/include")
     endif()
 
     # Disable HCT.cmake looking for and using clang-format. This is used to compare generated files
@@ -299,7 +313,7 @@ function(AddSubdirectoryDXC)
     endif()
 
     message(STATUS "\nAdding DXC to build:\n")
-    add_subdirectory(dxc
+    add_subdirectory(directx-shader-compiler/src
         # Disable all targets by default, and enable only the dxc and dxcompiler targets (below)
         EXCLUDE_FROM_ALL
     )
@@ -316,7 +330,7 @@ function(AddSubdirectoryDXC)
         # removes NDEBUG from CMAKE_CXX_FLAGS_*, but we can live with the warnings.
         # TODO(crbug.com/358169277): Once we move the 'dxc' directory one level deeper,
         # use add_definitions instead of getting all targets and setting properties on them.
-        get_all_targets_recursive(ALL_TARGETS ${CMAKE_CURRENT_SOURCE_DIR}/dxc)
+        get_all_targets_recursive(ALL_TARGETS ${CMAKE_CURRENT_SOURCE_DIR}/directx-shader-compiler/src)
         foreach(t IN LISTS ALL_TARGETS)
             set_property(TARGET ${t} APPEND PROPERTY COMPILE_OPTIONS "-UNDEBUG")
             if (NOT MSVC)
@@ -345,21 +359,17 @@ function(AddSubdirectoryDXC)
             "LIBRARY_OUTPUT_DIRECTORY" "${CMAKE_BINARY_DIR}"
         )
     endif()
-
-    # Create a target that copies dxil.dll from the platform SDK
-    if (WIN32)
-        AddCopyWindowsSDKDLLTarget("copy_dxil_dll" "dxil.dll")
-        # Make dxc target depend on copy_dxil_dll
-        add_dependencies(dxc copy_dxil_dll)
-    endif()
 endfunction()
 
 if (DAWN_USE_BUILT_DXC)
     AddSubdirectoryDXC()
 endif()
 
-if (TINT_BUILD_TINTD)
-    set(LANGSVR_JSON_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/jsoncpp")
-    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/jsoncpp" EXCLUDE_FROM_ALL)
-    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/langsvr" EXCLUDE_FROM_ALL)
+if (TINT_BUILD_MESA)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/mesa" "${CMAKE_CURRENT_BINARY_DIR}/mesa")
 endif()
+
+if (DAWN_USE_AGILITY_SDK AND NOT TARGET agility-sdk)
+    add_subdirectory(${DAWN_AGILITY_SDK_DIR} "${CMAKE_CURRENT_BINARY_DIR}/agility-sdk")
+endif()
+

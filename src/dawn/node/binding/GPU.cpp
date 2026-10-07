@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <span>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -39,6 +40,7 @@
 #include "src/dawn/node/binding/GPUAdapter.h"
 #include "src/dawn/node/binding/IteratorHelper.h"
 #include "src/dawn/node/binding/TogglesLoader.h"
+#include "src/utils/compiler.h"
 
 #if defined(_WIN32)
 #include <Windows.h>
@@ -316,8 +318,7 @@ interop::Interface<interop::WGSLLanguageFeatures> GPU::getWgslLanguageFeatures(N
     // ones.
     InteropWGSLFeatureSet featureSet;
     Converter conv(env);
-    for (size_t i = 0; i < supportedFeatures.featureCount; i++) {
-        wgpu::WGSLLanguageFeatureName feature = supportedFeatures.features[i];
+    for (wgpu::WGSLLanguageFeatureName feature : WGPU_SPAN(supportedFeatures.feature)) {
         interop::WGSLLanguageFeatureName wgslFeature;
         if (conv(wgslFeature, feature)) {
             featureSet.emplace(wgslFeature);

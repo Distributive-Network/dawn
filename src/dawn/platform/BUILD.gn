@@ -29,6 +29,30 @@ import("../../../scripts/dawn_overrides_with_defaults.gni")
 
 import("${dawn_root}/scripts/dawn_component.gni")
 
+if (dawn_enable_perfetto) {
+  config("dawn_perfetto_config") {
+    defines = [ "DAWN_USE_PERFETTO" ]
+
+    configs = [ "$dawn_perfetto_dir/gn:public_config" ]
+  }
+
+  if (build_with_chromium) {
+    group("dawn_perfetto") {
+      # When build_with_chromium=true we need to include the combined target
+      # to avoid multiply defined globals.
+      public_deps = [ "$dawn_perfetto_dir:libperfetto" ]
+      public_configs = [ ":dawn_perfetto_config" ]
+    }
+  } else {
+    component("dawn_perfetto") {
+      # In standalone builds, use the client API. A component is required in
+      # component builds to avoid duplicate symbol errors across Dawn DLLs.
+      public_deps = [ "$dawn_perfetto_dir/src/tracing:client_api" ]
+      public_configs = [ ":dawn_perfetto_config" ]
+    }
+  }
+}
+
 dawn_component("platform") {
   DEFINE_PREFIX = "DAWN_PLATFORM"
 
@@ -42,8 +66,6 @@ dawn_component("platform") {
     "WorkerThread.h",
     "metrics/HistogramMacros.cpp",
     "metrics/HistogramMacros.h",
-    "tracing/EventTracer.cpp",
-    "tracing/EventTracer.h",
     "tracing/TraceEvent.h",
   ]
 
@@ -57,4 +79,12 @@ dawn_component("platform") {
     "${dawn_root}/include/dawn:headers",
     "${dawn_root}/src/dawn/partition_alloc:raw_ptr",
   ]
+
+  if (dawn_enable_perfetto) {
+    sources += [
+      "tracing/trace_categories.cc",
+      "tracing/trace_categories.h",
+    ]
+    public_deps += [ ":dawn_perfetto" ]
+  }
 }

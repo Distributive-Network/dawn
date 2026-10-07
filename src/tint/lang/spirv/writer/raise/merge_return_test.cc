@@ -919,8 +919,7 @@ $B1: {  # root
       }
     }
     store %1, 3i
-    %6:i32 = add 5i, 6i
-    ret %6
+    ret 11i
   }
 }
 )";
@@ -984,13 +983,12 @@ $B1: {  # root
     if %10 [t: $B11] {  # if_6
       $B11: {  # true
         store %1, 3i
-        %11:i32 = add 5i, 6i
-        store %return_value, %11
+        store %return_value, 11i
         exit_if  # if_6
       }
     }
-    %12:i32 = load %return_value
-    ret %12
+    %11:i32 = load %return_value
+    ret %11
   }
 }
 )";
@@ -1065,8 +1063,7 @@ $B1: {  # root
       }
     }
     store %1, 3i
-    %6:i32 = add 5i, 6i
-    ret %6
+    ret 11i
   }
 }
 )";
@@ -1126,13 +1123,12 @@ $B1: {  # root
     if %10 [t: $B11] {  # if_6
       $B11: {  # true
         store %1, 3i
-        %11:i32 = add 5i, 6i
-        store %return_value, %11
+        store %return_value, 11i
         exit_if  # if_6
       }
     }
-    %12:i32 = load %return_value
-    ret %12
+    %11:i32 = load %return_value
+    ret %11
   }
 }
 )";
@@ -1315,8 +1311,7 @@ TEST_F(SpirvWriter_MergeReturnTest, IfElse_Nested_ReturnOnlyInner_TrivialMerge) 
         exit_if  # if_1
       }
     }
-    %5:i32 = add 5i, 6i
-    ret %5
+    ret 11i
   }
 }
 )";
@@ -1357,13 +1352,12 @@ TEST_F(SpirvWriter_MergeReturnTest, IfElse_Nested_ReturnOnlyInner_TrivialMerge) 
     %7:bool = load %continue_execution
     if %7 [t: $B8] {  # if_4
       $B8: {  # true
-        %8:i32 = add 5i, 6i
-        store %return_value, %8
+        store %return_value, 11i
         exit_if  # if_4
       }
     }
-    %9:i32 = load %return_value
-    ret %9
+    %8:i32 = load %return_value
+    ret %8
   }
 }
 )";
@@ -1427,20 +1421,18 @@ $B1: {  # root
                 exit_if  # if_3
               }
             }
-            %8:i32 = add 42i, 1i
-            exit_if %8  # if_2
+            exit_if 43i  # if_2
           }
           $B6: {  # false
-            %9:i32 = add 43i, 2i
-            exit_if %9  # if_2
+            exit_if 45i  # if_2
           }
         }
-        %10:i32 = add %7, 1i
-        exit_if %10  # if_1
+        %8:i32 = add %7, 1i
+        exit_if %8  # if_1
       }
     }
-    %11:i32 = add %6, 1i
-    ret %11
+    %9:i32 = add %6, 1i
+    ret %9
   }
 }
 )";
@@ -1475,42 +1467,33 @@ $B1: {  # root
                 exit_if  # if_3
               }
             }
-            %10:bool = load %continue_execution
-            %11:i32 = if %10 [t: $B9] {  # if_4
-              $B9: {  # true
-                %12:i32 = add 42i, 1i
-                exit_if %12  # if_4
-              }
-              # implicit false block: exit_if undef
-            }
-            exit_if %11  # if_2
+            exit_if 43i  # if_2
           }
           $B6: {  # false
-            %13:i32 = add 43i, 2i
-            exit_if %13  # if_2
+            exit_if 45i  # if_2
           }
         }
-        %14:bool = load %continue_execution
-        %15:i32 = if %14 [t: $B10] {  # if_5
-          $B10: {  # true
-            %16:i32 = add %9, 1i
-            exit_if %16  # if_5
+        %10:bool = load %continue_execution
+        %11:i32 = if %10 [t: $B9] {  # if_4
+          $B9: {  # true
+            %12:i32 = add %9, 1i
+            exit_if %12  # if_4
           }
           # implicit false block: exit_if undef
         }
-        exit_if %15  # if_1
+        exit_if %11  # if_1
       }
     }
-    %17:bool = load %continue_execution
-    if %17 [t: $B11] {  # if_6
-      $B11: {  # true
-        %18:i32 = add %8, 1i
-        store %return_value, %18
-        exit_if  # if_6
+    %13:bool = load %continue_execution
+    if %13 [t: $B10] {  # if_5
+      $B10: {  # true
+        %14:i32 = add %8, 1i
+        store %return_value, %14
+        exit_if  # if_5
       }
     }
-    %19:i32 = load %return_value
-    ret %19
+    %15:i32 = load %return_value
+    ret %15
   }
 }
 )";
@@ -2277,7 +2260,7 @@ $B1: {  # root
     EXPECT_EQ(expect, str());
 }
 
-TEST_F(SpirvWriter_MergeReturnTest, DISABLED_Loop_WithBasicBlockArgumentsOnMerge) {
+TEST_F(SpirvWriter_MergeReturnTest, Loop_WithBasicBlockArgumentsOnMerge) {
     auto* global = b.Var(ty.ptr<private_, i32>());
     mod.root_block->Append(global);
 
@@ -2299,35 +2282,35 @@ TEST_F(SpirvWriter_MergeReturnTest, DISABLED_Loop_WithBasicBlockArgumentsOnMerge
 
         b.Append(loop->Continuing(), [&] {
             b.Store(global, 1_i);
-            b.BreakIf(loop, true, /* next_iter */ b.Values(4_i), /* exit */ Empty);
+            b.BreakIf(loop, true, /* next_iter */ Empty, /* exit */ b.Values(4_i));
         });
 
         b.Store(global, 3_i);
         b.Return(func, loop->Result());
     });
     auto* src = R"(
-%b1 = block {  # root
+$B1: {  # root
   %1:ptr<private, i32, read_write> = var undef
 }
 
-%foo = func(%3:bool):i32 -> %b2 {
-  %b2 = block {
-    %4:i32 = loop [b: %b3, c: %b4] {  # loop_1
-      %b3 = block {  # body
-        if %3 [t: %b5, f: %b6] {  # if_1
-          %b5 = block {  # true
+%foo = func(%3:bool):i32 {
+  $B2: {
+    %4:i32 = loop [b: $B3, c: $B4] {  # loop_1
+      $B3: {  # body
+        if %3 [t: $B5, f: $B6] {  # if_1
+          $B5: {  # true
             ret 42i
           }
-          %b6 = block {  # false
+          $B6: {  # false
             exit_if  # if_1
           }
         }
         store %1, 2i
-        continue %b4
+        continue  # -> $B4
       }
-      %b4 = block {  # continuing
+      $B4: {  # continuing
         store %1, 1i
-        break_if true %b3 4i
+        break_if true exit_loop: [ 4i ]  # -> [t: exit_loop loop_1, f: $B3]
       }
     }
     store %1, 3i
@@ -2338,50 +2321,51 @@ TEST_F(SpirvWriter_MergeReturnTest, DISABLED_Loop_WithBasicBlockArgumentsOnMerge
     EXPECT_EQ(src, str());
 
     auto* expect = R"(
-%b1 = block {  # root
+$B1: {  # root
   %1:ptr<private, i32, read_write> = var undef
 }
 
-%foo = func(%3:bool):i32 -> %b2 {
-  %b2 = block {
+%foo = func(%3:bool):i32 {
+  $B2: {
     %return_value:ptr<function, i32, read_write> = var undef
     %continue_execution:ptr<function, bool, read_write> = var true
-    %6:i32 = loop [b: %b3, c: %b4] {  # loop_1
-      %b3 = block {  # body
-        if %3 [t: %b5, f: %b6] {  # if_1
-          %b5 = block {  # true
+    %6:i32 = loop [b: $B3, c: $B4] {  # loop_1
+      $B3: {  # body
+        if %3 [t: $B5, f: $B6] {  # if_1
+          $B5: {  # true
             store %continue_execution, false
             store %return_value, 42i
             exit_if  # if_1
           }
-          %b6 = block {  # false
+          $B6: {  # false
             exit_if  # if_1
           }
         }
         %7:bool = load %continue_execution
-        if %7 [t: %b7] {  # if_2
-          %b7 = block {  # true
-            store %1, 2i
-            continue %b4
+        %8:bool = not %7
+        if %8 [t: $B7] {  # if_2
+          $B7: {  # true
+            exit_loop undef  # loop_1
           }
         }
-        exit_loop  # loop_1
+        store %1, 2i
+        continue  # -> $B4
       }
-      %b4 = block {  # continuing
+      $B4: {  # continuing
         store %1, 1i
-        break_if true %b3 4i
+        break_if true exit_loop: [ 4i ]  # -> [t: exit_loop loop_1, f: $B3]
       }
     }
-    %8:bool = load %continue_execution
-    if %8 [t: %b8] {  # if_3
-      %b8 = block {  # true
+    %9:bool = load %continue_execution
+    if %9 [t: $B8] {  # if_3
+      $B8: {  # true
         store %1, 3i
         store %return_value, %6
         exit_if  # if_3
       }
     }
-    %9:i32 = load %return_value
-    ret %9
+    %10:i32 = load %return_value
+    ret %10
   }
 }
 )";

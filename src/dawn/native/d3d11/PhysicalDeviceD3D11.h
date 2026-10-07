@@ -28,10 +28,9 @@
 #ifndef SRC_DAWN_NATIVE_D3D11_PHYSICALDEVICED3D11_H_
 #define SRC_DAWN_NATIVE_D3D11_PHYSICALDEVICED3D11_H_
 
-#include "dawn/native/d3d/PhysicalDeviceD3D.h"
-
-#include "dawn/native/d3d/d3d_platform.h"
-#include "dawn/native/d3d11/DeviceInfoD3D11.h"
+#include "src/dawn/native/d3d/PhysicalDeviceD3D.h"
+#include "src/dawn/native/d3d/d3d_platform.h"
+#include "src/dawn/native/d3d11/DeviceInfoD3D11.h"
 
 namespace dawn::native::d3d11 {
 
@@ -85,9 +84,9 @@ class PhysicalDevice : public d3d::PhysicalDevice {
 
     const bool mIsSharedD3D11Device;
     ComPtr<ID3D11Device> mD3D11Device;
-    D3D_FEATURE_LEVEL mFeatureLevel;
+    D3D_FEATURE_LEVEL mFeatureLevel = D3D_FEATURE_LEVEL_1_0_GENERIC;
     DeviceInfo mDeviceInfo = {};
-    uint32_t mUAVSlotCount;
+    uint32_t mUAVSlotCount = 0;
 };
 
 }  // namespace dawn::native::d3d11

@@ -30,13 +30,74 @@
 
 #include <unordered_set>
 
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/Features.h"
-#include "dawn/native/Serializable.h"
-#include "dawn/native/dawn_platform.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/Features.h"
+#include "src/dawn/native/Serializable.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace dawn::native {
+namespace detail {
+
+enum class LimitClass {
+    Alignment,
+    Maximum,
+};
+
+template <LimitClass C>
+struct CheckLimit;
+
+template <>
+struct CheckLimit<LimitClass::Alignment> {
+    template <typename T>
+    static bool IsBetter(T lhs, T rhs) {
+        return lhs < rhs;
+    }
+
+    template <typename T>
+    static MaybeValError Validate(T supported, T required) {
+        DAWN_INVALID_IF(IsBetter(required, supported),
+                        "Required limit (%u) is lower than the supported limit (%u).", required,
+                        supported);
+        DAWN_INVALID_IF(!IsPowerOfTwo(required), "Required limit (%u) is not a power of two.",
+                        required);
+        return {};
+    }
+};
+
+template <>
+struct CheckLimit<LimitClass::Maximum> {
+    template <typename T>
+    static bool IsBetter(T lhs, T rhs) {
+        return lhs > rhs;
+    }
+
+    template <typename T>
+    static MaybeValError Validate(T supported, T required) {
+        DAWN_INVALID_IF(IsBetter(required, supported),
+                        "Required limit (%u) is greater than the supported limit (%u).", required,
+                        supported);
+        return {};
+    }
+};
+
+template <typename T>
+bool IsLimitUndefined(T value) {
+    static_assert(sizeof(T) != sizeof(T), "IsLimitUndefined not implemented for this type");
+    return false;
+}
+
+template <>
+inline bool IsLimitUndefined<uint32_t>(uint32_t value) {
+    return value == wgpu::kLimitU32Undefined;
+}
+
+template <>
+inline bool IsLimitUndefined<uint64_t>(uint64_t value) {
+    return value == wgpu::kLimitU64Undefined;
+}
+
+}  // namespace detail
 
 // TODO(crbug.com/421950205): Replace this with dawn::utils::ComboLimits.
 struct CombinedLimits {
@@ -44,7 +105,6 @@ struct CombinedLimits {
     CompatibilityModeLimits compat;
     DawnHostMappedPointerLimits hostMappedPointerLimits;
     DawnTexelCopyBufferRowAlignmentLimits texelCopyBufferRowAlignmentLimits;
-    ResourceTableLimits resourceTableLimits;
 };
 
 // Populate |limits| with the default limits.
@@ -59,13 +119,14 @@ CombinedLimits ReifyDefaultLimits(const CombinedLimits& limits, wgpu::FeatureLev
 void EnforceLimitSpecInvariants(CombinedLimits* limits, wgpu::FeatureLevel featureLevel);
 
 // Validate that |requiredLimits| are no better than |supportedLimits|.
-MaybeError ValidateLimits(const CombinedLimits& supportedLimits,
-                          const CombinedLimits& requiredLimits);
+MaybeValError ValidateLimits(const CombinedLimits& supportedLimits,
+                             const CombinedLimits& requiredLimits);
 
 // Validtate that the |chainedLimits| are valid and unpack them into |out|.
-MaybeError ValidateAndUnpackLimitsIn(const Limits* chainedLimits,
-                                     const std::unordered_set<wgpu::FeatureName>& supportedFeatures,
-                                     CombinedLimits* out);
+MaybeValError ValidateAndUnpackLimitsIn(
+    const Limits* chainedLimits,
+    const std::unordered_set<wgpu::FeatureName>& supportedFeatures,
+    CombinedLimits* out);
 
 // Unpack |chainedLimits| into |out|.
 void UnpackLimitsIn(const Limits* chainedLimits, CombinedLimits* out);

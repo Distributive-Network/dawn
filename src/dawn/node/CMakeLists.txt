@@ -208,6 +208,41 @@ else()
     target_compile_definitions(dawn_node PRIVATE "NAPI_SYMBOL_WEAK_DECL_ONLY")
     if (APPLE)
         target_link_options(dawn_node PRIVATE "-Wl,-undefined,dynamic_lookup")
+        # dawn.node and libnode both export the same weak Abseil symbols, and
+        # dyld binds them to whichever image loads first. If dawn.node loads
+        # first, V8's worker threads wait on Dawn's copy and are never woken,
+        # so background compiles and WebAssembly.compile never complete.
+        # Export only the Node-API module entry points so that dawn.node
+        # never takes part in weak symbol coalescing.
+        # (-exported_symbol is ld64-only, so this must stay APPLE-only.)
+        target_link_options(dawn_node PRIVATE
+            # Initialize(Napi::Env, Napi::Object) is a C++ function (mangled),
+            # marked with NAPI_MODULE_EXPORT and used directly by dcp-native.
+            "-Wl,-exported_symbol,__Z10InitializeN4Napi3EnvENS_6ObjectE"
+            "-Wl,-exported_symbol,_napi_register_module_v1"
+            "-Wl,-exported_symbol,_node_api_module_get_api_version_v1"
+        )
+    else()
+        # ELF equivalent: a linker version script that exports only the
+        # Node-API module entry points and makes everything else local.
+        # Undefined (weak) napi_* references are unaffected.
+        set(DAWN_NODE_VERSION_SCRIPT "${DAWN_NODE_GEN_DIR}/dawn_node.version")
+        file(GENERATE OUTPUT "${DAWN_NODE_VERSION_SCRIPT}" CONTENT "{
+            global:
+                extern \"C++\" {
+                    \"Initialize(Napi::Env, Napi::Object)\";
+                };
+                napi_register_module_v1;
+                node_api_module_get_api_version_v1;
+            local:
+                *;
+            };
+        ")
+        target_link_options(dawn_node PRIVATE
+            "-Wl,--version-script=${DAWN_NODE_VERSION_SCRIPT}"
+        )
+        set_property(TARGET dawn_node APPEND PROPERTY
+            LINK_DEPENDS "${DAWN_NODE_VERSION_SCRIPT}")
     endif()
 endif()
 

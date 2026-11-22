@@ -34,14 +34,20 @@
 namespace dawn::native {
 
 class CommandAllocator;
-class DeviceBase;
 
 // Determines whether a buffer<->texture copy needs to be split for oversized rows. This happens
-// if the SplitBufferTextureCopyForOversizedRow toggle is enabled and `bufferCopy`'s bytes per row
-// or texels per row overflows the limited-width hardware register field used to store it,
-// respectively. See https://crbug.com/481934465.
-bool NeedsBufferTextureCopySplitForOversizedRow(const DeviceBase* device,
-                                                const BufferCopy& bufferCopy,
+// when `bufferCopy`'s bytes per row, texels per row, or multi-slice bytes per image overflows the
+// limited-width hardware register field or 32-bit driver stride calculation used across multiple
+// GPU vendors. See crbug.com/481934465, crbug.com/569161611, crbug.com/529867799,
+// crbug.com/380487895, crbug.com/583083283, and crbug.com/584005138.
+bool NeedsBufferTextureCopySplitForOversizedRow(const BufferCopy& bufferCopy,
+                                                const BlockExtent3D& copySize,
+                                                const TypedTexelBlockInfo& blockInfo);
+
+// Same threshold check for a `TexelCopyBufferLayout` where `bytesPerRow` is not required to be a
+// multiple of `blockInfo.byteSize` (e.g. `Queue::WriteTexture`).
+bool NeedsBufferTextureCopySplitForOversizedRow(const TexelCopyBufferLayout& layout,
+                                                const BlockExtent3D& copySize,
                                                 const TypedTexelBlockInfo& blockInfo);
 
 // Applies the oversized-row-pitch workaround to a texture-to-buffer copy: splits

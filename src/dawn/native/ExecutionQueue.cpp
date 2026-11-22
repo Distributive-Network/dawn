@@ -158,7 +158,7 @@ MaybeError ExecutionQueueBase::WaitForQueueSerial(ExecutionSerial waitSerial, Na
     }
 }
 
-MaybeError ExecutionQueueBase::WaitForIdleForDestruction() {
+void ExecutionQueueBase::WaitForIdleForDestruction() {
     // Currently waiting for idle for destruction requires the device lock to be held.
     DAWN_ASSERT(GetDevice()->IsLockedByCurrentThreadIfNeeded());
     mState.Use<NotifyType::None>([](auto state) {
@@ -204,12 +204,11 @@ MaybeError ExecutionQueueBase::WaitForIdleForDestruction() {
 
     // Call the callbacks without holding the lock on the ExecutionQueue to avoid lock-inversion
     // issues when dealing with potential re-entrant callbacks.
-    for (auto task : tasks) {
+    for (const auto& task : tasks) {
         task();
     }
 
     mState->mCallingCallbacks = false;
-    return {};
 }
 
 MaybeError ExecutionQueueBase::CheckPassedSerials() {
@@ -327,7 +326,7 @@ void ExecutionQueueBase::UpdateCompletedSerialToInternal(QueuePriority priority,
 
     // Call the callbacks without holding the lock on the ExecutionQueue to avoid lock-inversion
     // issues when dealing with potential re-entrant callbacks.
-    for (auto task : tasks) {
+    for (const auto& task : tasks) {
         task();
     }
 

@@ -268,13 +268,12 @@ MaybeValError ValidateSurfaceConfiguration(DeviceBase* device,
 class AdapterSurfaceCapCache {
   public:
     template <typename F>
-    MaybeError WithAdapterCapabilities(AdapterBase* adapter, const Surface* surface, F f) {
+    MaybeUnknownError WithAdapterCapabilities(AdapterBase* adapter, const Surface* surface, F f) {
         if (mCachedCapabilitiesAdapter.Promote().Get() != adapter) {
             const PhysicalDeviceBase* physicalDevice = adapter->GetPhysicalDevice();
             // TODO(536639352): This will probably require special attention as we split the error
             // types apart. Figure out if this should be Internal or Validation, or Unknown.
-            DAWN_TRY_ASSIGN(mCachedCapabilities, physicalDevice->GetSurfaceCapabilities(
-                                                     adapter->GetInstance(), surface));
+            DAWN_TRY_ASSIGN(mCachedCapabilities, physicalDevice->GetSurfaceCapabilities(surface));
             mCachedCapabilitiesAdapter = GetWeakRef(adapter);
         }
         DAWN_TRY(f(mCachedCapabilities));
@@ -466,7 +465,7 @@ uint64_t Surface::GetXWindow() const {
     return mXWindow;
 }
 
-MaybeError Surface::Configure(const SurfaceConfiguration* configIn) {
+MaybeUnknownError Surface::Configure(const SurfaceConfiguration* configIn) {
     SurfaceConfiguration config = WithTrivialFrontendDefaults(*configIn);
     DAWN_CHECK(config.device);
     // Configured-or-not is specified as a client-side state, so it must be
@@ -557,8 +556,8 @@ MaybeValError Surface::Unconfigure() {
     return {};
 }
 
-MaybeValError Surface::GetCapabilities(AdapterBase* adapter,
-                                       SurfaceCapabilities* capabilities) const {
+MaybeUnknownError Surface::GetCapabilities(AdapterBase* adapter,
+                                           SurfaceCapabilities* capabilities) const {
     DAWN_INVALID_IF(IsError(), "%s is invalid.", this);
 
     DAWN_TRY(mCapabilityCache->WithAdapterCapabilities(
@@ -576,9 +575,9 @@ MaybeValError Surface::GetCapabilities(AdapterBase* adapter,
 }
 
 void APISurfaceCapabilitiesFreeMembers(WGPUSurfaceCapabilities capabilities) {
-    delete[] capabilities.formats;
-    delete[] capabilities.presentModes;
-    delete[] capabilities.alphaModes;
+    DeleteAllocationFromHeapArray(capabilities.formats);
+    DeleteAllocationFromHeapArray(capabilities.presentModes);
+    DeleteAllocationFromHeapArray(capabilities.alphaModes);
 }
 
 MaybeError Surface::GetCurrentTexture(SurfaceTexture* surfaceTexture) const {
@@ -609,7 +608,7 @@ const std::string& Surface::GetLabel() const {
 }
 
 void Surface::APIConfigure(const SurfaceConfiguration* config) {
-    MaybeError maybeError = Configure(config);
+    MaybeUnknownError maybeError = Configure(config);
     if (!GetCurrentDevice()) {
         std::ignore = mInstance->ConsumedError(std::move(maybeError));
     } else {
@@ -620,7 +619,7 @@ void Surface::APIConfigure(const SurfaceConfiguration* config) {
 
 wgpu::Status Surface::APIGetCapabilities(AdapterBase* adapter,
                                          SurfaceCapabilities* capabilities) const {
-    MaybeValError maybeError = GetCapabilities(adapter, capabilities);
+    MaybeUnknownError maybeError = GetCapabilities(adapter, capabilities);
     if (!GetCurrentDevice()) {
         return mInstance->ConsumedError(std::move(maybeError)) ? wgpu::Status::Error
                                                                : wgpu::Status::Success;
@@ -646,12 +645,11 @@ wgpu::Status Surface::APIPresent() {
     // Validation that the surface is configured. Note this is synchronous
     // validation so it can't be skipped even if the surface is an error.
     if (!GetCurrentDevice()) {
-        mInstance->ConsumeError(
-            DAWN_VALIDATION_ERROR("%s is in the unconfigured state.", this).AsVal());
+        mInstance->ConsumeError(DAWN_VALIDATION_ERROR("%s is in the unconfigured state.", this));
         return wgpu::Status::Error;
     }
 
-    std::ignore = GetCurrentDevice()->ConsumedError([&]() -> MaybeValError {
+    std::ignore = GetCurrentDevice()->ConsumedError([&]() -> MaybeUnknownError {
         DAWN_INVALID_IF(IsError(), "%s is invalid.", this);
         DAWN_INVALID_IF(!mSwapChain.Get(), "%s is not successfully configured.", this);
         {

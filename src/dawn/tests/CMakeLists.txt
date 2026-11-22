@@ -97,7 +97,6 @@ set(end2end_sources
     "end2end/AdapterEnumerationTests.cpp"
     "end2end/AdapterFormatCapabilitiesVkTests.cpp"
     "end2end/AdapterPropertiesD3DTests.cpp"
-    "end2end/AdapterPropertiesVkTests.cpp"
     "end2end/AdapterPropertiesDrmTests.cpp"
     "end2end/ArchTierLimitsExhaustive.cpp"
     "end2end/BasicTests.cpp"
@@ -206,6 +205,7 @@ set(end2end_sources
     "end2end/SupportedFeatureArch.cpp"
     "end2end/TexelBufferTests.cpp"
     "end2end/Texture3DTests.cpp"
+    "end2end/TextureAllocationTests.cpp"
     "end2end/TextureComponentSwizzleTests.cpp"
     "end2end/TextureCorruptionTests.cpp"
     "end2end/TextureFormatTests.cpp"
@@ -294,6 +294,7 @@ endif()
 if (DAWN_ENABLE_VULKAN)
     list(APPEND end2end_sources
         "end2end/AllocatorMemoryInstrumentationTests.cpp"
+        "end2end/AdapterPropertiesVkTests.cpp"
     )
 endif()
 
@@ -378,6 +379,7 @@ endif()
 if (DAWN_ENABLE_D3D12)
     list(APPEND whitebox_sources
         "white_box/D3D12DescriptorHeapTests.cpp"
+        "white_box/D3D12IndirectDrawBatchingTests.cpp"
         "white_box/D3D12ResidencyTests.cpp"
         "white_box/D3D12ResourceHeapTests.cpp"
         "white_box/GPUTimestampCalibrationTests.cpp"
@@ -403,8 +405,11 @@ if (DAWN_ENABLE_OPENGLES)
     list(APPEND whitebox_sources
         "white_box/EGLImageWrappingTests.cpp"
         "white_box/GLBufferTests.cpp"
+        "white_box/GLDeferredWorkTests.cpp"
         "white_box/GLFramebufferCompletenessTests.cpp"
+        "white_box/GLGraphicsResetTests.cpp"
         "white_box/GLTextureWrappingTests.cpp"
+        "white_box/GLUncheckedErrorTests.cpp"
     )
 endif()
 
@@ -722,6 +727,12 @@ if (DAWN_ENABLE_D3D12)
     list(APPEND unittest_sources
         "unittests/d3d12/CopySplitTests.cpp"
     )
+    if (DAWN_USE_AGILITY_SDK)
+        list(APPEND unittest_sources
+            "unittests/d3d12/SubgroupMatrixConfigTests.cpp"
+        )
+        list(APPEND unittest_conditional_private_depends agility-sdk)
+    endif()
 endif()
 
 if (DAWN_ENABLE_WEBGPU_ON_WEBGPU)

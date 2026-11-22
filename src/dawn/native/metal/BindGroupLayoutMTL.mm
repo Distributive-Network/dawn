@@ -31,9 +31,11 @@
 
 #include "src/dawn/common/MatchVariant.h"
 #include "src/dawn/native/Device.h"
+#include "src/dawn/native/TintUtils.h"
 #include "src/dawn/native/metal/BindGroupMTL.h"
 #include "src/dawn/native/metal/DeviceMTL.h"
 #include "src/dawn/native/metal/UtilsMetal.h"
+#include "tint/tint.h"
 
 namespace dawn::native::metal {
 
@@ -77,18 +79,25 @@ BindGroupLayout::BindGroupLayout(DeviceBase* device,
                     // Metal backend.
                     DAWN_UNREACHABLE();
                 },
-                [&](const TextureBindingInfo&) { desc.dataType = MTLDataTypeTexture; },
-                [&](const StorageTextureBindingInfo&) { desc.dataType = MTLDataTypeTexture; },
+                [&](const TextureBindingInfo& layout) {
+                    desc.dataType = MTLDataTypeTexture;
+                    desc.textureType =
+                        MetalTextureViewType(layout.viewDimension, layout.multisampled);
+                },
+                [&](const StorageTextureBindingInfo& layout) {
+                    desc.dataType = MTLDataTypeTexture;
+                    desc.textureType = MetalTextureViewType(layout.viewDimension, false);
+                },
                 [&](const TexelBufferBindingInfo&) { DAWN_UNREACHABLE(); },
-                [](const InputAttachmentBindingInfo&) { DAWN_UNREACHABLE(); },
-                [](const ExternalTextureBindingInfo&) { DAWN_UNREACHABLE(); });
+                [&](const InputAttachmentBindingInfo&) { DAWN_UNREACHABLE(); },
+                [&](const ExternalTextureBindingInfo&) { DAWN_UNREACHABLE(); });
 
             descriptors.push_back(desc);
         }
 
         if (!descriptors.empty()) {
             NSArray* ary = [NSArray arrayWithObjects:descriptors.data() count:descriptors.size()];
-            mArgumentEncoder = AcquireNSPRef(
+            mArgumentEncoder->Acquire(
                 [ToBackend(device)->GetMTLDevice() newArgumentEncoderWithArguments:ary]);
         }
     }
@@ -110,8 +119,28 @@ void BindGroupLayout::ReduceMemoryUsage() {
     mBindGroupAllocator->DeleteEmptySlabs();
 }
 
-NSPRef<id<MTLArgumentEncoder>> BindGroupLayout::GetArgumentEncoder() const {
+MutexProtected<NSPRef<id<MTLArgumentEncoder>>>& BindGroupLayout::GetArgumentEncoder() {
     return mArgumentEncoder;
+}
+
+void BindGroupLayout::FillTintArgumentBufferInfo(
+    tint::msl::writer::ArgumentBufferInfo& info) const {
+    uint32_t curDynamicOffset = 0;
+
+    for (BindingIndex bindingIndex : Range(GetBindingCount())) {
+        const BindingInfo& bindingInfo = GetBindingInfo(bindingIndex);
+
+        if (const auto* binding = std::get_if<BufferBindingInfo>(&bindingInfo.bindingLayout)) {
+            if (binding->hasDynamicOffset) {
+                info.binding_info_to_offset_index.insert(
+                    {uint32_t(bindingIndex), curDynamicOffset++});
+            }
+        }
+        info.struct_members.push_back({
+            .id = uint32_t(bindingIndex),
+            .placeholder_type = dawn::native::BindingLayoutToResourceType(GetDevice(), bindingInfo),
+        });
+    }
 }
 
 }  // namespace dawn::native::metal

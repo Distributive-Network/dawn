@@ -328,7 +328,7 @@ ShaderModule::ShaderModule(Device* device,
                            std::vector<tint::wgsl::Extension> internalExtensions)
     : ShaderModuleBase(device, descriptor, std::move(internalExtensions)) {}
 
-ResultOrValError<std::string> ShaderModule::CompileShader(
+ResultOrUnknownError<std::string> ShaderModule::CompileShader(
     const OpenGLFunctions& gl,
     const ProgrammableStage& programmableStage,
     SingleShaderStage stage,
@@ -417,6 +417,11 @@ ResultOrValError<std::string> ShaderModule::CompileShader(
     req.tintOptions.disable_workgroup_init =
         GetDevice()->IsToggleEnabled(Toggle::DisableWorkgroupInit);
 
+    req.tintOptions.workarounds.hoist_constant_array_initializers =
+        GetDevice()->IsToggleEnabled(Toggle::GLHoistConstantArrayInitializers);
+    req.tintOptions.workarounds.polyfill_pack_unpack_4x8_norm =
+        GetDevice()->IsToggleEnabled(Toggle::PolyfillPackUnpack4x8Norm);
+
     // If the size or alignment of the vertex and fragment stage immediate variables differ (e.g.,
     // the vertex shader immediates contain a vec4 and the fragment shader do not), the generated
     // structs may have differing alignment or size, and GLSL will give an error at link time. Count
@@ -475,7 +480,7 @@ ResultOrValError<std::string> ShaderModule::CompileShader(
     CacheResult<GLSLCompilation> compilationResult;
     DAWN_TRY_LOAD_OR_RUN(
         compilationResult, GetDevice(), std::move(req), GLSLCompilation::FromValidatedBlob,
-        [](GLSLCompilationRequest r) -> ResultOrError<GLSLCompilation> {
+        [](GLSLCompilationRequest r) -> ResultOrUnknownError<GLSLCompilation> {
             // Requires Tint Program here right before actual using.
             auto shaderModule = r.inputProgram.UnsafeGetValue();
             auto inputProgram = shaderModule->GetTintProgram();

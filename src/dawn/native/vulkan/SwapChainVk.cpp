@@ -319,7 +319,7 @@ ResultOrError<SwapChain::Config> SwapChain::ChooseConfig(
         }
     }
     if (!formatIsSupported) {
-        return DAWN_UNRECOVERABLE_ERROR(absl::StrFormat(
+        return DAWN_MAKE_UNRECOVERABLE_ERROR(absl::StrFormat(
             "Vulkan SwapChain must support %s with sRGB colorspace.", config.wgpuFormat));
     }
 
@@ -630,9 +630,9 @@ void SwapChain::DetachFromSurfaceImpl() {
     }
 }
 
-ResultOrError<VkSurfaceKHR> CreateVulkanSurface(InstanceBase* instance,
-                                                const PhysicalDevice* physicalDevice,
-                                                const Surface* surface) {
+ResultOrUnknownError<VkSurfaceKHR> CreateVulkanSurface(InstanceBase* instance,
+                                                       const PhysicalDevice* physicalDevice,
+                                                       const Surface* surface) {
     // May not be used in the platform-specific switches below.
     [[maybe_unused]] const VulkanGlobalInfo& info =
         physicalDevice->GetVulkanInstance()->GetGlobalInfo();

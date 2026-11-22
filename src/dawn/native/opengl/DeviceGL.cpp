@@ -298,7 +298,7 @@ ResultOrError<Ref<TextureViewBase>> Device::CreateTextureViewImpl(
     return TextureView::Create(texture, descriptor);
 }
 
-ResultOrError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImpl(
+ResultOrUnknownError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImpl(
     UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) {
     wgpu::SType type;
     DAWN_TRY_ASSIGN(
@@ -317,7 +317,7 @@ ResultOrError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImp
     }
 }
 
-ResultOrError<Ref<SharedFenceBase>> Device::ImportSharedFenceImpl(
+ResultOrUnknownError<Ref<SharedFenceBase>> Device::ImportSharedFenceImpl(
     UnpackedPtr<SharedFenceDescriptor> unpacked) {
     wgpu::SType type;
     DAWN_TRY_ASSIGN(type, (unpacked.ValidateBranches<Branch<SharedFenceSyncFDDescriptor>,
@@ -367,7 +367,7 @@ Ref<TextureBase> Device::CreateTextureWrappingEGLImage(const ExternalImageDescri
     return result;
 }
 
-ResultOrError<Ref<TextureBase>> Device::CreateTextureWrappingEGLImageImpl(
+ResultOrUnknownError<Ref<TextureBase>> Device::CreateTextureWrappingEGLImageImpl(
     const ExternalImageDescriptor* descriptor,
     ::EGLImage image) {
     // TODO(451928481): We cannot defer the GL work here because the external texture may be
@@ -429,7 +429,7 @@ Ref<TextureBase> Device::CreateTextureWrappingGLTexture(const ExternalImageDescr
     return result;
 }
 
-ResultOrError<Ref<TextureBase>> Device::CreateTextureWrappingGLTextureImpl(
+ResultOrUnknownError<Ref<TextureBase>> Device::CreateTextureWrappingGLTextureImpl(
     const ExternalImageDescriptor* descriptor,
     GLuint texture) {
     // TODO(451928481): We cannot defer the GL work here because the external texture may be
@@ -507,8 +507,37 @@ MaybeError Device::CopyFromStagingToTextureImpl(BufferBase* source,
                                                 const TexelCopyBufferLayout& src,
                                                 const TextureCopy& dst,
                                                 const Extent3D& copySizePixels) {
-    // If implemented, be sure to call SynchronizeTextureBeforeUse on the destination texture.
-    return DAWN_UNIMPLEMENTED_ERROR("Device unable to copy from staging buffer to texture.");
+    // TODO(crbug.com/586941722): Make Unmap/UseInternal happen automatically.
+    DAWN_TRY(source->Unmap());
+    auto scopedUseBuffer = source->UseInternal();
+    ToBackend(source)->TrackUsage();
+
+    Texture* texture = ToBackend(dst.texture.Get());
+    DAWN_TRY(texture->SynchronizeTextureBeforeUse());
+
+    SubresourceRange range = GetSubresourcesAffectedByCopy(dst, copySizePixels);
+    bool ensureInitialized = false;
+    if (IsCompleteSubresourceCopiedTo(texture, copySizePixels, dst.mipLevel, dst.aspect)) {
+        texture->SetIsSubresourceContentInitialized(true, range);
+    } else {
+        ensureInitialized = true;
+    }
+
+    return EnqueueGL([ensureInitialized, buffer = Ref<Buffer>(ToBackend(source)),
+                      texture = Ref<Texture>(texture), range, dst, src,
+                      copySizePixels](const OpenGLFunctions& gl) -> MaybeError {
+        if (ensureInitialized) {
+            DAWN_TRY(texture->EnsureSubresourceContentInitialized(gl, range));
+        }
+        DAWN_GL_TRY(gl, BindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer->GetHandle()));
+        TexelCopyBufferLayout dataLayout = src;
+        dataLayout.offset = 0;
+        DAWN_TRY(DoTexSubImage(gl, dst,
+                               reinterpret_cast<const void*>(static_cast<uintptr_t>(src.offset)),
+                               dataLayout, copySizePixels));
+        DAWN_GL_TRY(gl, BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0));
+        return {};
+    });
 }
 
 void Device::DestroyImpl(DestroyReason reason) {

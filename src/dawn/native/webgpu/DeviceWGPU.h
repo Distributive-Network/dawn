@@ -56,6 +56,7 @@ class Device final : public DeviceBase, public ObjectWGPU<WGPUDevice> {
 
     uint32_t GetOptimalBytesPerRowAlignment() const override;
     uint64_t GetOptimalBufferToTextureCopyOffsetAlignment() const override;
+    bool SupportsPersistentlyMappedStagingBuffer() const override { return false; }
 
     bool CanResolveSubRect() const override;
 
@@ -93,7 +94,7 @@ class Device final : public DeviceBase, public ObjectWGPU<WGPUDevice> {
         const UnpackedPtr<BindGroupLayoutDescriptor>& descriptor) override;
     ResultOrError<Ref<BufferBase>> CreateBufferImpl(
         const UnpackedPtr<BufferDescriptor>& descriptor) override;
-    ResultOrError<Ref<ExternalTextureBase>> CreateExternalTextureImpl(
+    ResultOrUnknownError<Ref<ExternalTextureBase>> CreateExternalTextureImpl(
         const ExternalTextureDescriptor* descriptor) override;
     ResultOrError<Ref<CommandBufferBase>> CreateCommandBuffer(
         CommandEncoder* encoder,
@@ -124,9 +125,10 @@ class Device final : public DeviceBase, public ObjectWGPU<WGPUDevice> {
     ResultOrError<Ref<TextureViewBase>> CreateTextureViewImpl(
         TextureBase* texture,
         const UnpackedPtr<TextureViewDescriptor>& descriptor) override;
-    ResultOrError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
+
+    ResultOrUnknownError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
         UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) override;
-    ResultOrError<Ref<SharedFenceBase>> ImportSharedFenceImpl(
+    ResultOrUnknownError<Ref<SharedFenceBase>> ImportSharedFenceImpl(
         UnpackedPtr<SharedFenceDescriptor> unpacked) override;
 
     MaybeError TickImpl() override;

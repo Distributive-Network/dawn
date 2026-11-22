@@ -323,11 +323,7 @@ deps = {
 
   # Required for fuzzing Mesa via tint fuzzers
   'third_party/mesa/src': {
-    'url': '{chromium_git}/external/gitlab.freedesktop.org/mesa/mesa/@2e683eb7385c54f872acc47b371210d2282bc103',
-    'condition': 'checkout_mesa and host_os == "linux"',
-  },
-  'third_party/meson/src': {
-    'url': '{chromium_git}/external/github.com/mesonbuild/meson@d389906a136c2aac9820ded0f38d1e25ef25fb9a',
+    'url': '{chromium_git}/external/gitlab.freedesktop.org/mesa/mesa/@f950de848de8bbb4a626ee62ff444e0d87cc911c',
     'condition': 'checkout_mesa and host_os == "linux"',
   },
   'third_party/llvm-dev': {
@@ -368,57 +364,57 @@ deps = {
   },
 
   'third_party/angle': {
-    'url': '{chromium_git}/angle/angle@756d31051f12e93630ae51fd5e0d03deb6958739',
+    'url': '{chromium_git}/angle/angle@eda7b547d9a9c923170f4c6df91aa220cee04341',
     'condition': 'dawn_standalone',
   },
 
   'third_party/swiftshader': {
-    'url': '{swiftshader_git}/SwiftShader@1e80438d2b93ef36a7c05f8d2b81233bac0e3d16',
+    'url': '{swiftshader_git}/SwiftShader@cddb5c91b23ff70a1f607ea31610aa0d7f4b5ad5',
     'condition': 'dawn_standalone',
   },
 
   'third_party/vulkan-deps': {
-    'url': '{chromium_git}/vulkan-deps@1b7ced3670c353fccae704082005ebf7599bcd05',
+    'url': '{chromium_git}/vulkan-deps@7724413aefba6584252b50f55cde74cd5de75bdd',
     'condition': 'dawn_standalone',
   },
 
   'third_party/glslang/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/glslang@c8095022ee39c7482071bc3177f93f4bca42a6d9',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/glslang@ed883c736e0d5633242218c534264b7eea28b27e',
     'condition': 'dawn_standalone',
   },
 
   'third_party/spirv-headers/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/SPIRV-Headers@cb42dec3830d3ac67fa449ecdc0c0f73d5e74498',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/SPIRV-Headers@fbf86836a9b1966586faf7be7bb8a6440e156d62',
     'condition': 'dawn_standalone',
   },
 
   'third_party/spirv-tools/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/SPIRV-Tools@4f3a92dfbd5b49593e43b3c245b6688da2ad933a',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/SPIRV-Tools@066042ec3a9af3094c794bbbbd3600689fe7ff29',
     'condition': 'dawn_standalone',
   },
 
   'third_party/vulkan-headers/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Headers@c46850864f4661461b0f6cb9922c058ffea4915e',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Headers@73814d006638aa00bd553215b054f0f02e457e22',
     'condition': 'dawn_standalone',
   },
 
   'third_party/vulkan-loader/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Loader@f866657ff687a36d767cd7783bab800e31ebafaa',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Loader@3172c4859f613576c1811b9e7a25d61230ecaeaa',
     'condition': 'dawn_standalone',
   },
 
   'third_party/vulkan-tools/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Tools@f13d435dd50dc616db0c10e7bac87cd3aa7c82e3',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Tools@c38e7c390892e06fe4c84f0c19fb891c79f885d9',
     'condition': 'dawn_standalone',
   },
 
   'third_party/vulkan-utility-libraries/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Utility-Libraries@68b0ae52a6cc8de7df3af7b549e9a2efa7c78d8a',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Utility-Libraries@205badc9cf9ca28000fcea4b0addd50d75655c8c',
     'condition': 'dawn_standalone',
   },
 
   'third_party/vulkan-validation-layers/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-ValidationLayers@394ccee0f6d2d202d0755a85b8a111c6a97511ef',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-ValidationLayers@8fa483ff4e2706601f4b1a1f5a4666b42673ba85',
     'condition': 'dawn_standalone',
   },
 
@@ -432,9 +428,8 @@ deps = {
     'condition': 'dawn_standalone',
   },
 
-  # TODO(crbug.com/566128737): Temporarily pin to preview LinAlg version
   'third_party/directx-shader-compiler/src': {
-    'url': '{chromium_git}/external/github.com/microsoft/DirectXShaderCompiler@9757d44faa47de7e8d1bb731c30551ec608624f9',
+    'url': '{chromium_git}/external/github.com/microsoft/DirectXShaderCompiler@bf8ff84fe4c543d993d7ae95d1c0e387ce305ae7',
   },
 
   'third_party/directx-headers/src': {
@@ -466,16 +461,16 @@ deps = {
   },
 
   'third_party/OpenGL-Registry/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/OpenGL-Registry@1cdd228e34966dd6b95bd203e9f84faba0f371a1',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/OpenGL-Registry@6af574a14089ccfee87efe230ebcdd8742859813',
   },
 
   'third_party/EGL-Registry/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/EGL-Registry@db3425b8246136faccb5e2782b5694960bd6edf1',
+    'url': '{chromium_git}/external/github.com/KhronosGroup/EGL-Registry@e964211ff5f7c2bcada786954a16d5b813379395',
   },
 
   # WebGPU CTS - Used both by the dawn_node tests and transitively by Chromium.
   'third_party/webgpu-cts': {
-    'url': '{chromium_git}/external/github.com/gpuweb/cts@a5e5d7440fa036b74ea13c3c5cb6b618a3c884e9',
+    'url': '{chromium_git}/external/github.com/gpuweb/cts@cc11994e92512d0a3715e9d28876ec48accb971a',
     'condition': 'build_with_chromium or dawn_standalone',
   },
 
@@ -836,10 +831,21 @@ deps = {
     'dep_type': 'cipd',
     'condition': 'checkout_litert_lm',
   },
+  'third_party/litert-lm/models/gemma4_2b': {
+    'packages': [
+      {
+        # TODO(crbug.com/527944617): Replace experimental CIPD dependency.
+        'package': 'experimental/ohjerry_at_google.com/gemma4_2b',
+        'version': '8BbbFJuxlNAt7We_SL3apsoXv9KF3tOoQXGp0DNFQE8C',
+      }
+    ],
+    'dep_type': 'cipd',
+    'condition': 'checkout_litert_lm',
+  },
 
   # V8 and its dependencies for standalone builds.
   'third_party/v8/src': {
-    'url': '{chromium_git}/v8/v8.git@16e7fbe3c67d3979c69e5d80fe1c0958a3e5d6a0',
+    'url': '{chromium_git}/v8/v8.git@e3690e669433597eb0c8f63cd1c74e1d48041165',
     'condition': 'dawn_standalone and checkout_v8',
   },
 
@@ -849,7 +855,7 @@ deps = {
   },
 
   'third_party/fast_float/src': {
-    'url': '{chromium_git}/external/github.com/fastfloat/fast_float.git@b0ab987b3dfdde13fa1915f65ef2a5c068d9208c',
+    'url': '{chromium_git}/external/github.com/fastfloat/fast_float.git@42f254836ee416ffcf2f4e6576260003ac33d48c',
     'condition': 'dawn_standalone and checkout_v8',
   },
 

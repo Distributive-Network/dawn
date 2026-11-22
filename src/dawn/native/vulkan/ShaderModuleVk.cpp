@@ -127,7 +127,7 @@ DAWN_MAKE_CACHE_REQUEST(SpirvCompilationRequest, SPIRV_COMPILATION_REQUEST_MEMBE
 
 #endif  // TINT_BUILD_SPV_WRITER
 
-ResultOrError<ShaderModule::ModuleAndSpirv> ShaderModule::GetHandleAndSpirv(
+ResultOrUnknownError<ShaderModule::ModuleAndSpirv> ShaderModule::GetHandleAndSpirv(
     const CompileParameters& in) {
     TRACE_EVENT(DAWN_TRACE_CATEGORY(), "ShaderModuleVk::GetHandleAndSpirv");
 
@@ -396,7 +396,7 @@ ResultOrError<ShaderModule::ModuleAndSpirv> ShaderModule::GetHandleAndSpirv(
     CacheResult<CompiledSpirv> compilation;
     DAWN_TRY_LOAD_OR_RUN(
         compilation, GetDevice(), std::move(req), CompiledSpirv::FromValidatedBlob,
-        [](SpirvCompilationRequest r) -> ResultOrError<CompiledSpirv> {
+        [](SpirvCompilationRequest r) -> ResultOrUnknownError<CompiledSpirv> {
             TRACE_EVENT(DAWN_TRACE_CATEGORY(), "tint::spirv::writer::Generate()");
 
             // Requires Tint Program here right before actual using.
@@ -521,11 +521,14 @@ ResultOrError<ShaderModule::ModuleAndSpirv> ShaderModule::GetHandleAndSpirv(
     device->GetBlobCache()->EnsureStored(compilation);
     SetDebugName(ToBackend(GetDevice()), newHandle, "Dawn_ShaderModule", GetLabel());
 
-    return ModuleAndSpirv{.module = newHandle,
-                          .spirv = std::move(compilation->spirv),
-                          .hasInputAttachment = hasInputAttachment,
-                          .workgroupSize = compilation->workgroupSize,
-                          .explicitSubgroupSize = compilation->explicitSubgroupSize};
+    ModuleAndSpirv s;
+    s.module = newHandle;
+    s.device = device;
+    s.spirv = std::move(compilation->spirv);
+    s.hasInputAttachment = hasInputAttachment;
+    s.workgroupSize = compilation->workgroupSize;
+    s.explicitSubgroupSize = compilation->explicitSubgroupSize;
+    return s;
 #else
     return DAWN_UNRECOVERABLE_ERROR("TINT_BUILD_SPV_WRITER is not defined.");
 #endif

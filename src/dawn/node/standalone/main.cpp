@@ -40,11 +40,18 @@
 #include "src/dawn/node/standalone/Polyfills.h"
 #include "src/dawn/utils/CommandLineParser.h"
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wundef"
-#pragma clang diagnostic ignored "-Wunsafe-buffer-usage"
 #include "libplatform/libplatform.h"
-#pragma clang diagnostic pop
+
+#if defined(DAWN_ENABLE_PARTITION_ALLOC)
+#include "partition_alloc/buildflags.h"  // nogncheck
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#include "partition_alloc/partition_alloc_constants.h"                                // nogncheck
+#include "partition_alloc/partition_root.h"                                           // nogncheck
+#include "partition_alloc/shim/allocator_shim.h"                                      // nogncheck
+#include "partition_alloc/shim/allocator_shim_default_dispatch_to_partition_alloc.h"  // nogncheck
+#include "partition_alloc/thread_cache.h"                                             // nogncheck
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#endif  // defined(DAWN_ENABLE_PARTITION_ALLOC)
 
 namespace {
 
@@ -60,6 +67,7 @@ class StandaloneRunner {
             return *exit_code;
         }
 
+        ConfigurePartitionAlloc();
         InitializeV8();
         int exit_code = RunCts();
         DisposeV8();
@@ -166,6 +174,43 @@ class StandaloneRunner {
 
         js_args.push_back(query_opt_.GetValue());
         return js_args;
+    }
+
+    // Configures PartitionAlloc's malloc partition for a command-line test runner. For background
+    // on buckets, slot spans, the empty slot span ring, and the thread cache, see:
+    // https://chromium.googlesource.com/chromium/src/+/main/base/allocator/partition_allocator/PartitionAlloc.md
+    void ConfigurePartitionAlloc() {
+#if defined(DAWN_ENABLE_PARTITION_ALLOC)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+        // Use denser buckets (8 per power-of-two order instead of 4) to reduce internal
+        // fragmentation, and disable security features (BackupRefPtr, MTE, quarantine, and zeroing
+        // on free) that add per-free overhead.
+        allocator_shim::ConfigurePartitions(
+            allocator_shim::EnableBrp(false), /*brp_extra_extras_size=*/0,
+            allocator_shim::EnableMemoryTagging(false),
+            partition_alloc::TagViolationReportingMode::kDisabled,
+            allocator_shim::BucketDistribution::kDenser,
+            partition_alloc::internal::SchedulerLoopQuarantineConfig(),
+            partition_alloc::internal::SchedulerLoopQuarantineConfig(),
+            partition_alloc::internal::SchedulerLoopQuarantineConfig(),
+            allocator_shim::EventuallyZeroFreedMemory(false));
+
+        // Enable the per-thread cache and raise its size limit from 512 B to 32 KiB
+        // (`kThreadCacheLargeSizeThreshold`) so more allocations use the thread-local freelists.
+        // This avoids acquiring a lock.
+        partition_alloc::PartitionRoot* root =
+            allocator_shim::internal::PartitionAllocMalloc::Allocator();
+        root->EnableThreadCacheIfSupported();
+        partition_alloc::ThreadCache::SetLargestCachedSize(
+            partition_alloc::kThreadCacheLargeSizeThreshold);
+
+        // Keep the maximum number of empty slot spans in the ring buffer before returning them to
+        // the OS.
+        root->AdjustSlotSpanRing(
+            static_cast<int16_t>(partition_alloc::internal::kMaxEmptySlotSpanRingSize),
+            /*dirty_bytes_shift=*/0);
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#endif  // defined(DAWN_ENABLE_PARTITION_ALLOC)
     }
 
     void InitializeV8() {

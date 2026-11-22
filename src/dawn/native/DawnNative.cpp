@@ -118,6 +118,10 @@ WGPUDevice Adapter::CreateDevice(const WGPUDeviceDescriptor* deviceDescriptor) {
     return ToAPI(mImpl->APICreateDevice(FromAPI(deviceDescriptor)));
 }
 
+const gpu_info::DriverVersion& Adapter::GetDriverVersion() const {
+    return mImpl->GetPhysicalDevice()->GetDriverVersion();
+}
+
 void Adapter::ResetInternalDeviceForTesting() {
     std::ignore = mImpl->GetInstance()->ConsumedError(
         mImpl->GetPhysicalDevice()->ResetInternalDeviceForTesting());
@@ -223,12 +227,6 @@ bool IsTextureSubresourceInitialized(WGPUTexture texture,
         ConvertAspect(textureBase->GetFormat(), static_cast<wgpu::TextureAspect>(cAspect));
     SubresourceRange range(aspect, {baseArrayLayer, layerCount}, {baseMipLevel, levelCount});
     return textureBase->IsSubresourceContentInitialized(range);
-}
-
-std::vector<std::string_view> GetProcMapNamesForTestingInternal();
-
-std::vector<std::string_view> GetProcMapNamesForTesting() {
-    return GetProcMapNamesForTestingInternal();
 }
 
 DAWN_NATIVE_EXPORT bool DeviceTick(WGPUDevice device) {

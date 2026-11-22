@@ -97,7 +97,8 @@ class Device final : public DeviceBase {
         // 2nd special case: if a task is enqueued inside another task, then run it immediately
         // instead of deferring it. This can be detected by checking IsInScopedMakeCurrent().
         if (mContext->IsInScopedMakeCurrent()) {
-            return work(mGL);
+            DAWN_TRY(work(mGL));
+            return {};
         }
 
         // Otherwise, queue up the work.
@@ -230,6 +231,7 @@ class Device final : public DeviceBase {
                                             const TexelCopyBufferLayout& src,
                                             const TextureCopy& dst,
                                             const Extent3D& copySizePixels) override;
+    bool SupportsPersistentlyMappedStagingBuffer() const override { return false; }
 
     uint32_t GetOptimalBytesPerRowAlignment() const override;
     uint64_t GetOptimalBufferToTextureCopyOffsetAlignment() const override;
@@ -280,14 +282,16 @@ class Device final : public DeviceBase {
         const UnpackedPtr<ComputePipelineDescriptor>& descriptor) override;
     Ref<RenderPipelineBase> CreateUninitializedRenderPipelineImpl(
         const UnpackedPtr<RenderPipelineDescriptor>& descriptor) override;
-    ResultOrError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
+
+    ResultOrUnknownError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
         UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) override;
-    ResultOrError<Ref<SharedFenceBase>> ImportSharedFenceImpl(
+    ResultOrUnknownError<Ref<SharedFenceBase>> ImportSharedFenceImpl(
         UnpackedPtr<SharedFenceDescriptor> unpacked) override;
-    ResultOrError<Ref<TextureBase>> CreateTextureWrappingEGLImageImpl(
+
+    ResultOrUnknownError<Ref<TextureBase>> CreateTextureWrappingEGLImageImpl(
         const ExternalImageDescriptor* descriptor,
         ::EGLImage image);
-    ResultOrError<Ref<TextureBase>> CreateTextureWrappingGLTextureImpl(
+    ResultOrUnknownError<Ref<TextureBase>> CreateTextureWrappingGLTextureImpl(
         const ExternalImageDescriptor* descriptor,
         GLuint texture);
 

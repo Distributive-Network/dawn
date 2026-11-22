@@ -182,6 +182,7 @@ MaybeError Queue::WaitForIdleForDestructionImpl() {
     // (so they are as good as waited on) or success.
     VkResult waitIdleResult = VkResult::WrapUnsafe(device->fn.QueueWaitIdle(mQueue));
 
+    // Insert an arbitrary sleep to avoid destroying the device too early on some faulty drivers.
     if (waitIdleResult == VK_ERROR_DEVICE_LOST &&
         GetDevice()->IsToggleEnabled(Toggle::VulkanSleepAfterLostDeviceWait)) {
         dawn::utils::USleep(1000);
@@ -452,8 +453,10 @@ void Queue::DestroyImpl(DestroyReason reason) {
     for (VkSemaphore semaphore : mRecordingContext.waitSemaphores) {
         device->fn.DestroySemaphore(vkDevice, semaphore, nullptr);
     }
-    mRecordingContext.waitSemaphores.clear();
-    mRecordingContext.signalSemaphores.clear();
+    // Reset the recording context so that no dangling handles to the freed command pool/buffer
+    // survive destruction. Any later attempt to use the recording context then sees null handles
+    // instead of using freed objects.
+    mRecordingContext = CommandRecordingContext();
 
     // Free any recycled command pools.
     mUnusedCommands.Use([&](auto unusedCommands) {

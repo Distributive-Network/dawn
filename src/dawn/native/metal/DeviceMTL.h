@@ -85,6 +85,12 @@ class Device final : public DeviceBase {
 
     bool BackendWillValidateMultiDraw() const override;
 
+    std::optional<DeviceGuard> UseGuardForCreateBindGroup() override;
+    std::optional<DeviceGuard> UseGuardForCreateBindGroupLayout() override;
+    std::optional<DeviceGuard> UseGuardForCreateBuffer() override;
+    std::optional<DeviceGuard> UseGuardForCreateSampler() override;
+    std::optional<DeviceGuard> UseGuardForCreateTexture() override;
+
     // Get a MTLBuffer that can be used as a mock in a no-op blit encoder based on filling this
     // single-byte buffer
     id<MTLBuffer> GetMockBlitMtlBuffer();
@@ -133,9 +139,9 @@ class Device final : public DeviceBase {
     void InitializeComputePipelineAsyncImpl(Ref<CreateComputePipelineAsyncEvent> event) override;
     void InitializeRenderPipelineAsyncImpl(Ref<CreateRenderPipelineAsyncEvent> event) override;
 
-    ResultOrError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
+    ResultOrUnknownError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
         UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) override;
-    ResultOrError<Ref<SharedFenceBase>> ImportSharedFenceImpl(
+    ResultOrUnknownError<Ref<SharedFenceBase>> ImportSharedFenceImpl(
         UnpackedPtr<SharedFenceDescriptor> unpacked) override;
 
     void StartTrace();

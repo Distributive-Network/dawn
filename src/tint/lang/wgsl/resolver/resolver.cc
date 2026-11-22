@@ -33,6 +33,7 @@
 #include <utility>
 
 #include "src/tint/lang/core/constant/scalar.h"  // IWYU pragma: export
+#include "src/tint/lang/core/constant/string.h"
 #include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/type/abstract_float.h"
@@ -52,6 +53,7 @@
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/sampler.h"
 #include "src/tint/lang/core/type/storage_texture.h"
+#include "src/tint/lang/core/type/string.h"
 #include "src/tint/lang/core/type/swizzle_view.h"
 #include "src/tint/lang/core/type/u16.h"
 #include "src/tint/lang/core/type/u8.h"
@@ -68,8 +70,10 @@
 #include "src/tint/lang/wgsl/ast/if_statement.h"
 #include "src/tint/lang/wgsl/ast/input_attachment_index_attribute.h"
 #include "src/tint/lang/wgsl/ast/interpolate_attribute.h"
+#include "src/tint/lang/wgsl/ast/interpolated_string_expression.h"
 #include "src/tint/lang/wgsl/ast/loop_statement.h"
 #include "src/tint/lang/wgsl/ast/return_statement.h"
+#include "src/tint/lang/wgsl/ast/string_literal_expression.h"
 #include "src/tint/lang/wgsl/ast/switch_statement.h"
 #include "src/tint/lang/wgsl/ast/traverse_expressions.h"
 #include "src/tint/lang/wgsl/ast/unary_op_expression.h"
@@ -1284,6 +1288,7 @@ sem::Expression* Resolver::Expression(const ast::Expression* root) {
             [&](const ast::IdentifierExpression* ident) { return Identifier(ident); },
             [&](const ast::LiteralExpression* literal) { return Literal(literal); },
             [&](const ast::MemberAccessorExpression* member) { return MemberAccessor(member); },
+            [&](const ast::InterpolatedStringExpression* tmpl) { return InterpolatedString(tmpl); },
             [&](const ast::UnaryOpExpression* unary) { return UnaryOp(unary); },
             [&](const ast::PhonyExpression*) {
                 return b.create<sem::ValueExpression>(expr, b.create<core::type::Void>(),
@@ -1473,7 +1478,7 @@ void Resolver::RegisterBufferView(const sem::Call* call, wgsl::BuiltinFn fn) {
     }
 
     if (const auto* param = call->RootIdentifier()->As<sem::Parameter>()) {
-        auto where = buffer_view_sizes_.GetOrAddEntry(param, [min_type_size, total_size, call]() {
+        auto& where = buffer_view_sizes_.GetOrAddEntry(param, [min_type_size, total_size, call]() {
             BufferViewInfo info;
             info.min_type_size = min_type_size;
             info.total_size = total_size;
@@ -1578,7 +1583,8 @@ void Resolver::RegisterSubgroupMatrixAccess(const sem::Call* call, wgsl::Builtin
     mat_required_size += FindSubgroupMatrixStructOffset(pointer);
 
     if (const auto* param = root->As<sem::Parameter>()) {
-        auto where = subgroup_matrix_sizes_.GetOrAddEntry(param, [&] { return mat_required_size; });
+        auto& where =
+            subgroup_matrix_sizes_.GetOrAddEntry(param, [&] { return mat_required_size; });
         where.value = std::max(where.value, mat_required_size);
     }
 
@@ -1621,7 +1627,7 @@ void Resolver::PropagateSubgroupMatrixAccesses(const sem::Call* call) {
                 }
             },
             [&](const sem::Parameter* param) {
-                auto param_where = subgroup_matrix_sizes_.GetOrAddEntry(
+                auto& param_where = subgroup_matrix_sizes_.GetOrAddEntry(
                     param, [mat_required_size]() { return mat_required_size; });
                 param_where.value = std::max(param_where.value, mat_required_size);
             });
@@ -1682,7 +1688,7 @@ bool Resolver::CheckBufferViews(const sem::Call* call) {
                         return false;
                     }
                 }
-                auto param_where =
+                auto& param_where =
                     buffer_view_sizes_.GetOrAddEntry(param, [where]() { return *where; });
                 param_where.value = {
                     std::max(param_where.value.min_type_size, where->min_type_size),
@@ -3231,6 +3237,10 @@ sem::Call* Resolver::FunctionCall(const ast::CallExpression* expr,
 sem::ValueExpression* Resolver::Literal(const ast::LiteralExpression* literal) {
     auto* ty = Switch(
         literal,
+        [&](const ast::StringLiteralExpression*) -> core::type::Type* {
+            TINT_RET_IF(!validator_.CheckChromiumPrintEnabled(literal->source));
+            return b.create<core::type::String>();
+        },
         [&](const ast::IntLiteralExpression* i) -> core::type::Type* {
             switch (i->suffix) {
                 case ast::IntLiteralExpression::Suffix::kNone:
@@ -3267,6 +3277,7 @@ sem::ValueExpression* Resolver::Literal(const ast::LiteralExpression* literal) {
     if (stage == core::EvaluationStage::kConstant) {
         val = Switch(
             literal,
+            [&](const ast::StringLiteralExpression* lit) { return b.constants.Get(lit->value); },
             [&](const ast::BoolLiteralExpression* lit) { return b.constants.Get(lit->value); },
             [&](const ast::IntLiteralExpression* lit) -> const core::constant::Value* {
                 switch (lit->suffix) {
@@ -3292,6 +3303,22 @@ sem::ValueExpression* Resolver::Literal(const ast::LiteralExpression* literal) {
             });
     }
     return b.create<sem::ValueExpression>(literal, ty, stage, current_statement_, std::move(val));
+}
+
+sem::ValueExpression* Resolver::InterpolatedString(const ast::InterpolatedStringExpression* tmpl) {
+    TINT_RET_IF(!validator_.CheckChromiumPrintEnabled(tmpl->source));
+
+    for (auto* el : tmpl->elements) {
+        auto* sem_el = Load(Materialize(sem_.GetVal(el)));
+        TINT_RET_IF(DAWN_UNLIKELY(!sem_el));
+        TINT_RET_IF(!validator_.InterpolatedStringElement(sem_el));
+    }
+
+    auto stage = not_evaluated_.Contains(tmpl) ? core::EvaluationStage::kNotEvaluated
+                                               : core::EvaluationStage::kRuntime;
+
+    return b.create<sem::ValueExpression>(tmpl, b.create<core::type::String>(), stage,
+                                          current_statement_, /* constant_value */ nullptr);
 }
 
 sem::Expression* Resolver::Identifier(const ast::IdentifierExpression* expr) {

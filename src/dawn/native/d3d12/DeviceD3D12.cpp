@@ -479,7 +479,7 @@ void Device::InitializeRenderPipelineAsyncImpl(Ref<CreateRenderPipelineAsyncEven
     event->InitializeAsync();
 }
 
-ResultOrError<Ref<SharedBufferMemoryBase>> Device::ImportSharedBufferMemoryImpl(
+ResultOrUnknownError<Ref<SharedBufferMemoryBase>> Device::ImportSharedBufferMemoryImpl(
     UnpackedPtr<SharedBufferMemoryDescriptor> unpacked) {
     wgpu::SType type;
     DAWN_TRY_ASSIGN(
@@ -511,7 +511,7 @@ ResultOrError<Ref<SharedBufferMemoryBase>> Device::ImportSharedBufferMemoryImpl(
     }
 }
 
-ResultOrError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImpl(
+ResultOrUnknownError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImpl(
     UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) {
     wgpu::SType type;
     DAWN_TRY_ASSIGN(
@@ -537,7 +537,7 @@ ResultOrError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImp
     }
 }
 
-ResultOrError<Ref<SharedFenceBase>> Device::ImportSharedFenceImpl(
+ResultOrUnknownError<Ref<SharedFenceBase>> Device::ImportSharedFenceImpl(
     UnpackedPtr<SharedFenceDescriptor> unpacked) {
     wgpu::SType type;
     DAWN_TRY_ASSIGN(type,
@@ -597,7 +597,6 @@ MaybeError Device::CopyFromStagingToTextureImpl(BufferBase* source,
         ToBackend(GetQueue())->GetPendingCommandContext(QueueBase::SubmitMode::Passive);
 
     Texture* texture = ToBackend(dst.texture.Get());
-    DAWN_TRY(texture->SynchronizeTextureBeforeUse(commandContext));
 
     SubresourceRange range = GetSubresourcesAffectedByCopy(dst, copySizePixels);
     if (IsCompleteSubresourceCopiedTo(texture, copySizePixels, dst.mipLevel, dst.aspect)) {

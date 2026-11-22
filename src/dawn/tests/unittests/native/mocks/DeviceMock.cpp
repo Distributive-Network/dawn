@@ -46,6 +46,7 @@
 namespace dawn::native {
 
 using ::testing::NiceMock;
+using ::testing::Return;
 using ::testing::WithArgs;
 
 DeviceMock::DeviceMock(AdapterBase* adapter,
@@ -77,7 +78,7 @@ DeviceMock::DeviceMock(AdapterBase* adapter,
             }));
     ON_CALL(*this, CreateExternalTextureImpl)
         .WillByDefault(WithArgs<0>([this](const ExternalTextureDescriptor* descriptor)
-                                       -> ResultOrError<Ref<ExternalTextureBase>> {
+                                       -> ResultOrUnknownError<Ref<ExternalTextureBase>> {
             return ExternalTextureMock::Create(this, descriptor);
         }));
     ON_CALL(*this, CreatePipelineLayoutImpl)
@@ -121,6 +122,9 @@ DeviceMock::DeviceMock(AdapterBase* adapter,
                                        -> Ref<RenderPipelineBase> {
             return RenderPipelineMock::Create(this, descriptor);
         }));
+
+    ON_CALL(*this, GetOptimalBytesPerRowAlignment).WillByDefault(Return(1));
+    ON_CALL(*this, GetOptimalBufferToTextureCopyOffsetAlignment).WillByDefault(Return(1));
 
     // By default, the mock's TickImpl will succeed.
     ON_CALL(*this, TickImpl).WillByDefault([]() -> MaybeError { return {}; });

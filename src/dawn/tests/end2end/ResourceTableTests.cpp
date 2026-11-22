@@ -204,6 +204,7 @@ class ResourceTableTests : public DawnTest {
 
         // Check we have the expected results.
         std::vector<uint32_t> expectedU32;
+        expectedU32.reserve(expected.size());
         for (bool b : expected) {
             expectedU32.push_back(b ? 1u : 0u);
         }
@@ -413,6 +414,7 @@ class ResourceTableTests : public DawnTest {
 
         // Check we have the expected results.
         std::vector<uint32_t> expectedU32;
+        expectedU32.reserve(expected.size());
         for (auto optValue : expected) {
             expectedU32.push_back(optValue ? *optValue : 0xBEEFu);
         }
@@ -579,6 +581,9 @@ TEST_P(ResourceTableTests, RecyclingDoesntReuseTooSmallAllocation) {
 
 // Test WGSL `hasResource` reflects the state of the resource table.
 TEST_P(ResourceTableTests, HasResourceOneTexture) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     wgpu::TextureDescriptor tDesc{
         .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::StorageBinding,
         .size = {1, 1},
@@ -603,6 +608,9 @@ TEST_P(ResourceTableTests, HasResourceOneTexture) {
 
 // Test WGSL `hasResource` reflects the state of the resource table.
 TEST_P(ResourceTableTests, HasResourceFilterableToUnfilterable) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     wgpu::TextureDescriptor tDesc{
         .usage = wgpu::TextureUsage::TextureBinding,
         .size = {1, 1},
@@ -618,6 +626,9 @@ TEST_P(ResourceTableTests, HasResourceFilterableToUnfilterable) {
 // Test that calling texture.Destroy() implicitly hides it.
 // Note: Similar tests for EndAccess are implemented in SharedTextureMemoryResourceTableTests.
 TEST_P(ResourceTableTests, HasResourceOneTextureDestroy) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     wgpu::TextureDescriptor tDesc{
         .usage = wgpu::TextureUsage::TextureBinding,
         .size = {1, 1},
@@ -637,6 +648,9 @@ TEST_P(ResourceTableTests, HasResourceOneTextureDestroy) {
 
 // Test that a texture used multiple times in the same table has its availability correctly updated.
 TEST_P(ResourceTableTests, HasResourceSameTextureMultipleTimes) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     wgpu::TextureDescriptor tDesc{
         .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::StorageBinding,
         .size = {1, 1},
@@ -667,6 +681,9 @@ TEST_P(ResourceTableTests, HasResourceSameTextureMultipleTimes) {
 // as available.
 // Note: Similar tests for EndAccess are implemented in SharedTextureMemoryResourceTableTests.
 TEST_P(ResourceTableTests, HasResourceUpdateWithTextureAlreadyDestroyed) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     wgpu::TextureDescriptor tDesc{
         .usage = wgpu::TextureUsage::TextureBinding,
         .size = {1, 1},
@@ -683,6 +700,9 @@ TEST_P(ResourceTableTests, HasResourceUpdateWithTextureAlreadyDestroyed) {
 // Test that a texture used in multiple resource tables has its availability correctly updated.
 // Note: Similar tests for EndAccess are implemented in SharedTextureMemoryResourceTableTests.
 TEST_P(ResourceTableTests, HasResourceSameTextureMultipleTables) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     wgpu::TextureDescriptor tDesc{
         .usage = wgpu::TextureUsage::TextureBinding,
         .size = {1, 1},
@@ -704,6 +724,9 @@ TEST_P(ResourceTableTests, HasResourceSameTextureMultipleTables) {
 
 // Test that texture availabililty is controlled per-texture.
 TEST_P(ResourceTableTests, HasResourceMultipleTexturesTable) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     wgpu::TextureDescriptor tDesc{
         .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::StorageBinding,
         .size = {1, 1},
@@ -843,6 +866,9 @@ TEST_P(ResourceTableTests, ImplicitHidingRender) {
 // and dynamically unhide it for the next dispatch (by removing the storage write)
 // all within a single compute pass.
 TEST_P(ResourceTableTests, ImplicitHidingComputeMidPass) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
         enable chromium_experimental_resource_table;
 
@@ -1408,6 +1434,9 @@ std::vector<ResourceDescForTypeIDCase> MakeDescForTypeIDCases() {
 
 // Test that hasResource() works as expected for all supported resources in WGSL.
 TEST_P(ResourceTableTests, HasResourceCompatibilityAllTypes) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // We rely on RGBA32Float being unfilterable for this test so that we can test both filterable /
     // unfilterable float without needing any additional extensions.
     DAWN_ASSERT(!device.HasFeature(wgpu::FeatureName::Float32Filterable));
@@ -1443,6 +1472,9 @@ TEST_P(ResourceTableTests, HasResourceCompatibilityAllTypes) {
 
 // Test that calling hasResource() with values outside of the resource table size returns false.
 TEST_P(ResourceTableTests, HasResourceOOBIsFalse) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // Create the test pipeline
     wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
         enable chromium_experimental_resource_table;
@@ -1515,6 +1547,9 @@ TEST_P(ResourceTableTests, HasResourceOOBIsFalse) {
 // test (that's for the CTS) but tries to check a few different interesting cases (MS, DS, Cube, 2D
 // array).
 TEST_P(ResourceTableTests, DefaultBindingsAreZeroAndSizeOne) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // Create the test pipeline
     wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
         enable chromium_experimental_resource_table;
@@ -2093,6 +2128,9 @@ TEST_P(ResourceTableTests, RemoveThenAddSamplerMultipleInSameSlot) {
 
 // Test what happens when we add more than kD3D12MaxUniqueSamplers unique samplers
 TEST_P(ResourceTableTests, AddUniqueSamplersOverLimit) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // TODO(https://issues.chromium.org/issues/490066027): Fails on Mali G78
     DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsARM());
 
@@ -2148,6 +2186,9 @@ TEST_P(ResourceTableTests, AddUniqueSamplersOverLimit) {
 // duplicate sampler is added back. On D3D12, internally this may result in a new sampler index,
 // which should be fine.
 TEST_P(ResourceTableTests, RemoveAddDuplicateSampler) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // TODO(https://issues.chromium.org/issues/490066027): Fails on Mali G78
     DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsARM());
 
@@ -2208,6 +2249,9 @@ TEST_P(ResourceTableTests, RemoveAddDuplicateSampler) {
 // are duplicates. We test this by creating a table of size 2*2048, add 2048 unique samplers in the
 // first half of the table, then add the same set of sampers in the second half of the table.
 TEST_P(ResourceTableTests, AddDuplicateSamplersTwice) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // TODO(https://issues.chromium.org/issues/490066027): Fails on Mali G78
     DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsARM());
 
@@ -2260,6 +2304,9 @@ TEST_P(ResourceTableTests, AddDuplicateSamplersTwice) {
 // and draws again, making sure this is supported. Effectively, this tests that the resource table
 // correctly handles removal of samplers.
 TEST_P(ResourceTableTests, AddAndRemoveMaxSamplersTwice) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // TODO(https://issues.chromium.org/issues/490066027): Fails on Mali G78
     DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsARM());
     // TODO(https://issues.chromium.org/issues/512829734): Fails on Vulkan if
@@ -2483,6 +2530,9 @@ TEST_P(ResourceTableTests, RemoveThenAddTextureMultipleInSameSlot) {
 
 // Check that zero-initialization of the resources happens implicitly
 TEST_P(ResourceTableTests, ImplicitZeroInit) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // Create the pipeline reading back from the texture.
     wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
         enable chromium_experimental_resource_table;
@@ -2681,6 +2731,9 @@ TEST_P(ResourceTableTests, UpdateAfterRemoveRequiresGPUIsFinished_ErrorBindGroup
 
 // Check that Update and Insert make the new binding visible in the resource table.
 TEST_P(ResourceTableTests, UpdateAndInsertMakeBindingVisible) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     wgpu::ResourceTable table = MakeResourceTable(2);
 
     // Before we do anything, the table has no valid entries.
@@ -2700,6 +2753,9 @@ TEST_P(ResourceTableTests, UpdateAndInsertMakeBindingVisible) {
 // Check that Remove instantly makes the binding not visible, both for entries added with
 // Update and Insert.
 TEST_P(ResourceTableTests, RemoveMakeBindingInvalid) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // Fill a resource table with both Update and Insert.
     wgpu::ResourceTable table = MakeResourceTable(2);
 
@@ -2721,6 +2777,9 @@ TEST_P(ResourceTableTests, RemoveMakeBindingInvalid) {
 
 // Check that removing a binding and adding a different one works.
 TEST_P(ResourceTableTests, ReplaceBinding) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // Create the test resource table.
     wgpu::ResourceTable table = MakeResourceTable(1);
     wgpu::BindingResource resource = {.textureView = MakeU8View(19)};
@@ -2741,6 +2800,9 @@ TEST_P(ResourceTableTests, ReplaceBinding) {
 
 // Check that removing a binding and adding it back works.
 TEST_P(ResourceTableTests, ReplaceWithSameBinding) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     // Create the test resource table.
     wgpu::ResourceTable table = MakeResourceTable(1);
     wgpu::BindingResource resource = {.textureView = MakeU8View(19)};
@@ -2760,6 +2822,9 @@ TEST_P(ResourceTableTests, ReplaceWithSameBinding) {
 
 // Check that setting multiple resource table, on per dispatch, on a single pass works.
 TEST_P(ResourceTableTests, SingleComputePassMultipleResourceTables) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF(IsMetal());
+
     std::vector<wgpu::BindingResource> resources;
 
     wgpu::ResourceTable table0 = MakeResourceTable(2);
@@ -3245,6 +3310,9 @@ class ResourceTableBindfulInteractionTests : public DawnTestWithParams<BindfulIn
 };
 
 TEST_P(ResourceTableBindfulInteractionTests, Test) {
+    // TODO(473444514): Re-enable when compute shaders support ResourceTable on metal
+    DAWN_SUPPRESS_TEST_IF((GetParam().mBindlessReadKind == BindlessReadKind::Compute) && IsMetal());
+
     DoTest(GetParam().mBindlessReadKind, GetParam().mBindfulWriteKind);
 }
 

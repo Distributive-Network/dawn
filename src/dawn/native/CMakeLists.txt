@@ -524,6 +524,7 @@ if (DAWN_ENABLE_METAL)
         "metal/BackendMTL.h"
         "metal/BindGroupLayoutMTL.h"
         "metal/BindGroupMTL.h"
+        "metal/BindGroupTrackerMTL.h"
         "metal/BufferMTL.h"
         "metal/CommandBufferMTL.h"
         "metal/CommandRecordingContext.h"
@@ -531,6 +532,7 @@ if (DAWN_ENABLE_METAL)
         "metal/DeviceMTL.h"
         "metal/Forward.h"
         "metal/ImmediatesLayoutMTL.h"
+        "metal/ImmediatesTrackerMTL.h"
         "metal/MultiDrawEncoder.h"
         "metal/MultiDrawEncoder.mm"
         "metal/PhysicalDeviceMTL.h"
@@ -538,13 +540,16 @@ if (DAWN_ENABLE_METAL)
         "metal/QuerySetMTL.h"
         "metal/QueueMTL.h"
         "metal/RenderPipelineMTL.h"
+        "metal/ResourceTableMTL.h"
         "metal/SamplerMTL.h"
         "metal/ShaderModuleMTL.h"
         "metal/SharedFenceMTL.h"
         "metal/SharedTextureMemoryMTL.h"
+        "metal/StorageBufferLengthTrackerMTL.h"
         "metal/SwapChainMTL.h"
         "metal/TextureMTL.h"
         "metal/UtilsMetal.h"
+        "metal/VertexBufferTrackerMTL.h"
     )
     list(APPEND sources
         "metal/BackendMTL.mm"
@@ -560,6 +565,7 @@ if (DAWN_ENABLE_METAL)
         "metal/QuerySetMTL.mm"
         "metal/QueueMTL.mm"
         "metal/RenderPipelineMTL.mm"
+        "metal/ResourceTableMTL.mm"
         "metal/SamplerMTL.mm"
         "metal/ShaderModuleMTL.mm"
         "metal/SharedFenceMTL.mm"
@@ -931,6 +937,7 @@ set(dawn_native_private_depends
     absl::flat_hash_map
     absl::flat_hash_set
     absl::inlined_vector
+    absl::no_destructor
     absl::str_format_internal
     absl::strings
     dawn::dawn_system_utils

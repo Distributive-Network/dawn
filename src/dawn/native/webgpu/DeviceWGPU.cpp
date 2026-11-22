@@ -228,7 +228,7 @@ ResultOrError<Ref<BufferBase>> Device::CreateBufferImpl(
     return Buffer::Create(this, descriptor);
 }
 
-ResultOrError<Ref<ExternalTextureBase>> Device::CreateExternalTextureImpl(
+ResultOrUnknownError<Ref<ExternalTextureBase>> Device::CreateExternalTextureImpl(
     const ExternalTextureDescriptor* descriptor) {
     return ExternalTexture::Create(this, descriptor);
 }
@@ -292,7 +292,7 @@ ResultOrError<Ref<TextureViewBase>> Device::CreateTextureViewImpl(
     return TextureView::Create(texture, descriptor);
 }
 
-ResultOrError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImpl(
+ResultOrUnknownError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImpl(
     UnpackedPtr<SharedTextureMemoryDescriptor> unpacked) {
     // TODO(crbug.com/483147423): Handle all possible chained structures.
     if (unpacked.Get<SharedTextureMemoryIOSurfaceDescriptor>()) {
@@ -300,7 +300,8 @@ ResultOrError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImp
         DAWN_INVALID_IF(!HasFeature(feature), "%s is not enabled.", ToCppAPI(feature));
     } else if (unpacked.Get<SharedTextureMemoryAHardwareBufferDescriptor>()) {
         return DAWN_UNIMPLEMENTED_ERROR(
-            "SharedTextureMemory in WebGPU backend has not been implemented for all platforms.");
+            "SharedTextureMemory in WebGPU backend has "
+            "not been implemented for all platforms.");
     } else if (unpacked.Get<SharedTextureMemoryDXGISharedHandleDescriptor>()) {
         return DAWN_UNIMPLEMENTED_ERROR(
             "SharedTextureMemory in WebGPU backend has not been implemented for all platforms.");
@@ -334,7 +335,7 @@ ResultOrError<Ref<SharedTextureMemoryBase>> Device::ImportSharedTextureMemoryImp
     return SharedTextureMemory::Create(this, unpacked);
 }
 
-ResultOrError<Ref<SharedFenceBase>> Device::ImportSharedFenceImpl(
+ResultOrUnknownError<Ref<SharedFenceBase>> Device::ImportSharedFenceImpl(
     UnpackedPtr<SharedFenceDescriptor> unpacked) {
     // TODO(crbug.com/483147423): Handle all possible chained structures.
     if (unpacked.Get<SharedFenceMTLSharedEventDescriptor>()) {
@@ -415,20 +416,13 @@ MaybeError Device::CopyFromStagingToTextureImpl(BufferBase* source,
                                                 const TexelCopyBufferLayout& src,
                                                 const TextureCopy& dst,
                                                 const Extent3D& copySizePixels) {
-    WGPUTexelCopyBufferLayout innerSource = ToWGPU(src);
-    WGPUTexelCopyTextureInfo innerDestination = ToWGPU(dst);
-    size_t bufferSize = checked_cast<size_t>(source->GetSize());
-    WGPUExtent3D size = ToWGPU(copySizePixels);
-    wgpu->queueWriteTexture(
-        ToBackend(GetQueue())->GetInnerHandle(), &innerDestination,
-        // The staging buffers in the DynamicUploader are assumed in Dawn to be persistently mapped
-        // buffers that always have the mapped pointer accessible. n the WebGPU backend, to use the
-        // buffers in a copyB2T we would need to unmap them but the DynamicUploader doesn't support
-        // that. Instead keep the buffers mapped and use queueWriteTexture to read directly from the
-        // mapped staging memory.
-        wgpu->bufferGetConstMappedRange(ToBackend(source)->GetInnerHandle(), 0, bufferSize),
-        bufferSize, &innerSource, &size);
-    return {};
+    TexelCopyTextureInfo destination = {};
+    destination.texture = dst.texture.Get();
+    destination.mipLevel = dst.mipLevel;
+    destination.origin = dst.origin.ToOrigin3D();
+    destination.aspect = FromAPI(ToWGPU(dst.aspect));
+    return ToBackend(GetQueue())
+        ->WriteTextureImpl(destination, source->GetMappedRange(), src, copySizePixels);
 }
 
 MaybeError Device::TickImpl() {

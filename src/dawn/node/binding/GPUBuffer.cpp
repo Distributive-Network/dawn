@@ -34,6 +34,7 @@
 
 #include "src/dawn/node/binding/Converter.h"
 #include "src/dawn/node/binding/Errors.h"
+#include "src/utils/assert.h"
 #include "src/utils/numeric.h"
 
 namespace wgpu::binding {
@@ -83,7 +84,7 @@ interop::Promise<void> GPUBuffer::mapAsync(Napi::Env env,
             // The promise may already have been resolved with an AbortError if there was an early
             // destroy() or early unmap().
             if (ctx->promise.GetState() != interop::PromiseState::Pending) {
-                assert(ctx->promise.GetState() == interop::PromiseState::Rejected);
+                DAWN_ASSERT(ctx->promise.GetState() == interop::PromiseState::Rejected);
                 return;
             }
 
@@ -95,7 +96,7 @@ interop::Promise<void> GPUBuffer::mapAsync(Napi::Env env,
                     break;
                 case wgpu::MapAsyncStatus::CallbackCancelled:
                 case wgpu::MapAsyncStatus::Aborted:
-                    assert(status != wgpu::MapAsyncStatus::CallbackCancelled);
+                    DAWN_ASSERT(status != wgpu::MapAsyncStatus::CallbackCancelled);
                     async_->Reject(ctx->env, ctx->promise, Errors::AbortError(ctx->env));
                     break;
                 case wgpu::MapAsyncStatus::Error:
@@ -105,7 +106,7 @@ interop::Promise<void> GPUBuffer::mapAsync(Napi::Env env,
 
             // This captured promise is the currently pending mapping, reset it so we can start new
             // mappings.
-            assert(*pending_map_ == ctx->promise);
+            DAWN_ASSERT(*pending_map_ == ctx->promise);
             pending_map_.reset();
         });
 
@@ -176,7 +177,7 @@ interop::GPUBufferMapState GPUBuffer::getMapState(Napi::Env env) {
     }
 
     if (pending_map_) {
-        assert(pending_map_->GetState() == interop::PromiseState::Pending);
+        DAWN_ASSERT(pending_map_->GetState() == interop::PromiseState::Pending);
         return interop::GPUBufferMapState::kPending;
     }
 

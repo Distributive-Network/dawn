@@ -106,7 +106,8 @@ bool IsSwiftShader(std::string_view renderer) {
 }  // anonymous namespace
 
 // static
-ResultOrError<Ref<PhysicalDevice>> PhysicalDevice::Create(wgpu::BackendType backendType,
+ResultOrError<Ref<PhysicalDevice>> PhysicalDevice::Create(InstanceBase* instance,
+                                                          wgpu::BackendType backendType,
                                                           Ref<DisplayEGL> display,
                                                           bool forceES31AndMinExtensions,
                                                           EGLint angleVirtualizationGroup) {
@@ -126,8 +127,8 @@ ResultOrError<Ref<PhysicalDevice>> PhysicalDevice::Create(wgpu::BackendType back
     // Needed to request extensions here to initialize supported gl extensions set
     context->RequestRequiredExtensionsExplicitly();
 
-    Ref<PhysicalDevice> physicalDevice =
-        AcquireRef(new PhysicalDevice(backendType, std::move(display), angleVirtualizationGroup));
+    Ref<PhysicalDevice> physicalDevice = AcquireRef(
+        new PhysicalDevice(instance, backendType, std::move(display), angleVirtualizationGroup));
     DAWN_TRY(physicalDevice->Initialize());
 
     DAWN_TRY(scopedCurrentContext.End());
@@ -135,10 +136,11 @@ ResultOrError<Ref<PhysicalDevice>> PhysicalDevice::Create(wgpu::BackendType back
     return physicalDevice;
 }
 
-PhysicalDevice::PhysicalDevice(wgpu::BackendType backendType,
+PhysicalDevice::PhysicalDevice(InstanceBase* instance,
+                               wgpu::BackendType backendType,
                                Ref<DisplayEGL> display,
                                EGLint angleVirtualizationGroup)
-    : PhysicalDeviceBase(backendType),
+    : PhysicalDeviceBase(instance, backendType),
       mDisplay(std::move(display)),
       mAngleVirtualizationGroup(angleVirtualizationGroup) {}
 
@@ -169,6 +171,10 @@ MaybeError PhysicalDevice::InitializeImpl() {
         default:
             DAWN_UNREACHABLE();
     }
+    // Needed to detect GPU resets, which can discard GPU work without generating GL errors.
+    DAWN_INVALID_IF(mFunctions.GetGraphicsResetStatus == nullptr,
+                    "glGetGraphicsResetStatus (OpenGL ES 3.2, OpenGL 4.5, GL_KHR_robustness, "
+                    "GL_EXT_robustness or GL_ARB_robustness) is required.");
 
     if (mFunctions.GetVersion().IsES()) {
         DAWN_ASSERT(GetBackendType() == wgpu::BackendType::OpenGLES);
@@ -513,6 +519,20 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         Toggle::GLUseArrayLengthFromImmediate,
         mVendorId == gpu_info::kVendorID_ImgTec || mVendorId == gpu_info::kVendorID_Nvidia);
 
+    // (crbug.com/497202432): Driver bug when POT-rounded 3D texture footprint is >= 4 GiB.
+    deviceToggles->Default(Toggle::Limit3DTexturePotFootprintTo4GB,
+                           mVendorId == gpu_info::kVendorID_ImgTec);
+
+    // (crbug.com/569195060): Driver crash evaluating structure constructors containing arrays.
+    deviceToggles->Default(Toggle::GLHoistConstantArrayInitializers,
+                           mVendorId == gpu_info::kVendorID_ImgTec);
+
+    // (crbug.com/379551588): The ARM Mali shader compiler has memory safety issues when
+    // compiling pack4x8snorm/pack4x8unorm/unpack4x8snorm/unpack4x8unorm. The Vulkan backend
+    // polyfills them on every ARM proprietary driver; do the same for the GL(ES) backend, which
+    // is the default WebGPU compat adapter on Android 10/11 Mali devices.
+    deviceToggles->Default(Toggle::PolyfillPackUnpack4x8Norm, gpu_info::IsARM(mVendorId));
+
     // Enable the integer range analysis for shader robustness by default if the corresponding
     // platform feature is enabled.
     deviceToggles->Default(
@@ -551,13 +571,11 @@ ResultOrError<Ref<DeviceBase>> PhysicalDevice::CreateDeviceImpl(
                           std::move(lostEvent));
 }
 
-bool PhysicalDevice::SupportsFeatureLevel(wgpu::FeatureLevel featureLevel,
-                                          InstanceBase* instance) const {
+bool PhysicalDevice::SupportsFeatureLevel(wgpu::FeatureLevel featureLevel) const {
     return featureLevel == wgpu::FeatureLevel::Compatibility;
 }
 
 ResultOrError<PhysicalDeviceSurfaceCapabilities> PhysicalDevice::GetSurfaceCapabilities(
-    InstanceBase*,
     const Surface*) const {
     PhysicalDeviceSurfaceCapabilities capabilities;
 

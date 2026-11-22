@@ -61,7 +61,7 @@ AdapterBase::AdapterBase(InstanceBase* instance,
       mFeatureLevel(featureLevel),
       mTogglesState(requiredAdapterToggles),
       mPowerPreference(powerPreference) {
-    DAWN_CHECK(mPhysicalDevice->SupportsFeatureLevel(featureLevel, mInstance.Get()));
+    DAWN_CHECK(mPhysicalDevice->SupportsFeatureLevel(featureLevel));
     DAWN_CHECK(mTogglesState.GetStage() == ToggleStage::Adapter);
     // Cache the supported features of this adapter. Note that with device toggles overriding, a
     // device created by this adapter may support features not in this set and vice versa.
@@ -172,6 +172,9 @@ ResultOrValError<UnpackedPtr<AdapterInfo>> AdapterBase::ValidateGetInfo(AdapterI
     DAWN_INVALID_IF(unpacked.Has<AdapterPropertiesVk>() &&
                         !mSupportedFeatures.IsEnabled(wgpu::FeatureName::AdapterPropertiesVk),
                     "Feature AdapterPropertiesVk is not available.");
+    DAWN_INVALID_IF(unpacked.Has<vulkan::AdapterPropertiesVulkanUUIDs>() &&
+                        !mSupportedFeatures.IsEnabled(wgpu::FeatureName::AdapterPropertiesVk),
+                    "Feature AdapterPropertiesVk is not available.");
     DAWN_INVALID_IF(unpacked.Has<AdapterPropertiesDrm>() &&
                         !mSupportedFeatures.IsEnabled(wgpu::FeatureName::AdapterPropertiesDrm),
                     "Feature AdapterPropertiesDrm is not available.");
@@ -184,24 +187,24 @@ ResultOrValError<UnpackedPtr<AdapterInfo>> AdapterBase::ValidateGetInfo(AdapterI
 }
 
 void APIAdapterInfoFreeMembers(WGPUAdapterInfo info) {
-    delete[] info.vendor.data;
-    delete[] info.architecture.data;
-    delete[] info.device.data;
-    delete[] info.description.data;
+    DeleteAllocationFromHeapArray(info.vendor.data);
+    DeleteAllocationFromHeapArray(info.architecture.data);
+    DeleteAllocationFromHeapArray(info.device.data);
+    DeleteAllocationFromHeapArray(info.description.data);
 }
 
 void APIAdapterPropertiesMemoryHeapsFreeMembers(
     WGPUAdapterPropertiesMemoryHeaps memoryHeapProperties) {
-    delete[] memoryHeapProperties.heapInfo;
+    DeleteAllocationFromHeapArray(memoryHeapProperties.heapInfo);
 }
 
 void APIDawnDrmFormatCapabilitiesFreeMembers(WGPUDawnDrmFormatCapabilities capabilities) {
-    delete[] capabilities.properties;
+    DeleteAllocationFromHeapArray(capabilities.properties);
 }
 
 void APIAdapterPropertiesSubgroupMatrixConfigsFreeMembers(
     WGPUAdapterPropertiesSubgroupMatrixConfigs subgroupMatrixConfigs) {
-    delete[] subgroupMatrixConfigs.configs;
+    DeleteAllocationFromHeapArray(subgroupMatrixConfigs.configs);
 }
 
 bool AdapterBase::APIHasFeature(wgpu::FeatureName feature) const {
@@ -217,7 +220,7 @@ void AdapterBase::APIGetFeatures(SupportedFeatures* features) const {
 }
 
 void APISupportedFeaturesFreeMembers(WGPUSupportedFeatures supportedFeatures) {
-    delete[] supportedFeatures.features;
+    DeleteAllocationFromHeapArray(supportedFeatures.features);
 }
 
 // TODO(https://crbug.com/dawn/2465) Could potentially re-implement via AllowSpontaneous async mode.
@@ -235,7 +238,7 @@ DeviceBase* AdapterBase::APICreateDevice(const DeviceDescriptor* descriptor) {
     return ReturnToAPI(std::move(device));
 }
 
-ResultOrError<Ref<DeviceBase>> AdapterBase::CreateDeviceInternal(
+ResultOrUnknownError<Ref<DeviceBase>> AdapterBase::CreateDeviceInternal(
     const DeviceDescriptor* rawDescriptor,
     Ref<DeviceBase::DeviceLostEvent> lostEvent) {
     DAWN_CHECK(rawDescriptor != nullptr);
@@ -305,7 +308,7 @@ ResultOrError<Ref<DeviceBase>> AdapterBase::CreateDeviceInternal(
     DAWN_INVALID_IF(mAdapterIsConsumed,
                     "adapter is \"consumed\": it has already been used to create a device");
 
-    auto result =
+    ResultOrError<Ref<DeviceBase>> result =
         mPhysicalDevice->CreateDevice(this, descriptor, deviceToggles, std::move(lostEvent));
 
     // The adapter should be consumed only upon successful device creation if the instance doesn't
@@ -317,11 +320,10 @@ ResultOrError<Ref<DeviceBase>> AdapterBase::CreateDeviceInternal(
     if (result.IsSuccess() && consumeOnSuccess) {
         mAdapterIsConsumed = true;
     }
-
     return result;
 }
 
-std::pair<Ref<DeviceBase::DeviceLostEvent>, ResultOrError<Ref<DeviceBase>>>
+std::pair<Ref<DeviceBase::DeviceLostEvent>, ResultOrUnknownError<Ref<DeviceBase>>>
 AdapterBase::CreateDevice(const DeviceDescriptor* descriptor) {
     DAWN_CHECK(descriptor != nullptr);
 
@@ -330,7 +332,7 @@ AdapterBase::CreateDevice(const DeviceDescriptor* descriptor) {
 
     // Catch any errors to directly complete the device lost event with the error message.
     if (result.IsError()) {
-        auto error = result.AcquireError();
+        std::unique_ptr<UnknownError> error = result.AcquireError();
         lostEvent->SetLost(mInstance->GetEventManager(), wgpu::DeviceLostReason::FailedCreation,
                            "Failed to create device:\n" + error->GetFormattedMessage());
 

@@ -259,6 +259,9 @@ MaybeError FramebufferTextureHelper(const OpenGLFunctions& gl,
 // static
 ResultOrError<Ref<Texture>> Texture::Create(Device* device,
                                             const UnpackedPtr<TextureDescriptor>& descriptor) {
+    // Report synthetic OOM from CreateTexture even when GL commands are deferred.
+    DAWN_TRY(VerifyBaseLevelFootprint(device, *descriptor));
+
     // Wrap the handle in a Texture class early so that it is deleted if initialization fails
     Ref<Texture> texture = AcquireRef(new Texture(device, descriptor, 0, OwnsHandle::Yes));
 
@@ -304,8 +307,8 @@ ResultOrError<Ref<Texture>> Texture::Create(Device* device,
             DAWN_TRY(AllocateTexture(gl, target, texture->GetSampleCount(), levels, glFormat,
                                      texture->GetBaseSize()));
 
-            // The texture is not complete if it uses mipmapping and not all levels up to
-            // MAX_LEVEL have been defined.
+            // The texture is not complete if it uses mipmapping and not all levels up to MAX_LEVEL
+            // have been defined.
             DAWN_GL_TRY(gl, TexParameteri(target, GL_TEXTURE_MAX_LEVEL, levels - 1));
 
             if (clear) {

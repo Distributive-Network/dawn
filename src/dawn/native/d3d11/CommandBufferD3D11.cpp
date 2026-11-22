@@ -293,7 +293,8 @@ Ref<CommandBuffer> CommandBuffer::Create(CommandEncoder* encoder,
     return AcquireRef(new CommandBuffer(encoder, descriptor));
 }
 
-MaybeError CommandBuffer::Execute(const ScopedSwapStateCommandRecordingContext* commandContext) {
+MaybeError CommandBuffer::RecordCommands(
+    const ScopedSwapStateCommandRecordingContext* commandContext) {
     ExecutionSerial pendingSerial = GetDevice()->GetQueue()->GetPendingCommandSerial();
 
     auto LazyClearSyncScope = [&commandContext,
@@ -341,7 +342,7 @@ MaybeError CommandBuffer::Execute(const ScopedSwapStateCommandRecordingContext* 
                     }
                     DAWN_TRY(LazyClearSyncScope(scope));
                 }
-                DAWN_TRY(ExecuteComputePass(commandContext, &pipelineStateTracker));
+                DAWN_TRY(RecordComputePass(commandContext, &pipelineStateTracker));
 
                 nextComputePassNumber++;
                 break;
@@ -364,8 +365,8 @@ MaybeError CommandBuffer::Execute(const ScopedSwapStateCommandRecordingContext* 
                 }
                 DAWN_TRY(
                     LazyClearSyncScope(GetResourceUsages().renderPasses[nextRenderPassNumber]));
-                DAWN_TRY(ExecuteRenderPass(cmd, commandContext, &pipelineStateTracker,
-                                           nextRenderPassNumber));
+                DAWN_TRY(RecordRenderPass(cmd, commandContext, &pipelineStateTracker,
+                                          nextRenderPassNumber));
 
                 nextRenderPassNumber++;
                 break;
@@ -398,53 +399,8 @@ MaybeError CommandBuffer::Execute(const ScopedSwapStateCommandRecordingContext* 
                     continue;
                 }
 
-                auto& src = copy->source;
-                auto& dst = copy->destination;
-
-                Buffer* buffer = ToBackend(src.buffer.Get());
-                DAWN_TRY(buffer->TrackUsage(commandContext, pendingSerial));
-
-                uint64_t bufferOffset = src.offset;
-                Ref<BufferBase> stagingBuffer;
-                const TypedTexelBlockInfo& blockInfo = GetBlockInfo(dst);
-
-                // If the buffer is not mappable, we need to create a staging buffer and copy the
-                // data from the buffer to the staging buffer.
-                std::optional<BufferBase::ScopedUseBuffer> use;
-                if (!buffer->IsCPUReadable()) {
-                    // TODO(dawn:1768): use compute shader to copy data from buffer to texture.
-                    BufferDescriptor desc;
-                    desc.size =
-                        ComputeRequiredBytesInCopy(blockInfo, blockInfo.ToBlock(copy->copySize),
-                                                   src.blocksPerRow, src.rowsPerImage);
-                    desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
-                    DAWN_TRY_ASSIGN(stagingBuffer, Buffer::Create(ToBackend(GetDevice()),
-                                                                  Unpack(&desc), commandContext));
-                    use = stagingBuffer->UseInternal();
-                    DAWN_TRY(Buffer::Copy(commandContext, buffer, src.offset,
-                                          checked_cast<size_t>(stagingBuffer->GetSize()),
-                                          ToBackend(stagingBuffer.Get()), 0));
-                    buffer = ToBackend(stagingBuffer.Get());
-                    bufferOffset = 0;
-                }
-
-                Buffer::ScopedMap scopedMap;
-                DAWN_TRY_ASSIGN(scopedMap, Buffer::ScopedMap::Create(commandContext, buffer,
-                                                                     wgpu::MapMode::Read));
-                DAWN_TRY(buffer->EnsureDataInitialized(commandContext));
-
-                Texture* texture = ToBackend(dst.texture.Get());
-                DAWN_TRY(texture->SynchronizeTextureBeforeUse(commandContext));
-                SubresourceRange subresources = GetSubresourcesAffectedByCopy(dst, copy->copySize);
-
-                DAWN_ASSERT(!scopedMap.GetMappedData().empty());
-                Span<std::byte> data =
-                    scopedMap.GetMappedData().subspan(checked_cast<size_t>(bufferOffset));
-                uint64_t bytesPerRow = blockInfo.ToBytes(src.blocksPerRow);
-                DAWN_TRY(texture->Write(commandContext, subresources, dst.origin.ToOrigin3D(),
-                                        copy->copySize.ToExtent3D(), data,
-                                        dchecked_cast<uint32_t>(bytesPerRow),
-                                        dchecked_cast<uint32_t>(src.rowsPerImage)));
+                DAWN_TRY(Texture::CopyFromBuffer(commandContext, copy->source, copy->destination,
+                                                 copy->copySize));
                 break;
             }
 
@@ -557,14 +513,14 @@ MaybeError CommandBuffer::Execute(const ScopedSwapStateCommandRecordingContext* 
             }
 
             default:
-                return DAWN_FORMAT_UNRECOVERABLE_ERROR("Unknown command type: %d", type);
+                return DAWN_UNRECOVERABLE_ERROR("Unknown command type: %d", type);
         }
     }
 
     return {};
 }
 
-MaybeError CommandBuffer::ExecuteComputePass(
+MaybeError CommandBuffer::RecordComputePass(
     const ScopedSwapStateCommandRecordingContext* commandContext,
     PipelineStateTracker* pipelineStateTracker) {
     ComputePipeline* lastPipeline = nullptr;
@@ -663,7 +619,7 @@ MaybeError CommandBuffer::ExecuteComputePass(
     DAWN_UNREACHABLE();
 }
 
-MaybeError CommandBuffer::ExecuteRenderPass(
+MaybeError CommandBuffer::RecordRenderPass(
     BeginRenderPassCmd* renderPass,
     const ScopedSwapStateCommandRecordingContext* commandContext,
     PipelineStateTracker* pipelineStateTracker,

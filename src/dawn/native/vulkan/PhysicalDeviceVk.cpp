@@ -139,9 +139,8 @@ constexpr bool SafeGreaterThan(T a, U b) {
 PhysicalDevice::PhysicalDevice(InstanceBase* instance,
                                VulkanInstance* vulkanInstance,
                                VkPhysicalDevice physicalDevice)
-    : PhysicalDeviceBase(wgpu::BackendType::Vulkan),
+    : PhysicalDeviceBase(instance, wgpu::BackendType::Vulkan),
       mVkPhysicalDevice(physicalDevice),
-      mInstance(instance),
       mVulkanInstance(vulkanInstance) {}
 
 PhysicalDevice::~PhysicalDevice() = default;
@@ -189,7 +188,7 @@ MaybeError PhysicalDevice::InitializeImpl() {
     const gpu_info::IntelWindowsDriverVersion kDriverVersion({30, 0, 101, 2111});
     if (IsWindows() && gpu_info::IsIntel(mDeviceInfo.properties.vendorID) &&
         gpu_info::IntelWindowsDriverVersion(mDriverVersion) < kDriverVersion) {
-        return DAWN_FORMAT_UNRECOVERABLE_ERROR(
+        return DAWN_UNRECOVERABLE_ERROR(
             "Disable Intel Vulkan adapter on Windows driver version %s. See "
             "https://crbug.com/1338622.",
             driverVersionStr);
@@ -360,7 +359,9 @@ void PhysicalDevice::InitializeSupportedFeaturesImpl() {
         EnableFeature(Feature::FramebufferFetch);
     }
 
-    if (mDeviceInfo.features.shaderClipDistance == VK_TRUE) {
+    // crbug.com/570632001: Clip distances produce incorrect clipping on Adreno 6xx GPUs (seen on
+    // Pixel 4 / Adreno 640), so don't expose the feature on that GPU generation.
+    if (mDeviceInfo.features.shaderClipDistance == VK_TRUE && !IsAdreno6xx()) {
         EnableFeature(Feature::ClipDistances);
     }
 
@@ -760,7 +761,7 @@ MaybeError PhysicalDevice::InitializeSupportedLimitsInternal(wgpu::FeatureLevel 
             return DAWN_UNRECOVERABLE_ERROR("Insufficient Vulkan limits for " #webgpuName \
                                             "."                                           \
                                             " VkPhysicalDeviceLimits::" #vulkanName       \
-                                            " must be at " msgSegment " " +               \
+                                            " must be at " msgSegment " %s",              \
                                             std::to_string(baseLimits.v1.webgpuName));    \
         }                                                                                 \
     } while (false)
@@ -896,8 +897,8 @@ MaybeError PhysicalDevice::InitializeSupportedLimitsInternal(wgpu::FeatureLevel 
     // Vulkan backend), accept that floor for these devices. 64 components leave room for 14
     // inter-stage variables (14 * 4 + 8) instead of the 16 required above.
     uint32_t interStageShaderVariablesBase = baseLimits.v1.maxInterStageShaderVariables;
-    if (gpu_info::IsImgTec(GetVendorId()) &&
-        mInstance->GetTogglesState().IsEnabled(Toggle::VulkanRelaxMaxInterStageShaderVariables)) {
+    if (gpu_info::IsImgTec(GetVendorId()) && GetInstance()->GetTogglesState().IsEnabled(
+                                                 Toggle::VulkanRelaxMaxInterStageShaderVariables)) {
         interStageShaderVariablesBase = std::min(interStageShaderVariablesBase, 14u);
     }
     if (vkLimits.maxVertexOutputComponents < interStageShaderVariablesBase * 4 + 8 ||
@@ -939,9 +940,9 @@ MaybeError PhysicalDevice::InitializeSupportedLimitsInternal(wgpu::FeatureLevel 
 
     limits->v1.maxBufferSize = kAssumedMaxBufferSize;
     if (mDeviceInfo.HasExt(DeviceExt::Maintenance4)) {
-        limits->v1.maxBufferSize = mDeviceInfo.propertiesMaintenance4.maxBufferSize;
+        limits->v1.maxBufferSize = mDeviceInfo.maintenance4Properties.maxBufferSize;
     } else {
-        limits->v1.maxBufferSize = mDeviceInfo.propertiesMaintenance3.maxMemoryAllocationSize;
+        limits->v1.maxBufferSize = mDeviceInfo.maintenance3Properties.maxMemoryAllocationSize;
     }
 
     // OpArrayLength returns 0 for buffers >= 2GB for some NVIDIA devices.
@@ -996,15 +997,14 @@ bool PhysicalDevice::SupportsExternalImages() const {
                                                      mVulkanInstance->GetFunctions());
 }
 
-bool PhysicalDevice::SupportsFeatureLevel(wgpu::FeatureLevel featureLevel,
-                                          InstanceBase* instance) const {
+bool PhysicalDevice::SupportsFeatureLevel(wgpu::FeatureLevel featureLevel) const {
     if (featureLevel == wgpu::FeatureLevel::Core && !mSupportsCoreFeatureLevel) {
-        if (mCoreError && instance) {
-            // Log a warning explaining why this device doesn't support core the first time a core
-            // adapter is requested.
+        if (mCoreError) {
+            // Log why this device doesn't support core. Moving mCoreError ensures this warning
+            // is only logged once.
             mCoreError->AppendContext(
                 absl::StrFormat("checking core feature level support on \"%s\"", GetName()));
-            instance->ConsumedErrorAndWarnOnce(std::move(mCoreError));
+            GetInstance()->ConsumedErrorAndWarnOnce(std::move(mCoreError));
         }
         return false;
     }
@@ -1087,14 +1087,6 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         deviceToggles->Default(Toggle::VulkanSampleCompare2DWorkaround, true);
     }
 
-    if (IsPixel10() || IsAndroidSamsung()) {
-        // Pixel 10 has a bug in vkGetPipelineCacheData(), see https://crbug.com/437807243.
-        // Samsung Xclipse GPUs appear to have the same problem, see https://crbug.com/487613497.
-        // TODO(crbug.com/437807243): If newer driver version without bug is released then we can
-        // gate this on driver version.
-        deviceToggles->Default(Toggle::VulkanIncompletePipelineCacheWorkaround, true);
-    }
-
     if (MayBeImaginationProprietary()) {
         // crbug.com/443906252 - Polyfill for case switch with large ranges.
         deviceToggles->Default(Toggle::VulkanPolyfillSwitchWithIf, true);
@@ -1102,6 +1094,10 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         // crbug.com/540087398 - Driver bug miscomputes mip sizes for NPOT depth/stencil textures.
         // TODO(https://crbug.com/540087398): Limit this to old drivers once there's a driver fix.
         deviceToggles->Default(Toggle::VulkanDisallowNPOTDepthStencilMipmaps, true);
+
+        // crbug.com/497202432 - Driver bug in when POT-rounded 3D texture footprint is >= 4 GiB.
+        // TODO(https://crbug.com/497202432): Limit this to old drivers once there's a driver fix.
+        deviceToggles->Default(Toggle::Limit3DTexturePotFootprintTo4GB, true);
     }
 
     // AMD Mesa front end optimizer bug for unary negation and abs.
@@ -1137,8 +1133,14 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         // See crbug.com/460209126
         deviceToggles->Default(Toggle::VulkanCooperativeMatrixStrideIsMatrixElements, true);
 
-        // TODO(https://crbug.com/500417361): Add details once available.
-        deviceToggles->Default(Toggle::VulkanSleepAfterLostDeviceWait, true);
+        // On device loss, some Mali drivers may return from vkQueueWaitIdle and
+        // vkDeviceWaitIdle before it's safe to destroy the device.
+        // https://crbug.com/500417361
+        const gpu_info::DriverVersion kWaitIdleBadDriver = {42, 0, 0, 0};
+        const gpu_info::DriverVersion kWaitIdleGoodDriver = {56, 0, 0, 0};
+        if (GetDriverVersion() >= kWaitIdleBadDriver && GetDriverVersion() < kWaitIdleGoodDriver) {
+            deviceToggles->Default(Toggle::VulkanSleepAfterLostDeviceWait, true);
+        }
     }
 
     if (IsAndroidSamsung() || IsAndroidQualcomm() || IsAndroidHuawei()) {
@@ -1157,12 +1159,6 @@ void PhysicalDevice::SetupBackendDeviceToggles(dawn::platform::Platform* platfor
         // every sample as covered. Force a real -- but destination-preserving -- alpha
         // write so the driver computes coverage.
         deviceToggles->Default(Toggle::VulkanForceAlphaWriteForAlphaToCoverage, true);
-    }
-
-    if (gpu_info::IsIntel(GetVendorId())) {
-        // crbug.com/481934465: Workaround an Intel GPU hardware limitation that corrupts
-        // buffer<->texture copies with a large row pitch.
-        deviceToggles->Default(Toggle::SplitBufferTextureCopyForOversizedRow, true);
     }
 
     // Collapse redundant subgroup min and max operations to workaround a driver crash on some AMD
@@ -1525,6 +1521,11 @@ bool PhysicalDevice::IsAndroidImgTec() const {
     return IsAndroid() && gpu_info::IsImgTec(GetVendorId());
 }
 
+bool PhysicalDevice::IsAdreno6xx() const {
+    return gpu_info::IsQualcommPCIAdreno6xx(GetVendorId(), GetDeviceId()) ||
+           gpu_info::IsQualcommACPIAdreno6xx(GetVendorId(), GetDeviceId());
+}
+
 bool PhysicalDevice::IsAdreno7xx() const {
     return gpu_info::IsQualcommPCIAdreno7xx(GetVendorId(), GetDeviceId()) ||
            gpu_info::IsQualcommACPIAdreno7xx(GetVendorId(), GetDeviceId());
@@ -1647,7 +1648,6 @@ std::optional<uint32_t> PhysicalDevice::GetDefaultComputeSubgroupSize() const {
 }
 
 ResultOrError<PhysicalDeviceSurfaceCapabilities> PhysicalDevice::GetSurfaceCapabilities(
-    InstanceBase* instance,
     const Surface* surface) const {
     // Gather the Vulkan surface capabilities.
     VulkanSurfaceInfo vkCaps;
@@ -1656,7 +1656,7 @@ ResultOrError<PhysicalDeviceSurfaceCapabilities> PhysicalDevice::GetSurfaceCapab
         VkInstance vkInstance = GetVulkanInstance()->GetVkInstance();
 
         VkSurfaceKHR vkSurface;
-        DAWN_TRY_ASSIGN(vkSurface, CreateVulkanSurface(instance, this, surface));
+        DAWN_TRY_ASSIGN(vkSurface, CreateVulkanSurface(GetInstance(), this, surface));
         DAWN_TRY_ASSIGN_WITH_CLEANUP(vkCaps, GatherSurfaceInfo(*this, vkSurface),
                                      { fn.DestroySurfaceKHR(vkInstance, vkSurface, nullptr); });
 
@@ -1793,6 +1793,12 @@ void PhysicalDevice::PopulateBackendProperties(UnpackedPtr<AdapterInfo>& info,
     }
     if (auto* vkProperties = info.Get<AdapterPropertiesVk>()) {
         vkProperties->driverVersion = mDeviceInfo.properties.driverVersion;
+    }
+    if (auto* uuidProperties = info.Get<AdapterPropertiesVulkanUUIDs>()) {
+        ByteSpanFromRef(uuidProperties->deviceUUID)
+            .CopyFrom(ByteSpanFromRef(mDeviceInfo.idProperties.deviceUUID));
+        ByteSpanFromRef(uuidProperties->driverUUID)
+            .CopyFrom(ByteSpanFromRef(mDeviceInfo.idProperties.driverUUID));
     }
     if (auto* drmProperties = info.Get<AdapterPropertiesDrm>()) {
         drmProperties->hasPrimary = mDeviceInfo.drmProperties.hasPrimary;

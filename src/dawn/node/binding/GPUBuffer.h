@@ -75,10 +75,13 @@ class GPUBuffer final : public interop::GPUBuffer {
   private:
     void DetachMappings(Napi::Env env);
 
+    // A mapped range as seen by JavaScript: `buffer` is a copy of the range, in memory owned by
+    // the JavaScript engine, and `mapped` is the range itself.
     struct Mapping {
         uint64_t start;
         uint64_t end;
         inline bool Intersects(uint64_t s, uint64_t e) const { return s < end && e > start; }
+        void* mapped;
         Napi::Reference<interop::ArrayBuffer> buffer;
     };
 
@@ -97,6 +100,7 @@ class GPUBuffer final : public interop::GPUBuffer {
     std::shared_ptr<AsyncRunner> async_;
     std::vector<Mapping> mappings_;
     bool mapped_;
+    bool writable_;
     std::optional<interop::Promise<void>> pending_map_;
     std::string label_;
 };

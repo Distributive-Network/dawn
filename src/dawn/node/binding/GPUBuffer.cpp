@@ -28,6 +28,7 @@
 #include "src/dawn/node/binding/GPUBuffer.h"
 
 #include <cassert>
+#include <cstring>
 #include <memory>
 #include <utility>
 
@@ -49,6 +50,7 @@ GPUBuffer::GPUBuffer(wgpu::Buffer buffer,
       device_(std::move(device)),
       async_(std::move(async)),
       mapped_(desc.mappedAtCreation),
+      writable_(desc.mappedAtCreation),
       label_(CopyLabel(desc.label)) {}
 
 interop::Promise<void> GPUBuffer::mapAsync(Napi::Env env,
@@ -77,7 +79,7 @@ interop::Promise<void> GPUBuffer::mapAsync(Napi::Env env,
     buffer_.MapAsync(
         mode, dawn::checked_cast<size_t>(uint64_t{offset}), dawn::checked_cast<size_t>(rangeSize),
         wgpu::CallbackMode::AllowProcessEvents,
-        [ctx = std::move(ctx), this](wgpu::MapAsyncStatus status, wgpu::StringView) {
+        [ctx = std::move(ctx), mode, this](wgpu::MapAsyncStatus status, wgpu::StringView) {
             // The promise may already have been resolved with an AbortError if there was an early
             // destroy() or early unmap().
             if (ctx->promise.GetState() != interop::PromiseState::Pending) {
@@ -89,6 +91,7 @@ interop::Promise<void> GPUBuffer::mapAsync(Napi::Env env,
                 case wgpu::MapAsyncStatus::Success:
                     ctx->promise.Resolve();
                     mapped_ = true;
+                    writable_ = (mode & wgpu::MapMode::Write) != wgpu::MapMode::None;
                     break;
                 case wgpu::MapAsyncStatus::CallbackCancelled:
                 case wgpu::MapAsyncStatus::Aborted:
@@ -133,13 +136,27 @@ interop::ArrayBuffer GPUBuffer::getMappedRange(Napi::Env env,
         Errors::OperationError(env).ThrowAsJavaScriptException();
         return {};
     }
-    auto array_buffer = Napi::ArrayBuffer::New(env, ptr, dawn::checked_cast<size_t>(s));
-    // TODO(crbug.com/dawn/1135): Ownership here is the wrong way around.
-    mappings_.emplace_back(Mapping{start, end, Napi::Persistent(array_buffer)});
+    // JavaScript gets a copy of the range, so that an ArrayBuffer never refers to memory owned by
+    // Dawn; unmap() copies writable ranges back.
+    auto array_buffer = Napi::ArrayBuffer::New(env, dawn::checked_cast<size_t>(s));
+    if (s > 0) {
+        memcpy(array_buffer.Data(), ptr, dawn::checked_cast<size_t>(s));
+    }
+    mappings_.emplace_back(Mapping{start, end, ptr, Napi::Persistent(array_buffer)});
     return array_buffer;
 }
 
 void GPUBuffer::unmap(Napi::Env env) {
+    if (writable_) {
+        for (auto& mapping : mappings_) {
+            auto array_buffer = mapping.buffer.Value();
+            // A copy that JavaScript has detached or transferred holds nothing to copy back.
+            if (array_buffer.ByteLength() > 0 &&
+                array_buffer.ByteLength() == mapping.end - mapping.start) {
+                memcpy(mapping.mapped, array_buffer.Data(), array_buffer.ByteLength());
+            }
+        }
+    }
     DetachMappings(env);
     buffer_.Unmap();
 }
@@ -181,6 +198,7 @@ interop::GPUFlagsConstant GPUBuffer::getUsage(Napi::Env env) {
 
 void GPUBuffer::DetachMappings(Napi::Env env) {
     mapped_ = false;
+    writable_ = false;
 
     if (pending_map_) {
         pending_map_->Reject(Errors::AbortError(env));
